@@ -70,7 +70,7 @@
 | 接口/字段 | `docs/02-api.md` |
 | 出错了怎么办 | `docs/03-operations.md` |
 | 为什么这么定 | `docs/04-decisions.md` + `PORT_FROM_NEKO.md` |
-| 上一会话停在哪 | `jhp_phase1/HANDOFF.md` |
+| 上一会话停在哪 | `docs/handoff.md` |
 | 旧资料 | `archive/`（只读） |
 
 ---

@@ -1,0 +1,29 @@
+[project]
+name = "haoxiangpao"
+version = "0.1.1"
+description = "好想跑：本地跑步数据工作台（协议复刻 / 造数 / 提交 / 只读回查）"
+requires-python = ">=3.11"
+dependencies = [
+    "pycryptodome>=3.20",
+    "opencv-python>=4.8",
+    "numpy>=1.24",
+    "requests>=2.31",
+    "pywebview>=5.0",
+    "pythonnet>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["dist", "backup", "build_tmp", "tools/legacy"]

@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from replica.domain import rundata  # noqa: E402
 from replica.transport.realclient import (Account, build_headers, token_sign,  # noqa: E402
                                 HOST, SUBMIT_URL)
@@ -32,7 +32,7 @@ def main():
     for j in JARS:
         cp += ';libs/' + j
     acct = Account.from_dict(json.load(open(
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                      'data', 'accounts.json')))[0])
     rng = random.Random(int(time.time()))
     run = rundata.generate_run_data(distance_km=2.5, pace_min_per_km=6.0,

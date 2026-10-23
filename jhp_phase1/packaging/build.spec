@@ -1,18 +1,19 @@
-# PyInstaller spec: 好想跑 (onedir, console off)
-# Build:  pyinstaller build.spec --noconfirm
-# Output: dist/好想跑/  (exe + _internal)
-# Runtime deps kept EXTERNAL next to the exe (not bundled):
-#   runtime/jre/      - bundled JRE (jlink runtime)
-#   runtime/unidbg/   - oracle sidecar (out/, libs/, oracle.apk)
-# or set env JHP_JAVA / JHP_UNIDBG to point elsewhere.
+# PyInstaller spec: 好想跑 (onedir, windowed).
+# Build:  powershell -ExecutionPolicy Bypass -File packaging/build.ps1
+# Output: dist/好想跑_v<version>/ (exe + _internal)
+#
+# The runtime is pure Python: no JRE / unidbg is bundled.  Compatibility mock
+# servers are part of `replica.compat`, so collect_submodules picks them up;
+# they are only reachable through the local bridge API.
 import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-ROOT = os.path.dirname(os.path.abspath(SPEC))
+PACKAGING = os.path.dirname(os.path.abspath(SPEC))
+APP_ROOT = os.path.dirname(PACKAGING)
 
 datas = [
-    (os.path.join(ROOT, 'frontend'), 'frontend'),
+    (os.path.join(APP_ROOT, 'frontend'), 'frontend'),
 ]
 datas += collect_data_files('webview')
 datas += collect_data_files('pythonnet')
@@ -30,8 +31,8 @@ hiddenimports = [
 hiddenimports += collect_submodules('replica')
 
 a = Analysis(
-    ['app.py'],
-    pathex=[ROOT],
+    [os.path.join(APP_ROOT, 'app.py')],
+    pathex=[APP_ROOT],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -50,7 +51,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon=os.path.join(ROOT, 'assets', 'logo.ico'),
+    icon=os.path.join(PACKAGING, 'assets', 'logo.ico'),
 )
 coll = COLLECT(
     exe,

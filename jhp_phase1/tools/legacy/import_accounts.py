@@ -63,7 +63,7 @@ def main():
         return
     flows = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else str(
-        Path(__file__).resolve().parent.parent / 'data' / 'accounts.json')
+        Path(__file__).resolve().parent.parent.parent / 'data' / 'accounts.json')
     accts = import_accounts(flows)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     with open(out, 'w', encoding='utf-8') as f:

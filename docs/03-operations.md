@@ -13,7 +13,7 @@
 | `points_cache.json` | 打卡点缓存（300 秒，按目标距离分键） | 可以 |
 | `routes.json` | 路线库（手绘/导入/记录生成） | 可以 |
 | `students.json` / `sport.json` / `account.json` | 旧 mock / 本地账号密码 | **不能** |
-| `../campus_fence_47203.json` | 这个校区围栏的样例（10 点） | 可以 |
+| `jhp_phase1/fixtures/campus_fence_47203.json` | 这个校区围栏的样例（10 点） | 可以 |
 
 > `diagnostics` 模块生成的是**脱敏**报告：不含 token、密码、uid、DeviceId、坐标、IP、
 > 原始请求体、校区数字 ID、本地路径。要贴日志/提 issue 时用它。
@@ -171,14 +171,14 @@ POST /bridge/real_weekly_summary   {"args": {"weeks": 4}}
 cd 好想跑
 
 # 一把梭：23 个模块
-python -m jhp_phase1.replica.selfcheck
+python -m replica.selfcheck
 
 # 端到端（假客户端；不联网、不提交）
 python jhp_phase1/tests/test_pipeline.py
 
 # 协议/加密
-python jhp_phase1/tests/test_phase1.py
-python jhp_phase1/tests/test_phase2.py
+python jhp_phase1/tests/legacy/legacy_bridge_suite.py
+python jhp_phase1/tests/legacy/legacy_http_suite.py
 python jhp_phase1/tests/test_netsec.py
 
 # 造数仿真

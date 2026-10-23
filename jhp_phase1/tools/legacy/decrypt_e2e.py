@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from replica.transport.realclient import Account, build_headers, HOST  # noqa: E402
 from replica.transport.sidecar import JARS  # noqa: E402
 
@@ -31,7 +31,7 @@ def main():
     for j in JARS:
         cp += ';libs/' + j
     acct = Account.from_dict(json.load(open(
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                      'data', 'accounts.json')))[0])
 
     p = subprocess.Popen([JAVA, '-cp', cp, 'OracleFlow', 'oracle.apk'],

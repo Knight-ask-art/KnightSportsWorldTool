@@ -322,14 +322,14 @@ python -m jhp_phase1.replica.pipeline --plan 14
 cd 好想跑
 
 # 全部模块自测（离线）
-python -m jhp_phase1.replica.selfcheck
+python -m replica.selfcheck
 
 # 流水线端到端（假客户端，不联网）
 python jhp_phase1/tests/test_pipeline.py
 
 # 其它
-python jhp_phase1/tests/test_phase1.py
-python jhp_phase1/tests/test_phase2.py
+python jhp_phase1/tests/legacy/legacy_bridge_suite.py
+python jhp_phase1/tests/legacy/legacy_http_suite.py
 python jhp_phase1/tests/test_netsec.py
 python jhp_phase1/tools/validate_sim.py
 ```

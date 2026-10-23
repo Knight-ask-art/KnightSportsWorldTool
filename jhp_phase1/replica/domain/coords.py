@@ -4,7 +4,7 @@ Background (all verified against the reference implementation):
 
 * `api/v1/getGeoFenceForRun` returns polygons whose points may carry **only**
   ``glat/glon`` (GCJ) with ``lat/lon`` set to 0.  This campus does exactly that
-  (`jhp_phase1/campus_fence_47203.json`, `_note`).
+  (`fixtures/campus_fence_47203.json`, `_note`).
 * The checkpoint list (`pointsResModels`) is documented as BD-09, but
   `src/api/fence.rs` `point_xy()` explicitly handles the same "BD zeroed, GCJ
   filled" case for it, so both endpoints can be partial.

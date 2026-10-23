@@ -21,7 +21,7 @@ python -m replica.pipeline --token X --uid 1 --km 2.0 --dry-run --no-preflight -
 
 # 3. 跑一遍离线回归（不联网、不提交）
 cd ..
-python -m jhp_phase1.replica.selfcheck
+python -m replica.selfcheck
 ```
 
 > 在 `jhp_phase1/` 里用 `python -m replica.pipeline`；在仓库根目录用
@@ -43,7 +43,7 @@ python -m jhp_phase1.replica.selfcheck
 | [04-decisions.md](04-decisions.md) | 为什么这么设计、哪些结论有源码/实测出处、哪些**还没验证** |
 | [05-history.md](05-history.md) | 这一路踩过什么坑、旧文档为什么被封存、去哪找证据 |
 
-会话交接（按时间写，不是手册）：[`../jhp_phase1/HANDOFF.md`](../jhp_phase1/HANDOFF.md)
+会话交接（按时间写，不是手册）：[`handoff.md`](handoff.md)
 技术主日志（证据最全）：[`../apk_work/unidbg/PORT_FROM_NEKO.md`](../apk_work/unidbg/PORT_FROM_NEKO.md)
 封存文档索引：[`../archive/README.md`](../archive/README.md)
 
@@ -57,8 +57,8 @@ python -m jhp_phase1.replica.selfcheck
 23/23 模块自测     PASS
 pytest            87 passed
 test_pipeline     56 passed
-test_phase1       38 passed
-test_phase2       23 passed
+legacy_bridge_suite  38 checks passed
+legacy_http_suite    23 checks passed
 validate_sim      1/2/3/5 km PASS
 ```
 
