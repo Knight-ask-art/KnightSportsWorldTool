@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from replica import rundata
+from replica.domain import rundata
 from replica.transport.realclient import Account, RealClient
 
 

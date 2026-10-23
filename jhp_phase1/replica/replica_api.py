@@ -22,8 +22,8 @@ from urllib.parse import urlparse
 
 import requests
 
-from . import crypto as C
-from .rundata import generate_run_data
+from .domain import crypto as C
+from .domain.rundata import generate_run_data
 from .transport.realclient import as_dict
 
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
@@ -147,7 +147,7 @@ def semester_view(summary, personal):
     days_left = None
     if end_ms:
         try:
-            from . import safety as S
+            from .domain import safety as S
             end_day = S.to_beijing(int(end_ms)).date()
             days_left = (end_day - S.to_beijing(S.now_ms()).date()).days
         except Exception:  # noqa: BLE001
@@ -509,7 +509,7 @@ class ReplicaApi:
         """Official-shaped submit: full UploadFormatEntity, locally signed
         (originalSign=getPreSign, signature=getSign over the 31-field map),
         hybrid-encrypted envelope, POST to save/record."""
-        from .rundata import build_upload_entity, sign_upload_entity
+        from .domain.rundata import build_upload_entity, sign_upload_entity
         st = self._students.get(sid, {})
         login = st.get('loginInfo') or {}
         ctx = {
@@ -891,7 +891,7 @@ class ReplicaApi:
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
         from . import riskcheck as RK
-        from . import safety as S
+        from .domain import safety as S
         campus = campus_name if campus_name is not None else (acct.campusName or '')
         school = school_name if school_name is not None else (acct.schoolName or '')
         try:
@@ -1126,7 +1126,7 @@ class ReplicaApi:
                     # lat/lon, or BD coordinates; pair_gcj normalises all
                     # three.  Reading glat/glon directly produced an empty
                     # polygon for other campuses.
-                    from . import coords
+                    from .domain import coords
                     poly = []
                     for p in pts:
                         if not isinstance(p, dict):
@@ -1270,7 +1270,7 @@ class ReplicaApi:
             return _fail('未配置 token（先在"账号"面板保存）')
         from .transport import realclient as R
         from . import readonly as RO
-        from . import safety as S
+        from .domain import safety as S
         from . import limits as L
         try:
             day_obj = S.resolve_backfill_date(date, days_ago)
@@ -1306,7 +1306,7 @@ class ReplicaApi:
             return _fail('未配置 token（先在"账号"面板保存）')
         from .transport import realclient as R
         from . import readonly as RO
-        from . import safety as S
+        from .domain import safety as S
         from . import limits as L
         today = S.to_beijing(S.now_ms()).date()
         if dates is None:
@@ -1365,7 +1365,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import safety as S
+        from .domain import safety as S
         try:
             limit = max(1, min(int(limit), 200))
         except (TypeError, ValueError):
@@ -1414,7 +1414,7 @@ class ReplicaApi:
             return _fail('未配置 token（先在"账号"面板保存）')
         from .transport import realclient as R
         from . import readonly as RO
-        from . import safety as S
+        from .domain import safety as S
         try:
             store = self._receipt_store()
             rows = store.list(acct.uid, school=str(acct.unid))
@@ -1643,7 +1643,7 @@ class ReplicaApi:
     def real_diagnostics(self):
         """Redacted support bundle; safe to paste into an issue."""
         from . import diagnostics as D
-        from . import safety as S
+        from .domain import safety as S
         try:
             info = D.collect(crypto_backend='netsec', app_version=APP_VERSION,
                              extra={'generated_by': 'replica_api',
@@ -1670,9 +1670,9 @@ class ReplicaApi:
         omitted the check stays explicitly ``unknown`` instead of pretending
         this tool's local receipt counter proves anything about the server.
         """
-        from .rundata import generate_run_data
+        from .domain.rundata import generate_run_data
         from . import qualification as Q
-        from . import safety as S
+        from .domain import safety as S
         try:
             wps = [(float(a), float(b)) for a, b in (waypoints or [])]
             cps = []
@@ -1776,7 +1776,7 @@ class ReplicaApi:
             return _fail('未配置 token（先在"账号"面板保存）')
         from .transport import realclient as R
         from . import points as P
-        from .rundata import build_upload_entity, sign_upload_entity
+        from .domain.rundata import build_upload_entity, sign_upload_entity
         from .guard import ReceiptStore, AlreadySubmitted, UnknownPending, GuardError
 
         try:
@@ -1837,7 +1837,7 @@ class ReplicaApi:
             wps = P.rotate_to(wps, first)
 
         # ---- 1b. a user route must still pass the checkpoints -----------
-        from . import routes as RT
+        from .domain import routes as RT
         missed = []
         if wps and cps:
             missed = RT.missed_points(wps, cps)
@@ -1863,7 +1863,7 @@ class ReplicaApi:
             pass
         # The operator may backfill today .. 3 days ago, 09:00-22:00.  Resolve
         # the slot before forging so every timestamp in the record agrees.
-        from . import safety as S
+        from .domain import safety as S
         duration_s = float(km) * float(pace) * 60.0
         try:
             start_ms = S.resolve_start_ms(days_ago, start_time, duration_s,
@@ -1899,7 +1899,7 @@ class ReplicaApi:
 
         # Same pre-submit gate as the CLI: geometry vs claimed distance,
         # BD/GCJ pairs, isPass, bucket sums, lap coverage.
-        from .rundata import validate_run_data
+        from .domain.rundata import validate_run_data
         issues = validate_run_data(run)
         if issues:
             return _fail('提交前自检未通过: %s' % issues)

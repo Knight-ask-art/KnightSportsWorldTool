@@ -18,7 +18,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from replica.transport import netsec, obs
-from replica import pipeline, stadium   # noqa: E402
+from replica import pipeline   # noqa: E402
+from replica.domain import stadium   # noqa: E402
 
 try:                                    # pytest is optional for the script runner
     import pytest
@@ -282,7 +283,7 @@ def test_local_gate_daily_cap():
 
 def test_backfill_time():
     """--days-ago/--time stamps the record in the chosen 09:00-22:00 slot."""
-    from replica import safety as S
+    from replica.domain import safety as S
 
     y = S.now_ms() - 24 * 3600 * 1000
     ydate = S.to_beijing(y).strftime('%Y-%m-%d')
@@ -324,7 +325,7 @@ def test_backfill_daily_reminder_from_server():
     path = os.path.join(tmp, 'school_rules.json')
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(rules, f)
-    from replica import safety as S
+    from replica.domain import safety as S
     y_ms = S.now_ms() - 24 * 3600 * 1000
     try:
         c = FakeClient(policy=POLICY_OK, points=POINTS_OK, records=[

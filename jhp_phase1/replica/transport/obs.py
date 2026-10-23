@@ -32,8 +32,8 @@ import math
 import os
 import time
 
-from .. import safety
-from .. import coords
+from ..domain import safety
+from ..domain import coords
 
 OBS_SIGN_PATH = 'api/obs/temporary/url'
 BUCKET = 'iydsj-hbase-hot'
@@ -415,7 +415,7 @@ def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
 def self_test() -> list[tuple[str, bool, str]]:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from ..rundata import generate_run_data
+    from ..domain.rundata import generate_run_data
 
     out = []
     run = generate_run_data(distance_km=2.5, pace_min_per_km=6.0)

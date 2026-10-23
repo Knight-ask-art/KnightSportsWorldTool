@@ -5,7 +5,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from replica.rundata import generate_run_data, validate_run_data
+from replica.domain.rundata import generate_run_data, validate_run_data
 
 
 WAYPOINTS = [(22.4108, 112.9408), (22.4118, 112.9418), (22.4100, 112.9410)]

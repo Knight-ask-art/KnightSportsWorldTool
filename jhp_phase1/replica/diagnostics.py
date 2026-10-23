@@ -16,7 +16,7 @@ import sys
 import time
 
 from .transport import netsec
-from . import safety
+from .domain import safety
 
 
 def _mask_id(value) -> str:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-from . import coords
+from .domain import coords
 
 PATH = 'api/v70103/runModePolicy'
 

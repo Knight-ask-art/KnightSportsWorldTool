@@ -18,12 +18,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 try:                                     # python -m jhp_phase1.replica.server
-    from . import crypto as C
+    from .domain import crypto as C
     from .mock_65530 import MockBackendState, serve as serve_be
     from .mock_iydsj import MockIydsjState, serve as serve_iydsj
     from .replica_api import ReplicaApi
 except ImportError:                      # python -m replica.server (cwd=jhp_phase1)
-    from replica import crypto as C
+    from replica.domain import crypto as C
     from replica.mock_65530 import MockBackendState, serve as serve_be
     from replica.mock_iydsj import MockIydsjState, serve as serve_iydsj
     from replica.replica_api import ReplicaApi

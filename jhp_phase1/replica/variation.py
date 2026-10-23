@@ -39,7 +39,7 @@ import datetime as dt
 import json
 import random
 
-from . import safety
+from .domain import safety
 
 # --------------------------------------------------------------------------
 # bands

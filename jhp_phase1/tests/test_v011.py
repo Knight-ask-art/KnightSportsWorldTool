@@ -12,7 +12,7 @@ from replica import points
 from replica import policy
 from replica import readonly
 from replica import replica_api as RA
-from replica import safety
+from replica.domain import safety
 
 
 class PointsPathTest(unittest.TestCase):

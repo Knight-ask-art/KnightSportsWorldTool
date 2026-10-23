@@ -108,7 +108,7 @@ def safe_error(text) -> str:
     """Error text that is safe to store/display (no token/password)."""
     text = str(text or '')
     try:
-        from .safety import redact_text
+        from .domain.safety import redact_text
         text = redact_text(text)
     except Exception:  # noqa: BLE001 - a missing masker must not break keepalive
         pass

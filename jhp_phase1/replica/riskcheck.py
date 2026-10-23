@@ -22,7 +22,7 @@ import json
 import re
 import urllib.request
 
-from . import safety
+from .domain import safety
 
 #: free, key-less, no-login endpoints; tried in order
 IP_APIS = [

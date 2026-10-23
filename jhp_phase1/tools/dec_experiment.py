@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, r'C:\Users\20969\AppData\Local\Temp\opencode\apk_work')
 
-from replica import rundata
+from replica.domain import rundata
 from replica.transport.realclient import Account, RealClient, build_headers, SUBMIT_URL
 from replica.transport.sidecar import UnidbgSidecar
 

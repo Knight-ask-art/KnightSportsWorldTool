@@ -5,8 +5,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from replica import crypto as C
-from replica import rundata as R
+from replica.domain import crypto as C
+from replica.domain import rundata as R
 from replica.mock_iydsj import MockIydsjState, serve as serve_iydsj
 from replica.mock_65530 import MockBackendState, serve as serve_be
 from replica.replica_api import ReplicaApi
@@ -139,7 +139,7 @@ def main():
     dup = api.uploadRunningData('stu01', run, 'G01-123-abcdef0123456789')
     check('duplicate 10304', dup['code'] == 10304, extra=str(dup)[:120])
     # tampered signature rejected by mock recomputation
-    from replica.rundata import build_upload_entity, sign_upload_entity
+    from replica.domain.rundata import build_upload_entity, sign_upload_entity
     ent = sign_upload_entity(build_upload_entity(run, {'uid': 'x'}))
     ent['signature'] = '0' * 32
     inner = {'uid': 'x', 'token': '', 'DeviceId': '',

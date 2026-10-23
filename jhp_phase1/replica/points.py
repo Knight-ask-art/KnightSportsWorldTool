@@ -36,7 +36,7 @@ import time
 import uuid
 
 from .transport import netsec
-from . import coords
+from .domain import coords
 
 POINTS_PATH_PREFIX = '/api/v560/get/1/distance/'
 # Kept for callers that only need a sentinel path; real requests must use
@@ -400,7 +400,7 @@ def route_order(points: list[dict], start_lat: float, start_lng: float) -> list[
 # --------------------------------------------------------------------------
 
 def self_test() -> list[tuple[str, bool, str]]:
-    from . import coords
+    from .domain import coords
     out = []
 
     # BD-only payload (the usual case)

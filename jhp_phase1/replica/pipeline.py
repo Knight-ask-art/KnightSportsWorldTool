@@ -22,12 +22,10 @@ import random
 import sys
 import time
 
-from . import health, safety
-from .guard import (AlreadySubmitted, GuardError, ReceiptStore,
-                                       UnknownPending)
+from .domain import health, safety
+from .guard import AlreadySubmitted, GuardError, ReceiptStore, UnknownPending
 from .transport.realclient import Account, RealClient, as_dict
-from .rundata import (build_upload_entity, generate_run_data,
-                                        sign_upload_entity, validate_run_data)
+from .domain.rundata import build_upload_entity, generate_run_data, sign_upload_entity, validate_run_data
 
 
 def log(msg):
@@ -46,10 +44,7 @@ def _keepalive_cli(args):
     liveness; a fresh password login is the only reliable renewal.  The
     password is held in memory and is never written to the session file.
     """
-    from .tokenkeeper import (
-        TokenKeeper, _read_json, _write_json, probe_real_session,
-        relogin_real, ensure_state,
-    )
+    from .tokenkeeper import TokenKeeper, _read_json, _write_json, probe_real_session, relogin_real, ensure_state
 
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(base, 'data', 'accounts_emu.json')
@@ -162,7 +157,7 @@ def do_points(client, acct, args, must_points=None):
     the behaviour of both `--custom` and the UI's hand-drawn waypoints).
     """
     from . import points as P
-    from . import routes as RT
+    from .domain import routes as RT
 
     cps = []
     if not args.no_points:
@@ -204,7 +199,7 @@ def do_points(client, acct, args, must_points=None):
         source = 'custom'
 
     elif getattr(args, 'stadium', None):
-        from . import stadium
+        from .domain import stadium
         log('      田径场模式（周长 %.0fm）...' % args.stadium)
         if cps:
             fit = stadium.make_stadium_ring(

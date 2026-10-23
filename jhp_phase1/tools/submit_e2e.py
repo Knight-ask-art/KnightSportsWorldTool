@@ -18,7 +18,7 @@ import urllib.request
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from replica import rundata  # noqa: E402
+from replica.domain import rundata  # noqa: E402
 from replica.transport.realclient import (Account, build_headers, token_sign,  # noqa: E402
                                 HOST, SUBMIT_URL)
 from replica.transport.sidecar import JARS  # noqa: E402

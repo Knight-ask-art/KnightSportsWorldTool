@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from replica import rundata
+from replica.domain import rundata
 
 FIELDS31 = None
 
@@ -134,7 +134,7 @@ def validate(km, pace, cadence=172, seed=0):
 
     # ---- signature ----
     signed = rundata.sign_upload_entity(ent, salt="x" * 32)
-    from replica.crypto import UPLOAD_SIGN_FIELDS
+    from replica.domain.crypto import UPLOAD_SIGN_FIELDS
     ok.append(check("31 sign fields present",
                     all(k in ent for k in UPLOAD_SIGN_FIELDS),
                     [k for k in UPLOAD_SIGN_FIELDS if k not in ent]))
@@ -161,7 +161,7 @@ def validator_negative():
     case below injects one known-bad shape and asserts it is reported.
     """
     import copy
-    from replica.rundata import generate_run_data, validate_run_data
+    from replica.domain.rundata import generate_run_data, validate_run_data
 
     base = generate_run_data(distance_km=2.5, pace_min_per_km=6.0)
     ok = []
