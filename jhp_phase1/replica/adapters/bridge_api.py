@@ -22,9 +22,9 @@ from urllib.parse import urlparse
 
 import requests
 
-from .domain import crypto as C
-from .domain.rundata import generate_run_data
-from .transport.realclient import as_dict
+from ..domain import crypto as C
+from ..domain.rundata import generate_run_data
+from ..transport.realclient import as_dict
 
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
 #: open-source build; AMap binds keys to a domain/app and a leaked one is a
@@ -147,7 +147,7 @@ def semester_view(summary, personal):
     days_left = None
     if end_ms:
         try:
-            from .domain import safety as S
+            from ..domain import safety as S
             end_day = S.to_beijing(int(end_ms)).date()
             days_left = (end_day - S.to_beijing(S.now_ms()).date()).days
         except Exception:  # noqa: BLE001
@@ -509,7 +509,7 @@ class ReplicaApi:
         """Official-shaped submit: full UploadFormatEntity, locally signed
         (originalSign=getPreSign, signature=getSign over the 31-field map),
         hybrid-encrypted envelope, POST to save/record."""
-        from .domain.rundata import build_upload_entity, sign_upload_entity
+        from ..domain.rundata import build_upload_entity, sign_upload_entity
         st = self._students.get(sid, {})
         login = st.get('loginInfo') or {}
         ctx = {
@@ -772,7 +772,7 @@ class ReplicaApi:
 
     def _real_account(self):
         """Build a realclient.Account from the stored session."""
-        from .transport.realclient import Account
+        from ..transport.realclient import Account
         d = self._read_session()
         # A disabled session is never used, even if a stale token survived.
         if d.get('disabled') or not d.get('token'):
@@ -802,7 +802,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
+        from ..transport import realclient as R
         try:
             rc = R.RealClient()
             res = rc.request(acct, 'api/v70100/user/info', method='GET',
@@ -875,7 +875,7 @@ class ReplicaApi:
     def _remote_logout_background(acct) -> None:
         """Best-effort server logout after the local gate is already closed."""
         try:
-            from .transport import realclient as R
+            from ..transport import realclient as R
             R.RealClient().logout_and_verify(acct)
         except Exception:  # noqa: BLE001
             pass
@@ -890,8 +890,8 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import riskcheck as RK
-        from .domain import safety as S
+        from ..application import riskcheck as RK
+        from ..domain import safety as S
         campus = campus_name if campus_name is not None else (acct.campusName or '')
         school = school_name if school_name is not None else (acct.schoolName or '')
         try:
@@ -939,7 +939,7 @@ class ReplicaApi:
         res = None
         verify_error = ''
         if acct is not None:
-            from .transport import realclient as R
+            from ..transport import realclient as R
             try:
                 res = R.RealClient().logout_and_verify(acct)
             except Exception as e:  # noqa: BLE001
@@ -978,7 +978,7 @@ class ReplicaApi:
                 self._keeper = None
 
     def _keeper_instance(self):
-        from .tokenkeeper import DEFAULT_INTERVAL_S, TokenKeeper, probe_real_session, relogin_real
+        from ..application.tokenkeeper import DEFAULT_INTERVAL_S, TokenKeeper, probe_real_session, relogin_real
         with self._keeper_lock:
             if self._keeper is None:
                 d = self._read_session()
@@ -1066,7 +1066,7 @@ class ReplicaApi:
         so the rest of the UI works unchanged.
         """
         try:
-            from .login_flow import login as do_login
+            from ..application.login_flow import login as do_login
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录模块不可用: {e}')
         try:
@@ -1096,7 +1096,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
+        from ..transport import realclient as R
         if unid is not None:
             acct.unid = int(unid)
         try:
@@ -1126,7 +1126,7 @@ class ReplicaApi:
                     # lat/lon, or BD coordinates; pair_gcj normalises all
                     # three.  Reading glat/glon directly produced an empty
                     # polygon for other campuses.
-                    from .domain import coords
+                    from ..domain import coords
                     poly = []
                     for p in pts:
                         if not isinstance(p, dict):
@@ -1161,7 +1161,7 @@ class ReplicaApi:
 
         # 3) live checkpoints (the 必经点位 the replay draws)
         try:
-            from . import points as P
+            from ..application import points as P
             pts = P.fetch_points(rc, acct,
                                  out['center']['lat'] if out['center'] else acct.center_lat,
                                  out['center']['lon'] if out['center'] else acct.center_lng,
@@ -1199,12 +1199,12 @@ class ReplicaApi:
 
     def get_school_rules(self):
         """User-entered school rules; the model is disabled until configured."""
-        from . import qualification as Q
+        from ..application import qualification as Q
         rules = Q.load_rules()
         return _ok({'rules': rules, 'configured': Q.is_configured(rules)})
 
     def save_school_rules(self, rules=None, **kw):
-        from . import qualification as Q
+        from ..application import qualification as Q
         payload = dict(rules or {})
         payload.update(kw)
         try:
@@ -1215,7 +1215,7 @@ class ReplicaApi:
 
     def real_plan(self, days=14, seed=None, km_min=2.0, km_max=3.0):
         """Future run schedule, offline.  Same generator as `--plan`."""
-        from . import variation as V
+        from ..application import variation as V
         import random as _r
         rng = _r.Random(int(seed)) if seed is not None else None
         slots = V.plan(int(days), rng=rng,
@@ -1228,8 +1228,8 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import points as P
+        from ..transport import realclient as R
+        from ..application import points as P
         try:
             rc = R.RealClient()
             f = P.fetch_fence(rc, acct)
@@ -1246,8 +1246,8 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import readonly as RO
+        from ..transport import realclient as R
+        from ..application import readonly as RO
         try:
             rc = R.RealClient()
             r = RO.recent_records(rc, acct, limit=limit)
@@ -1268,10 +1268,10 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import readonly as RO
-        from .domain import safety as S
-        from . import limits as L
+        from ..transport import realclient as R
+        from ..application import readonly as RO
+        from ..domain import safety as S
+        from ..application import limits as L
         try:
             day_obj = S.resolve_backfill_date(date, days_ago)
         except ValueError as e:
@@ -1304,10 +1304,10 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import readonly as RO
-        from .domain import safety as S
-        from . import limits as L
+        from ..transport import realclient as R
+        from ..application import readonly as RO
+        from ..domain import safety as S
+        from ..application import limits as L
         today = S.to_beijing(S.now_ms()).date()
         if dates is None:
             wanted = [(today - _dt.timedelta(days=i)).isoformat()
@@ -1352,7 +1352,7 @@ class ReplicaApi:
                     'error': got.get('error')})
 
     def _receipt_store(self):
-        from .guard import ReceiptStore
+        from ..application.guard import ReceiptStore
         return ReceiptStore(os.path.join(self.store_dir,
                                          'submission_receipts'))
 
@@ -1365,7 +1365,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .domain import safety as S
+        from ..domain import safety as S
         try:
             limit = max(1, min(int(limit), 200))
         except (TypeError, ValueError):
@@ -1412,9 +1412,9 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import readonly as RO
-        from .domain import safety as S
+        from ..transport import realclient as R
+        from ..application import readonly as RO
+        from ..domain import safety as S
         try:
             store = self._receipt_store()
             rows = store.list(acct.uid, school=str(acct.unid))
@@ -1484,8 +1484,8 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import readonly as RO
+        from ..transport import realclient as R
+        from ..application import readonly as RO
         try:
             rc = R.RealClient()
             r = RO.record_detail(rc, acct, rrid, uuid=uuid)
@@ -1500,8 +1500,8 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import readonly as RO
+        from ..transport import realclient as R
+        from ..application import readonly as RO
         try:
             rc = R.RealClient()
             r = RO.weekly_summary(rc, acct, weeks=weeks)
@@ -1558,8 +1558,8 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import readonly as RO
+        from ..transport import realclient as R
+        from ..application import readonly as RO
         try:
             rc = R.RealClient()
         except Exception as e:  # noqa: BLE001
@@ -1600,8 +1600,8 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import policy as POL
+        from ..transport import realclient as R
+        from ..application import policy as POL
         try:
             rc = R.RealClient()
         except Exception as e:  # noqa: BLE001
@@ -1642,8 +1642,8 @@ class ReplicaApi:
 
     def real_diagnostics(self):
         """Redacted support bundle; safe to paste into an issue."""
-        from . import diagnostics as D
-        from .domain import safety as S
+        from ..diagnostics import collector as D
+        from ..domain import safety as S
         try:
             info = D.collect(crypto_backend='netsec', app_version=APP_VERSION,
                              extra={'generated_by': 'replica_api',
@@ -1670,9 +1670,9 @@ class ReplicaApi:
         omitted the check stays explicitly ``unknown`` instead of pretending
         this tool's local receipt counter proves anything about the server.
         """
-        from .domain.rundata import generate_run_data
-        from . import qualification as Q
-        from .domain import safety as S
+        from ..domain.rundata import generate_run_data
+        from ..application import qualification as Q
+        from ..domain import safety as S
         try:
             wps = [(float(a), float(b)) for a, b in (waypoints or [])]
             cps = []
@@ -1738,7 +1738,7 @@ class ReplicaApi:
         follows streets instead of cutting across buildings.  Slow by design
         (one request per leg, rate-limited), so the UI shows progress.
         """
-        from .transport import amap
+        from ..transport import amap
         pts = [(float(a), float(b)) for a, b in (points or [])]
         if len(pts) < 2:
             return _fail('至少需要 2 个点')
@@ -1774,10 +1774,10 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from .transport import realclient as R
-        from . import points as P
-        from .domain.rundata import build_upload_entity, sign_upload_entity
-        from .guard import ReceiptStore, AlreadySubmitted, UnknownPending, GuardError
+        from ..transport import realclient as R
+        from ..application import points as P
+        from ..domain.rundata import build_upload_entity, sign_upload_entity
+        from ..application.guard import ReceiptStore, AlreadySubmitted, UnknownPending, GuardError
 
         try:
             rc = R.RealClient()
@@ -1788,7 +1788,7 @@ class ReplicaApi:
         policy_ts = None
         policy_data = None
         try:
-            from . import policy as POL
+            from ..application import policy as POL
             for rm in (1, 2):
                 try:
                     policy_data = POL.fetch_policy(rc, acct, run_mode=rm)
@@ -1823,7 +1823,7 @@ class ReplicaApi:
         # list aborts, same as the reference: dropping a required point yields
         # a record that can never be complete.
         try:
-            from . import policy as _POL
+            from ..application import policy as _POL
             mp = _POL.extract_must_points(policy_data) if policy_data else []
         except Exception as e:  # noqa: BLE001
             return _fail(f'策略必经点无法解析，已中止: {e}')
@@ -1837,7 +1837,7 @@ class ReplicaApi:
             wps = P.rotate_to(wps, first)
 
         # ---- 1b. a user route must still pass the checkpoints -----------
-        from .domain import routes as RT
+        from ..domain import routes as RT
         missed = []
         if wps and cps:
             missed = RT.missed_points(wps, cps)
@@ -1863,7 +1863,7 @@ class ReplicaApi:
             pass
         # The operator may backfill today .. 3 days ago, 09:00-22:00.  Resolve
         # the slot before forging so every timestamp in the record agrees.
-        from .domain import safety as S
+        from ..domain import safety as S
         duration_s = float(km) * float(pace) * 60.0
         try:
             start_ms = S.resolve_start_ms(days_ago, start_time, duration_s,
@@ -1877,7 +1877,7 @@ class ReplicaApi:
         # Keep the night guard, but do not turn the school's daily cap into a
         # hard block here.  The cap is a *reminder* in the model; the operator
         # may still have a legitimate reason to submit (and the server decides).
-        from . import limits as L
+        from ..application import limits as L
         refusal = L.check(acct.uid, start_ms, max_per_day=0,
                           block_night=True)
         if refusal:
@@ -1899,15 +1899,15 @@ class ReplicaApi:
 
         # Same pre-submit gate as the CLI: geometry vs claimed distance,
         # BD/GCJ pairs, isPass, bucket sums, lap coverage.
-        from .domain.rundata import validate_run_data
+        from ..domain.rundata import validate_run_data
         issues = validate_run_data(run)
         if issues:
             return _fail('提交前自检未通过: %s' % issues)
 
         # User-entered school rules -> qualification model.  If the rules are
         # incomplete the model stays silent; it never guesses a school's rules.
-        from . import qualification as Q
-        from . import readonly as RO
+        from ..application import qualification as Q
+        from ..application import readonly as RO
         rules = Q.load_rules()
         # The school's daily cap applies to the *run date*.  Prefer the
         # server's record list (it also sees other devices/app runs); the local
@@ -1931,8 +1931,8 @@ class ReplicaApi:
             return _fail('合格模型未通过: %s' % '；'.join(bad),
                          data={'model': model})
 
-        from . import policy as POL
-        from . import riskcheck as RK
+        from ..application import policy as POL
+        from ..application import riskcheck as RK
         city = RK.device_city(acct.campusName, acct.schoolName) or \
             f'{acct.schoolName} {acct.campusName}'.strip()
         ctx = {
@@ -2022,7 +2022,7 @@ class ReplicaApi:
         # column. Without this the run exists but shows no track and no
         # checkpoints (upstream issue #85).
         try:
-            from .transport import obs as OBS
+            from ..transport import obs as OBS
             time.sleep(1.0)          # reference: flow.rs sleeps 1 s here
             fpj = json.dumps(run['fixed_point_json'], separators=(',', ':'))
             obs_res = OBS.upload_obs(rc, acct, run, res['rrid'], res['uuid'],

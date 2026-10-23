@@ -1,14 +1,12 @@
-"""Runnable replica server (Phase 2).
+"""Local application server: static frontend + JSON bridge API.
 
-Mirrors the new product's BackgroundWebServer idea: one local HTTP server that
-1. serves the replica frontend (static files in ../frontend/),
-2. exposes ReplicaApi's public methods as POST /bridge/<method>,
-3. embeds both mock servers (iydsj school-server + 65530 backend) in-process.
+1. serves the frontend from ``<app>/frontend``,
+2. exposes :class:`ReplicaApi` methods as ``POST /bridge/<method>``,
+3. hosts the compatibility mock servers in-process.
 
 Usage:  python run.py [--port 65520] [--no-browser]
-Then open http://127.0.0.1:65520/ (matches the product's Debug URL shape).
-Stdlib + requests + pycryptodome only.
 """
+
 import inspect
 import json
 import os
@@ -17,19 +15,14 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
-try:                                     # python -m jhp_phase1.replica.server
-    from .domain import crypto as C
-    from .mock_65530 import MockBackendState, serve as serve_be
-    from .mock_iydsj import MockIydsjState, serve as serve_iydsj
-    from .replica_api import ReplicaApi
-except ImportError:                      # python -m replica.server (cwd=jhp_phase1)
-    from replica.domain import crypto as C
-    from replica.mock_65530 import MockBackendState, serve as serve_be
-    from replica.mock_iydsj import MockIydsjState, serve as serve_iydsj
-    from replica.replica_api import ReplicaApi
+from ..compat.mocks.mock_65530 import MockBackendState, serve as serve_be
+from ..compat.mocks.mock_iydsj import MockIydsjState, serve as serve_iydsj
+from ..domain import crypto as C
+from .bridge_api import ReplicaApi
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FRONTEND_DIR = os.path.join(BASE_DIR, 'frontend')
+APP_DIR = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FRONTEND_DIR = os.path.join(APP_DIR, 'frontend')
 
 #: Cap on a bridge request body. The server only listens on 127.0.0.1, but an
 #: unbounded read is still a one-line denial of service.
@@ -43,7 +36,7 @@ def _default_store_dir() -> str:
         return os.path.abspath(os.path.expanduser(env))
     if getattr(sys, 'frozen', False):
         return os.path.join(os.path.dirname(sys.executable), 'data')
-    return os.path.join(BASE_DIR, 'data')
+    return os.path.join(APP_DIR, 'data')
 
 
 STORE_DIR = _default_store_dir()

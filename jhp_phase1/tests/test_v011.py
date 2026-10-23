@@ -8,10 +8,10 @@ import tempfile
 import unittest
 from unittest import mock
 
-from replica import points
-from replica import policy
-from replica import readonly
-from replica import replica_api as RA
+from replica.application import points
+from replica.application import policy
+from replica.application import readonly
+from replica.adapters import bridge_api as RA
 from replica.domain import safety
 
 
@@ -107,7 +107,7 @@ class RouteCleanTest(unittest.TestCase):
 
 class ReceiptsBridgeTest(unittest.TestCase):
     def test_receipts_are_read_from_the_store(self):
-        from replica.guard import ReceiptStore
+        from replica.application.guard import ReceiptStore
         old = os.environ.get('JHP_DATA_DIR')
         tmp = tempfile.mkdtemp(prefix='jhp_v011_')
         try:

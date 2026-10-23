@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
 
-from replica.server import serve
+from replica.adapters.http_server import serve
 
 
 def _post(base, method='real_get_session', **kwargs):

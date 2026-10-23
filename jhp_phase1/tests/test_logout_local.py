@@ -8,7 +8,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from replica.transport import realclient  # noqa: E402
-from replica.replica_api import ReplicaApi  # noqa: E402
+from replica.adapters.bridge_api import ReplicaApi  # noqa: E402
 
 
 def test_logout_uses_the_official_v6_endpoint():

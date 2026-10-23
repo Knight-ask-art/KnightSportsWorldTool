@@ -5,7 +5,7 @@ No network, no real account: probe/relogin are injected fakes.
 """
 import json
 
-from replica import tokenkeeper as T
+from replica.application import tokenkeeper as T
 
 
 def _write(path, data):

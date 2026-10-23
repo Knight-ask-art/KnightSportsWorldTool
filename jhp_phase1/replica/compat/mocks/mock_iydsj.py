@@ -24,8 +24,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
-from .domain import crypto as C
-from .domain.rundata import validate_run_data
+from ...domain import crypto as C
+from ...domain.rundata import validate_run_data
 
 
 class MockIydsjState:

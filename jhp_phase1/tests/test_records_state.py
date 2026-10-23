@@ -6,7 +6,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from replica.readonly import normalise_record  # noqa: E402
+from replica.application.readonly import normalise_record  # noqa: E402
 
 
 def _row(**kw):

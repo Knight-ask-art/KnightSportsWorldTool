@@ -25,7 +25,7 @@ import gzip
 import json
 import time
 
-from .domain import coords, safety
+from ..domain import coords, safety
 
 CHEAT_PATH = 'api/v78/cheat/cheatlist'
 SEMESTER_SUMMARY_PATH = 'api/v55/runnings/recordssummary/semester'

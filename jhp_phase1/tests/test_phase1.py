@@ -7,9 +7,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from replica.domain import crypto as C
 from replica.domain import rundata as R
-from replica.mock_iydsj import MockIydsjState, serve as serve_iydsj
-from replica.mock_65530 import MockBackendState, serve as serve_be
-from replica.replica_api import ReplicaApi
+from replica.compat.mocks.mock_iydsj import MockIydsjState, serve as serve_iydsj
+from replica.compat.mocks.mock_65530 import MockBackendState, serve as serve_be
+from replica.adapters.bridge_api import ReplicaApi
 
 PASS = []
 FAIL = []

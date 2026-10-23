@@ -6,7 +6,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from replica import replica_api  # noqa: E402
+from replica.adapters import bridge_api as replica_api  # noqa: E402
 
 
 def _api(tmp_path):

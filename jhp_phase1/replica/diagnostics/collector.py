@@ -15,8 +15,8 @@ import platform
 import sys
 import time
 
-from .transport import netsec
-from .domain import safety
+from ..transport import netsec
+from ..domain import safety
 
 
 def _mask_id(value) -> str:
@@ -57,7 +57,7 @@ def _selftest_summary() -> dict:
         except Exception as e:  # noqa: BLE001
             out[name] = {'error': str(e)[:80]}
     try:
-        from .transport import gt4
+        from ..transport import gt4
         r = gt4.self_test()
         out['gt4'] = {'pass': sum(1 for _, ok, _ in r if ok), 'total': len(r)}
     except Exception as e:  # noqa: BLE001

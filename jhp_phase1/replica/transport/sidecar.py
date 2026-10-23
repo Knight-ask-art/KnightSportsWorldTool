@@ -28,7 +28,8 @@ def _runtime_base() -> str:
     """Where the app lives: frozen exe dir, or the project dir in dev."""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
 
 
 def find_unidbg_dir() -> str:

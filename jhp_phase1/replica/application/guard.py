@@ -209,7 +209,7 @@ def _fmt(ms) -> str:
     # Beijing time, not the machine's (PR #82): a box on UTC would print a
     # window 8 hours off, and this string is how a conflict is recognised.
     try:
-        from .domain import safety
+        from ..domain import safety
         return safety.fmt_beijing(int(ms), '%m-%d %H:%M')
     except Exception:  # noqa: BLE001
         return time.strftime('%m-%d %H:%M', time.localtime(int(ms) / 1000))

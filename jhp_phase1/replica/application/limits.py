@@ -22,7 +22,7 @@ import datetime as _dt
 import json
 import os
 
-from .domain import safety
+from ..domain import safety
 
 DEFAULT_MAX_PER_DAY = 2
 DEFAULT_NIGHT_START = 23

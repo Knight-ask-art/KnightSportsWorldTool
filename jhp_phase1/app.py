@@ -7,7 +7,7 @@ import argparse
 import os
 import socket
 
-from replica.server import serve
+from replica.adapters.http_server import serve, FRONTEND_DIR
 
 
 def _free_port() -> int:
@@ -34,10 +34,11 @@ def main():
         import requests  # noqa: F401
         import webview  # noqa: F401
         from replica.transport import gt4, netsec, realclient  # noqa: F401
-        from replica import login_flow, replica_api, server  # noqa: F401
+        from replica.application import login_flow  # noqa: F401
+        from replica.adapters import bridge_api, http_server  # noqa: F401
         if not all(ok for _, ok, _ in gt4.self_test()):
             raise SystemExit(3)
-        index = os.path.join(server.FRONTEND_DIR, 'index.html')
+        index = os.path.join(FRONTEND_DIR, 'index.html')
         if not os.path.isfile(index):
             raise SystemExit(2)
         raise SystemExit(0)

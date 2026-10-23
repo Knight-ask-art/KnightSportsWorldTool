@@ -15,7 +15,7 @@ from __future__ import annotations
 from . import corpus
 
 #: 与公共模块的只读查询能力复用；迁移分层后改为 application 路径。
-from replica import readonly
+from replica.application import readonly
 
 
 def _num(value, default=0.0):

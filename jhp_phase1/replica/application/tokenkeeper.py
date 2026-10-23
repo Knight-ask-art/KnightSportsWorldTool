@@ -108,7 +108,7 @@ def safe_error(text) -> str:
     """Error text that is safe to store/display (no token/password)."""
     text = str(text or '')
     try:
-        from .domain.safety import redact_text
+        from ..domain.safety import redact_text
         text = redact_text(text)
     except Exception:  # noqa: BLE001 - a missing masker must not break keepalive
         pass
@@ -150,7 +150,7 @@ def probe_real_session(session: dict, proxy: str | None = None,
     if not token:
         return {'ok': False, 'auth_failed': False, 'message': '未配置 token'}
 
-    from .transport.realclient import Account, RealClient
+    from ..transport.realclient import Account, RealClient
 
     try:
         acct = Account(

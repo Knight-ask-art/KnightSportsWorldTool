@@ -21,8 +21,8 @@ import json
 import time
 import uuid
 
-from .transport import gt4 as GT4
-from .transport.realclient import Account, RealClient
+from ..transport import gt4 as GT4
+from ..transport.realclient import Account, RealClient
 
 GEE_CHECK = 'api/v65/security/checkGeeUse'
 GEE_VALIDATE = 'api/v70270/security/geevalidate'

@@ -47,7 +47,7 @@ import os
 import statistics
 import tempfile
 
-from .domain import safety
+from ..domain import safety
 
 #: Every key is optional.  A non-empty key is enough to enable the model.
 RULE_KEYS = (
@@ -547,7 +547,7 @@ def evaluate(run: dict, rules: dict, checkpoints: list | None = None,
 # ---------------------------------------------------------------------------
 
 def self_test() -> list[tuple[str, bool, str]]:
-    from .domain import rundata
+    from ..domain import rundata
 
     out = []
     rules = {

@@ -20,7 +20,7 @@ for path in (str(ROOT / 'jhp_phase1'), str(ROOT)):
         sys.path.insert(0, path)
 
 from private.research import collection, corpus  # noqa: E402
-from replica import readonly  # noqa: E402
+from replica.application import readonly  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

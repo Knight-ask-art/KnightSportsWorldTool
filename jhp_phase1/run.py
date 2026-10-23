@@ -2,7 +2,7 @@
 import argparse
 import webbrowser
 
-from replica.server import serve
+from replica.adapters.http_server import serve
 
 
 def main():
