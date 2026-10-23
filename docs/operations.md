@@ -196,7 +196,7 @@ python -m replica.points
 
 ```
 22/22 模块通过（含 tokenkeeper）
-86 passed（pytest tests/）
+87 passed（pytest tests/）
 3 passed（private/research/tests）
 38 passed（legacy_bridge_suite）
 23 passed（legacy_http_suite）

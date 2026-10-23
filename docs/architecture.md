@@ -2,6 +2,9 @@
 
 > 2026-10-24 结构重构后的现状。目标不是套模板，而是把「协议/计算/用例/入口/兼容」
 > 分开，让改动落在单一层里。
+>
+> 同日工作区目录更名：`jhp_phase1/` → `app/`，`apk_work/` → `reverse-engineering/`，
+> `platform-tools/` → `third_party/platform-tools/`。
 
 ---
 
@@ -101,7 +104,7 @@ adapters  ──▶ application ──▶ domain
 
 ```powershell
 cd 好想跑/app
-python -m pytest tests -q                 # 86 passed
+python -m pytest tests -q                 # 87 passed
 python -m replica.selfcheck               # 22/22 modules
 python tests\legacy\legacy_bridge_suite.py  # 38 checks
 python tests\legacy\legacy_http_suite.py    # 23 checks

@@ -422,10 +422,10 @@
               </div>
 
               <div class="params">
-                <div class="field"><label>距离</label><input id="inKm" value="2.5"><span class="unit">km</span></div>
-                <div class="field"><label>配速</label><input id="inPace" value="6.00"><span class="unit">min/km</span></div>
-                <div class="field"><label>步频</label><input id="inCad" value="172"><span class="unit">spm</span></div>
-                <div class="field"><label>海拔基准</label><input id="inAlt" value="25"><span class="unit">m</span></div>
+                <div class="field"><label>距离</label><input id="inKm" type="number" inputmode="decimal" min="0.5" max="42.2" step="0.1" value="2.5"><span class="unit">km</span></div>
+                <div class="field"><label>配速</label><input id="inPace" type="number" inputmode="decimal" min="2" max="20" step="0.01" value="6.00"><span class="unit">min/km</span></div>
+                <div class="field"><label>步频</label><input id="inCad" type="number" inputmode="numeric" min="60" max="260" step="1" value="172"><span class="unit">spm</span></div>
+                <div class="field"><label>海拔基准</label><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span class="unit">m</span></div>
               </div>
 
               <div class="params" style="margin-top:9px">

@@ -86,7 +86,6 @@ def payload_text(key: bytes, envelope: str) -> str:
 def encrypt_d(key: bytes, payload: bytes, key_data=None, platform=2,
               timestamp=None) -> str:
     """Inverse of decrypt_d — build the JSON and CBC-encrypt it."""
-    import os
     import time
     if isinstance(key, str):
         key = bytes.fromhex(key)

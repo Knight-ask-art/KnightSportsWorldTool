@@ -638,7 +638,6 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and odchk[0]['status'] == 'fail', odchk[:1]))
 
     # storage round-trip without touching the real data dir
-    import tempfile
     old = os.environ.get('JHP_DATA_DIR')
     tmp = tempfile.mkdtemp(prefix='jhp_rules_')
     os.environ['JHP_DATA_DIR'] = tmp

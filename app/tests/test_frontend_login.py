@@ -4,6 +4,7 @@ The full interaction test is Playwright-based (mocked bridge), but these checks
 make sure a future edit cannot silently remove the gate, re-introduce a
 blocking external font request, or break the external CSS/JS links.
 """
+import re
 from pathlib import Path
 
 
@@ -47,6 +48,13 @@ def test_partial_school_rules_and_issue_records_are_visible():
     assert 'id="netProxy"' in SOURCE
     assert 'id="netAmap"' in SOURCE
     assert 'logo-128.png' in SOURCE
+
+
+def test_run_parameter_inputs_are_numeric():
+    for input_id in ('inKm', 'inPace', 'inCad', 'inAlt'):
+        tag = re.search(r'<input\b[^>]*\bid="%s"[^>]*>' % input_id, HTML)
+        assert tag, input_id
+        assert 'type="number"' in tag.group(0), input_id
 
 
 def test_no_blocking_external_font_request():

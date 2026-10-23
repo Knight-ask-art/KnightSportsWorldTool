@@ -610,7 +610,7 @@ function downloadGpx(name, points){
     ? [+p[0], +p[1]] : [+p.lat, +(p.lng != null ? p.lng : p.lon)])
     .filter(p => isFinite(p[0]) && isFinite(p[1]));
   if(pts.length < 2){ toast('没有可导出的轨迹点'); return; }
-  const safe = String(name || 'jhp-route').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
+  const safe = String(name || 'haoxiangpao-route').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
   const body = pts.map(p => `      <trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}"></trkpt>`).join('\n');
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="好想跑" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk><name>${esc(safe)}</name><trkseg>\n${body}\n  </trkseg></trk>\n</gpx>`;
   const blob = new Blob([gpx], {type: 'application/gpx+xml;charset=utf-8'});
@@ -638,10 +638,10 @@ function importRouteToLibrary(){
     if(!name) return;
     const item = {name: name, type: 'file', line: line, closed: false,
                   saved_at: new Date().toISOString().slice(0, 10)};
-    await persistRoutes(LIVE.routes.concat([item]));
+    const ok = await persistRoutes(LIVE.routes.concat([item]));
     LIVE.selectedRoute = LIVE.routes.length - 1;
     renderRouteList(); selectRoute(LIVE.selectedRoute);
-    toast('已导入路线库');
+    routeSaveToast(ok, '已导入路线库');
   };
   inp.click();
 }
@@ -737,9 +737,10 @@ const startPage = (location.hash || '#overview').slice(1);
    Live bridge: the UI reads session / points / records / rules
    from the local Python bridge.  No synthetic rows are generated.
    ============================================================ */
+let _pointsSeq = 0, _recordsSeq = 0;
 const LIVE = {
   session: null, checked: null, points: [], fence: [], pointsDistance: null,
-  records: [], recordsLoaded: false, recordFilter: 'all',
+  records: [], recordsLoaded: false, recordsLoading: false, recordFilter: 'all',
   routes: [], selectedRoute: -1,
   routeFilter: 'all', rules: null, model: null, plan: null,
   runDate: null, daily: null, dailyCounts: {}, dailyCountsAt: 0,
@@ -839,7 +840,16 @@ function loginFail(msg){
   const err = $('#loginError');
   if(err){ err.textContent = msg; err.hidden = false; }
   const pass = $('#loginPass');
-  if(pass){ pass.focus(); pass.select(); }
+  if(pass){
+    pass.type = 'password';
+    pass.focus(); pass.select();
+    const eye = $('#loginEye');
+    if(eye){
+      eye.textContent = '显示';
+      eye.setAttribute('aria-pressed', 'false');
+      eye.setAttribute('aria-label', '显示密码');
+    }
+  }
 }
 function showLoginGate(message, tone){
   const gate = $('#loginGate'), app = $('#appShell');
@@ -1193,6 +1203,7 @@ async function bootAuth(){
 }
 
 function renderEmptyData(){
+  _pointsSeq++; _recordsSeq++;
   renderPoints([]);
   setFence([], '跑步围栏');
   route = [];
@@ -1201,6 +1212,7 @@ function renderEmptyData(){
   LIVE.fence = [];
   LIVE.records = [];
   LIVE.recordsLoaded = false;
+  LIVE.recordsLoading = false;
   LIVE.recordsError = null;
   LIVE.weekError = null;
   LIVE.planError = null;
@@ -1214,9 +1226,10 @@ function renderEmptyData(){
 }
 
 async function liveLogin(){
+  const btn = $('#accLogin');
+  if(btn && btn.disabled) return;
   const u = $('#accUser').value.trim(), p = $('#accPass').value;
   if(!u || !p){ toast('请填写手机号和密码'); return; }
-  const btn = $('#accLogin');
   btn.disabled = true; btn.textContent = '登录中…';
   liveLog('登录中', '正在验证账号', 'info');
   try{
@@ -1380,6 +1393,7 @@ function freeRunOn(){
 }
 async function loadPoints(force){
   if(!hasSession()){ toast('先登录后再刷新点位'); return; }
+  const seq = ++_pointsSeq;
   const s = LIVE.session;
   const btn = $('#fetchPoints');
   if(btn){ btn.textContent = '刷新中…'; btn.disabled = true; }
@@ -1389,6 +1403,8 @@ async function loadPoints(force){
     unid: s.unid || null, force: !!force,
     distance_m: Math.max(1, Math.round(kmNow * 1000))
   });
+  // A slower older request must not overwrite a newer campus/distance.
+  if(seq !== _pointsSeq) return;
   if(btn){ btn.textContent = '刷新'; btn.disabled = false; }
   if(!liveOk(j)){
     liveLog('围栏/点位加载失败', j.message || '', 'err');
@@ -1573,7 +1589,8 @@ function renderPlanGrid(){
 
 async function loadOverview(){
   if(!hasSession()){
-    LIVE.records = []; LIVE.recordsLoaded = false; LIVE.recordsError = null;
+    LIVE.records = []; LIVE.recordsLoaded = false;
+    LIVE.recordsLoading = false; LIVE.recordsError = null;
     LIVE.weekError = null; LIVE.planError = null;
     renderRecords();
     renderOverviewEmpty();
@@ -1691,10 +1708,16 @@ function renderOverview(records, week, weeks, semester){
 /* ---------------- records ---------------- */
 async function loadRecords(){
   if(!hasSession()){
-    LIVE.records = []; LIVE.recordsLoaded = false; LIVE.recordsError = null;
+    LIVE.records = []; LIVE.recordsLoaded = false; LIVE.recordsLoading = false;
+    LIVE.recordsError = null;
     renderRecords(); refreshChecks(); return;
   }
+  const seq = ++_recordsSeq;
+  LIVE.recordsLoading = true;
+  renderRecords();
   const j = await liveApi('real_recent_records', {limit: 20});
+  if(seq !== _recordsSeq) return;
+  LIVE.recordsLoading = false;
   if(!liveOk(j)){
     liveLog('记录加载失败', j.message || '', 'err');
     LIVE.records = []; LIVE.recordsLoaded = false;
@@ -1812,7 +1835,8 @@ function renderRecords(){
   if(!list.length){
     $('#recHint').textContent = LIVE.recordsError
       ? ('记录加载失败：' + LIVE.recordsError)
-      : (LIVE.records.length ? '当前筛选没有记录。' : '暂无记录。');
+      : (LIVE.records.length ? '当前筛选没有记录。'
+        : (LIVE.recordsLoading ? '正在读取记录…' : '暂无记录。'));
     if(!LIVE.records.length) clearRecordDetail();
   }else{
     $('#recHint').textContent = LIVE.recordsError
@@ -1947,7 +1971,7 @@ function exportRecordsCsv(){
   LIVE.records.forEach(r => rows.push([r.date || '', (+r.distance_km || 0).toFixed(3), r.duration_s || 0, (+r.pace_min_per_km || 0).toFixed(2), recordState(r), r.complete ? 1 : 0, r.normal_run === null || r.normal_run === undefined ? '' : r.normal_run, r.status_code === null || r.status_code === undefined ? '' : r.status_code, r.rrid || '']));
   const csv = rows.map(x => x.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join(String.fromCharCode(13,10));
   const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
-  saveBlob(blob, 'jhp-records.csv');
+  saveBlob(blob, 'haoxiangpao-records.csv');
 }
 
 /* ---------------- route library ---------------- */
@@ -1978,6 +2002,10 @@ function normaliseRoutes(parsed){
       saved_at: r.saved_at || ''
     }))
     .filter(r => r.line.length >= 2);
+}
+function routeSaveToast(ok, successText, failText){
+  toast(ok ? successText
+           : (failText || '路线只写入了浏览器缓存，data 写入失败；请重试'));
 }
 async function persistRoutes(next){
   LIVE.routes = next;
@@ -2084,19 +2112,21 @@ async function saveCurrentRoute(){
     saved_at: new Date().toISOString().slice(0, 10)
   };
   const next = LIVE.routes.concat([item]);
-  await persistRoutes(next);
+  const ok = await persistRoutes(next);
   LIVE.selectedRoute = LIVE.routes.length - 1;
   renderRouteList(); selectRoute(LIVE.selectedRoute);
-  toast('路线已保存');
+  routeSaveToast(ok, '路线已保存');
 }
 async function deleteSelectedRoute(){
   const i = LIVE.selectedRoute;
   if(i < 0 || !LIVE.routes[i]) return;
   if(!confirm('删除路线「' + (LIVE.routes[i].name || '') + '」？')) return;
   const next = LIVE.routes.filter((_, j) => j !== i);
-  await persistRoutes(next);
+  const ok = await persistRoutes(next);
   LIVE.selectedRoute = -1;
   renderRouteList(); selectRoute(-1);
+  routeSaveToast(ok, '路线已删除',
+    '已从列表移除，但 data 写入失败；重启后这条路线可能恢复');
 }
 
 async function saveDetailAsRoute(){
@@ -2108,10 +2138,10 @@ async function saveDetailAsRoute(){
   const item = {name: name, type: 'record',
                 line: track.map(p => [p.lat, p.lng]),
                 closed: false, saved_at: new Date().toISOString().slice(0, 10)};
-  await persistRoutes(LIVE.routes.concat([item]));
+  const ok = await persistRoutes(LIVE.routes.concat([item]));
   LIVE.selectedRoute = LIVE.routes.length - 1;
   renderRouteList(); selectRoute(LIVE.selectedRoute);
-  toast('已存为路线');
+  routeSaveToast(ok, '已存为路线');
 }
 
 async function copyDiagnostics(){
@@ -2125,8 +2155,9 @@ async function copyDiagnostics(){
   }catch(e){
     const ta = document.createElement('textarea');
     ta.value = text; document.body.appendChild(ta); ta.select();
-    try{ document.execCommand('copy'); toast('诊断包已复制'); }
-    catch(_e){ toast('复制失败，请手动选择'); }
+    let copied = false;
+    try{ copied = document.execCommand('copy'); }catch(_e){ copied = false; }
+    toast(copied ? '诊断包已复制' : '复制失败，请手动选择');
     ta.remove();
   }
 }
@@ -2721,11 +2752,13 @@ async function refreshModelPreview(){
   if(!ti.ok){ LIVE.model = null; renderModel(); refreshChecks(); return; }
   if(!LIVE.rules || !LIVE.rules.configured){ LIVE.model = null; renderModel(); refreshChecks(); return; }
   const di = dailyCountInfo();
+  const km = +$('#inKm').value, pace = +$('#inPace').value;
+  const cadence = +$('#inCad').value, altitude = +$('#inAlt').value;
+  if(!(km > 0) || !(pace > 0) || !(cadence > 0) || !isFinite(altitude)){
+    LIVE.model = null; renderModel(); refreshChecks(); return;
+  }
   const j = await liveApi('real_preview_model', {
-    km: +$('#inKm').value || 2.5,
-    pace: +$('#inPace').value || 6,
-    cadence: +$('#inCad').value || 172,
-    altitude: +$('#inAlt').value || 25,
+    km: km, pace: pace, cadence: cadence, altitude: altitude,
     waypoints: route && route.length >= 2 ? route : null,
     checkpoints: freeRunOn() ? null :
       livePoints.map(p => ({lat: p.lat, lon: p.lng, name: p.n, isMustPoint: p.must})),
@@ -2964,10 +2997,19 @@ async function submitRun(){
   if(!ti.ok){ toast('开始时间无效：' + ti.note); switchRunTab('params'); return; }
   refreshChecks();
   const allReady = !!(document.querySelector('#dock') && document.querySelector('#dock').classList.contains('ready'));
-  const km = +$('#inKm').value || 2.5;
-  const pace = +$('#inPace').value || 6;
-  const cadence = +$('#inCad').value || 172;
-  const altitude = +$('#inAlt').value || 25;
+  const km = +$('#inKm').value;
+  const pace = +$('#inPace').value;
+  const cadence = +$('#inCad').value;
+  const altitude = +$('#inAlt').value;
+  const invalid = !isFinite(km) || km <= 0 ? '距离'
+    : (!isFinite(pace) || pace <= 0 ? '配速'
+    : (!isFinite(cadence) || cadence <= 0 ? '步频'
+    : (!isFinite(altitude) ? '海拔基准' : '')));
+  if(invalid){
+    toast('请填写有效的' + invalid);
+    switchRunTab('params');
+    return;
+  }
   let di = dailyCountInfo();
   if(!di.loaded){
     toast('当日次数还没核对完，正在重试…');
@@ -3053,6 +3095,12 @@ async function submitRun(){
 
 /* ---------------- wire live controls ---------------- */
 function liveWire(){
+  // Closing the window mid-submit can turn a known result into an unknown one.
+  window.addEventListener('beforeunload', e => {
+    if(!LIVE.submitting) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
   const loginForm = $('#loginForm');
   if(loginForm){
     loginForm.addEventListener('submit', ev => { ev.preventDefault(); gateLogin(); });
@@ -3063,11 +3111,13 @@ function liveWire(){
       const pass = $('#loginPass');
       if(!pass) return;
       const show = pass.type === 'password';
+      const start = pass.selectionStart, end = pass.selectionEnd;
       pass.type = show ? 'text' : 'password';
       loginEye.textContent = show ? '隐藏' : '显示';
       loginEye.setAttribute('aria-pressed', show ? 'true' : 'false');
       loginEye.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
       pass.focus();
+      try{ pass.setSelectionRange(start, end); }catch(e){}
     });
   }
   ['#loginUser', '#loginPass'].forEach(sel => {
@@ -3093,6 +3143,12 @@ function liveWire(){
     toast('已填入计划档位');
   });
   $('#accLogin').addEventListener('click', liveLogin);
+  ['#accUser', '#accPass'].forEach(sel => {
+    const el = $(sel);
+    if(el) el.addEventListener('keydown', e => {
+      if(e.key === 'Enter'){ e.preventDefault(); liveLogin(); }
+    });
+  });
   $('#accTest').addEventListener('click', liveTestSession);
   $('#accLogout').addEventListener('click', liveLogout);
   $('#kaStart').addEventListener('click', liveKeepaliveStart);
@@ -3205,7 +3261,7 @@ function liveWire(){
   });
   $('#logExport').addEventListener('click', () => {
     const txt = LIVE.log.map(e => `[${e.time}] ${e.level.toUpperCase()} ${e.msg} ${e.detail}`).join(String.fromCharCode(10));
-    saveBlob(new Blob([txt], {type: 'text/plain;charset=utf-8'}), 'jhp-log.txt');
+    saveBlob(new Blob([txt], {type: 'text/plain;charset=utf-8'}), 'haoxiangpao-log.txt');
   });
   $('#logClear').addEventListener('click', () => { LIVE.log = []; renderLog(); });
 }

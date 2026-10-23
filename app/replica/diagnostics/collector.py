@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import platform
 import sys
-import time
 
 from ..transport import netsec
 from ..domain import safety

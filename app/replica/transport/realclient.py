@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 
 from .sidecar import get_sidecar
 
