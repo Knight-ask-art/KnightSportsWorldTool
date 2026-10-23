@@ -1240,12 +1240,6 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .plan-row .pf{border:0;background:transparent;color:var(--ink-blue);font:9px/1 var(--sans);cursor:pointer;padding:2px 3px;border-bottom:1px dotted var(--ink-blue)}
 .plan-row .pf:disabled{color:var(--rule);border-bottom-color:transparent;cursor:default}
 
-.corpus-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;margin-top:7px}
-.corpus-item{border:1px solid var(--rule);border-radius:var(--sketch-sm);background:var(--paper-2);padding:7px 8px;font:9.5px/1.4 var(--mono)}
-.corpus-item b{display:block;font:400 14px/1.2 var(--hand);color:var(--ink)}
-.corpus-item .cm{color:var(--faint)}
-.corpus-item button{margin-top:4px}
-
 .run-section-note{font:9.5px/1.45 var(--sans);color:var(--faint);margin:2px 0 6px}
 </style>
 </head>
@@ -1889,18 +1883,6 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
           </div>
         </div>
 
-        <section class="sec" id="corpusSec">
-          <div class="sec-head">
-            <h2>样本库（3 km+）</h2>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <span class="mini" id="corpusSummary">—</span>
-              <button class="btn small ghost" id="corpusCollect">采集最近记录</button>
-              <button class="btn small ghost" id="corpusRefresh">刷新</button>
-            </div>
-          </div>
-          <p class="hint" style="margin:-3px 0 5px">只收 3 km 以上、平台判定通过的记录；采集是只读动作，不会提交或修改服务器。</p>
-          <div class="corpus-list" id="corpusList"><div class="empty-state">还没有样本。</div></div>
-        </section>
       </div>
     </section>
 
@@ -2782,7 +2764,6 @@ function go(page){
   }
   if(page === 'routes'){
     setTimeout(() => { routeMap.invalidateSize(); selectRoute(LIVE.selectedRoute); }, 80);
-    loadCorpus();
   }
   if(page === 'records'){
     if(!LIVE.receiptsLoaded) loadReceipts();
@@ -2826,7 +2807,6 @@ const LIVE = {
   semester: null, semesterError: null,
   receipts: [], receiptsLoaded: false, receiptsError: null,
   preflight: null, lastDetail: null,
-  corpus: [], corpusLoaded: false,
   tokenUpdatedAt: null,
   log: [], submitting: false, lastSubmit: null
 };
@@ -3132,7 +3112,6 @@ function clearAccountActivity(){
   LIVE.recordsError = null;
   LIVE.semester = null; LIVE.semesterError = null;
   LIVE.receipts = []; LIVE.receiptsLoaded = false; LIVE.receiptsError = null;
-  LIVE.corpus = []; LIVE.corpusLoaded = false;
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   LIVE.lastDetail = null;
   renderLog();
@@ -3351,7 +3330,7 @@ async function liveLogout(){
     LIVE.daily = null; LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0;
     LIVE.dailyCountsUid = null; LIVE.receipts = []; LIVE.receiptsLoaded = false;
     LIVE.receiptsError = null;
-    LIVE.semester = null; LIVE.corpus = []; LIVE.corpusLoaded = false;
+    LIVE.semester = null;
     LIVE.lastDetail = null;
     clearAccountActivity();
     const verified = !!d.verified;
@@ -4210,59 +4189,6 @@ async function copyDiagnostics(){
     ta.remove();
   }
 }
-async function loadCorpus(){
-  if(!hasSession()){ LIVE.corpus = []; LIVE.corpusLoaded = false; renderCorpus(); return; }
-  const j = await liveApi('real_corpus', {}, 30000);
-  LIVE.corpusLoaded = liveOk(j);
-  LIVE.corpus = liveOk(j) ? (((j.data && j.data.samples) || [])) : [];
-  renderCorpus();
-}
-function renderCorpus(){
-  const wrap = $('#corpusList');
-  if(!wrap) return;
-  if($('#corpusSummary')){
-    $('#corpusSummary').textContent = LIVE.corpusLoaded
-      ? ((LIVE.corpus.length || 0) + ' 条 · 只收 3 km+')
-      : (hasSession() ? '未加载' : '登录后读取');
-  }
-  if(!LIVE.corpus.length){
-    wrap.innerHTML = `<div class="empty-state">${hasSession() ? '还没有样本。点「采集最近记录」从已通过的 3 km+ 记录里收。' : '登录后读取样本库。'}</div>`;
-    return;
-  }
-  wrap.innerHTML = LIVE.corpus.map(s => `<div class="corpus-item">
-    <b>${(+s.distance_km || 0).toFixed(2)} km · ${paceText((+s.pace_min_per_km || 0))}</b>
-    <span class="cm">${esc(s.start_text || '')} · ${s.cadence || '—'} spm · ${s.points || 0} 点</span>
-    <button class="btn small ghost" data-corpus-rrid="${esc(s.rrid || '')}">设为路线</button>
-  </div>`).join('');
-}
-async function collectCorpus(){
-  if(!hasSession()){ toast('先登录'); return; }
-  if(!confirm('只读采集最近 40 条记录中的 3 km+ 通过样本？\n会逐条读取详情，可能需要一点时间，不会提交或修改服务器。')) return;
-  const btn = $('#corpusCollect');
-  if(btn){ btn.disabled = true; btn.textContent = '采集中…'; }
-  try{
-    const j = await liveApi('real_corpus_collect', {limit: 40}, 180000);
-    if(!liveOk(j)){ toast('采集失败：' + (j.message || '')); liveLog('样本采集失败', j.message || '', 'warn'); return; }
-    const d = j.data || {};
-    toast(`采集完成：${d.count || 0} 条，跳过 ${d.skipped || 0} 条`);
-    liveLog('样本采集完成', `${d.count || 0} 条 / 符合 ${d.eligible || 0} 条`, 'ok');
-    await loadCorpus();
-  }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '采集最近记录'; }
-  }
-}
-async function useCorpusRoute(rrid){
-  const j = await liveApi('real_corpus_use', {rrid: rrid}, 30000);
-  if(!liveOk(j)){ toast(j.message || '读取样本失败'); return; }
-  const d = j.data || {};
-  if(!d.line || d.line.length < 2){ toast('样本没有可用轨迹'); return; }
-  route = d.line.map(p => [p[0], p[1]]);
-  setCloseUI(false); redraw();
-  go('run'); switchRunTab('route');
-  toast('已设为当前路线（' + (d.distance_km || 0).toFixed(2) + ' km）');
-  liveLog('已用样本路线', String(rrid), 'ok');
-}
-
 /* ---------------- rules / model ---------------- */
 const RULE_FIELDS = [
   ['rMinKm', 'min_km'], ['rMaxKm', 'max_km'],
@@ -5250,12 +5176,6 @@ function liveWire(){
   });
   $('#rdSaveRoute').addEventListener('click', saveDetailAsRoute);
   $('#diagCopy').addEventListener('click', copyDiagnostics);
-  $('#corpusRefresh').addEventListener('click', loadCorpus);
-  $('#corpusCollect').addEventListener('click', collectCorpus);
-  $('#corpusList').addEventListener('click', ev => {
-    const btn = ev.target.closest('[data-corpus-rrid]');
-    if(btn) useCorpusRoute(btn.dataset.corpusRrid);
-  });
   $('#ovPlanGrid').addEventListener('click', ev => {
     const btn = ev.target.closest('[data-plan-day]');
     if(!btn || btn.disabled) return;

@@ -246,7 +246,6 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_fetch_school_rules` | `run_mode` | 只读 `runModePolicy.runRuleModel`，映射成设置页规则；不猜未返回字段 |
 | `real_get_routes` | — | 读取本机 `data/routes.json` 路线库 |
 | `real_save_routes` | `routes` | 整体替换并校验路线库，替代仅靠 localStorage |
-| `real_corpus` / `real_corpus_collect` / `real_corpus_use` | `limit` / `rrid` | 3 km+ 达标样本的列表、显式只读采集、取轨迹当路线 |
 | `real_diagnostics` | — | 生成脱敏诊断包（不含 token/密码/uid/坐标/IP） |
 
 `date` 为 `YYYY-MM-DD`（北京时间），只接受今天..3 天前；`start_time` 为

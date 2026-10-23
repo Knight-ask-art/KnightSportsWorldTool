@@ -17,7 +17,7 @@ MODULES = [
     'coords', 'netsec', 'gt4', 'health', 'safety', 'guard', 'amap',
     'obs', 'policy', 'points', 'routes', 'stadium', 'readonly', 'riskcheck',
     'diagnostics', 'variation', 'identity', 'limits', 'realclient', 'server',
-    'qualification', 'corpus', 'tokenkeeper',
+    'qualification', 'tokenkeeper',
 ]
 
 

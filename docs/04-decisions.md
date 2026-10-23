@@ -101,3 +101,14 @@
 | 算法题式的手工推导 | `archive/reference/algorithms/` |
 | 旧协议、探针、版本差异 | `archive/reference/` |
 | 第三方 7.2.70 分析 | `apk_work/coaixy_ref/`（保留原位） |
+
+---
+
+## 7. 工程边界（2026-10-24）
+
+| 决策 | 内容 | 原因 |
+|---|---|---|
+| 采集 / 样本库私有化 | 实现移至 `private/research/`；数据默认写 `private/data/corpus/`；不进 UI、不进 bridge、不进打包 | 属于内部研究能力，不构成产品功能，且样本含真实轨迹 |
+| 公共包导入名 | `replica` 为唯一 canonical 名称；`jhp_phase1.replica` 仅作兼容 | 避免同一进程加载两份模块与全局状态 |
+| 旧 71 API / mock | 隔离到 `compat`，默认不暴露、不删除 | 可能仍被旧脚本使用，先冻结再评估 |
+| 恢复点 | 仓库根 `好想跑/` 初始化 Git；`data/`、`backup/`、`dist/`、`private/data/`、`archive/`、`apk_work/` 全部忽略 | 保证可回滚，同时不把凭据和运行数据入库 |

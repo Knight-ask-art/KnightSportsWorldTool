@@ -6,7 +6,6 @@ import json
 import os
 import tempfile
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 from jhp_phase1.replica import points
@@ -226,58 +225,6 @@ class BridgeIntegrationTest(unittest.TestCase):
             got = api.real_semester()
         self.assertEqual(got['code'], 500)
         self.assertIn('学期数据读取失败', got['message'])
-
-    def test_corpus_collect_keeps_old_samples(self):
-        from jhp_phase1.replica import corpus as CO
-        api = self._api()
-        os.makedirs(CO.corpus_dir(), exist_ok=True)
-        old = {'rrid': 1, 'start_ms': 1, 'summary': {'distance_m': 3100},
-               'track': [{'lat': 22.41, 'lng': 112.94}], 'five_point': []}
-        with open(CO.corpus_path('1'), 'w', encoding='utf-8') as f:
-            f.write(json.dumps(old, ensure_ascii=False) + '\n')
-        listing = {'ok': True, 'records': [{
-            'rrid': 2, 'uuid': 'u2', 'start_ms': 2,
-            'distance_m': 3200, 'duration_s': 1200,
-            'pace_s_per_km': 375, 'avg_step_freq': 170, 'steps': 3400,
-            'calorie': 200, 'complete': True, 'reasons': [], 'status': '有效',
-        }]}
-        detail = {'ok': True, 'detail': {'complete': True},
-                  'stats': {'has_track': True},
-                  'track': [{'lat': 22.42, 'lng': 112.95}],
-                  'five_point': []}
-        with mock.patch.object(readonly, 'recent_records',
-                               return_value=listing), \
-             mock.patch.object(readonly, 'record_detail',
-                               return_value=detail):
-            report = CO.collect_style(object(), SimpleNamespace(uid='1'))
-        self.assertTrue(report['ok'])
-        self.assertEqual(report['count'], 1)
-        self.assertEqual(report['kept'], 1)
-        self.assertEqual(report['total'], 2)
-        kept = list(CO.load_style('1'))
-        self.assertEqual({s['rrid'] for s in kept}, {1, 2})
-
-    def test_corpus_bridge(self):
-        from jhp_phase1.replica import corpus as CO
-        api = self._api()
-        os.makedirs(CO.corpus_dir(), exist_ok=True)
-        sample = {
-            'rrid': 7, 'start_ms': 1_000_000,
-            'summary': {'distance_m': 3200, 'pace_s_per_km': 366,
-                        'cadence': 174, 'steps': 3000},
-            'track': [{'lat': 22.41, 'lng': 112.94},
-                      {'lat': 22.411, 'lng': 112.941}],
-            'five_point': [],
-        }
-        with open(CO.corpus_path('1'), 'w', encoding='utf-8') as f:
-            f.write(json.dumps(sample, ensure_ascii=False) + '\n')
-        got = api.real_corpus()
-        self.assertEqual(got['code'], 200)
-        self.assertEqual(got['data']['count'], 1)
-        self.assertEqual(got['data']['samples'][0]['points'], 2)
-        used = api.real_corpus_use(7)
-        self.assertEqual(used['code'], 200)
-        self.assertEqual(len(used['data']['line']), 2)
 
     def test_daily_counts_bridge(self):
         api = self._api()

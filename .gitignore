@@ -4,7 +4,8 @@ jhp_phase1/backup/
 jhp_phase1/dist/
 jhp_phase1/build/
 jhp_phase1/build_tmp/
-private/
+private/data/
+private/**/*.jsonl
 *.pem
 *.key
 *.token

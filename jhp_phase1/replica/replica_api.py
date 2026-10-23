@@ -1,6 +1,6 @@
 """Replica backend API surface: the 71 protocol bridge methods (00201.0.0)
 plus the real-server extensions used by the UI (receipts, semester, routes,
-preflight, corpus, diagnostics).
+preflight, diagnostics).
 
 Calling convention mirrors the product: every method returns
 {"code": 200|500|600, "message": str, "data": ...}.
@@ -1640,73 +1640,6 @@ class ReplicaApi:
                 errors.append('runMode=%d: %s' % (mode, e))
         return _fail('服务器没有返回可用的学校规则: %s' % '; '.join(errors),
                      data={'errors': errors})
-
-    def real_corpus(self):
-        """List the 3 km+ style samples collected for this account."""
-        acct = self._real_account()
-        if acct is None:
-            return _fail('未配置 token（先在"账号"面板保存）')
-        from . import corpus as CO
-        from . import safety as S
-        rows = []
-        for s in CO.load_style(acct.uid):
-            summary = s.get('summary') or {}
-            rows.append({
-                'rrid': s.get('rrid'),
-                'start_ms': s.get('start_ms'),
-                'start_text': S.fmt_beijing(s.get('start_ms'))
-                if s.get('start_ms') else '',
-                'distance_km': round(float(summary.get('distance_m') or 0)
-                                     / 1000.0, 3),
-                'pace_min_per_km': round(float(summary.get('pace_s_per_km') or 0)
-                                         / 60.0, 2),
-                'cadence': summary.get('cadence'),
-                'steps': summary.get('steps'),
-                'points': len(s.get('track') or []),
-                'five_points': len(s.get('five_point') or []),
-                'has_track': bool(s.get('track')),
-            })
-        rows.sort(key=lambda x: x.get('start_ms') or 0, reverse=True)
-        return _ok({'samples': rows, 'count': len(rows),
-                    'min_distance_m': CO.MIN_STYLE_M})
-
-    def real_corpus_use(self, rrid):
-        """Return one sample's track as UI route points ([[lat,lng],...])."""
-        acct = self._real_account()
-        if acct is None:
-            return _fail('未配置 token（先在"账号"面板保存）')
-        from . import corpus as CO
-        for s in CO.load_style(acct.uid):
-            if str(s.get('rrid')) != str(rrid):
-                continue
-            line = [[float(p['lat']), float(p['lng'])]
-                    for p in (s.get('track') or [])
-                    if p.get('lat') is not None and p.get('lng') is not None]
-            if len(line) < 2:
-                return _fail('这条样本没有可用轨迹')
-            summary = s.get('summary') or {}
-            return _ok({'rrid': s.get('rrid'), 'line': line,
-                        'distance_km': round(float(summary.get('distance_m') or 0)
-                                             / 1000.0, 3),
-                        'name': '样本 ' + str(s.get('rrid'))})
-        return _fail('样本不存在或已被清理')
-
-    def real_corpus_collect(self, limit=40):
-        """Explicit read-only collection of >=3 km pass records."""
-        acct = self._real_account()
-        if acct is None:
-            return _fail('未配置 token（先在"账号"面板保存）')
-        from . import corpus as CO
-        from . import realclient as R
-        try:
-            rc = R.RealClient()
-            report = CO.collect_style(rc, acct,
-                                      limit=max(1, min(int(limit), 100)))
-        except Exception as e:  # noqa: BLE001
-            return _fail('样本采集失败: %s' % e)
-        if not report.get('ok'):
-            return _fail(report.get('error') or '样本采集失败')
-        return _ok(report)
 
     def real_diagnostics(self):
         """Redacted support bundle; safe to paste into an issue."""

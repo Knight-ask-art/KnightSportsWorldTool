@@ -12,7 +12,6 @@
 | `submission_receipts/<uid>__<unid>.json` | 提交回执（状态、rrid、时间窗） | 可以（不含 token/坐标） |
 | `points_cache.json` | 打卡点缓存（300 秒，按目标距离分键） | 可以 |
 | `routes.json` | 路线库（手绘/导入/记录生成） | 可以 |
-| `corpus/<uid>.jsonl` | 3 km+ 达标样本（含轨迹，只读采集） | **不能**（含坐标） |
 | `students.json` / `sport.json` / `account.json` | 旧 mock / 本地账号密码 | **不能** |
 | `../campus_fence_47203.json` | 这个校区围栏的样例（10 点） | 可以 |
 
@@ -94,12 +93,13 @@ UI 的「记录 → 提交回执」提供 **只读核对**：按开始时间（�
 - **自由跑**只在“学校确实没有打卡点”时使用。勾选后提交不拉点位，但仍检查
   围栏/距离/配速/时间窗；学校策略若有必经点，后端会明确拒绝。
 
-### 2.6 路线库与样本库
+### 2.6 路线库
 
 - 路线存在 `data/routes.json`，不再只靠浏览器 `localStorage`；换端口/换 exe
   不会丢。导入导出是 GPX/GeoJSON/JSON/CSV，纯本地解析。
-- 样本库只收 `distance_m >= 3000`、`complete=true`、reasonList 全过的记录；
-  采集是显式只读动作，不在登录/提交时自动跑。
+
+> 采集与样本库不在产品内：实现与数据都放在 `private/`，默认写入
+> `private/data/corpus/`，不参与打包、不注册 bridge、不在界面暴露。
 
 ### 2.7 学校要求自动读取
 

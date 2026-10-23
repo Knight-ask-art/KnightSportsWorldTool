@@ -49,7 +49,7 @@ python run.py --port 65520 --store D:\somewhere\data
 | **总览** | 本周/近 4 周、本学期进度、未来 14 天计划、最近记录 | 来自 `real_weekly_summary` / `real_semester` / `real_plan` |
 | **账号** | 登录/退出、token 校验、设备与会话、保活 | token 存 `data/accounts_emu.json`；密码不落盘 |
 | **跑步** | 地图优先；围栏/点位、四种路线来源、模型、日期/开始时间、网络自检、提交、日志 | 点位按目标距离拉取；自由跑可选；提交前只列真实检查项 |
-| **路线库** | 本机 `data/routes.json`、导入/导出 GPX、3 km+ 样本库 | 不再只靠 `localStorage`；服务端不存路线 |
+| **路线库** | 本机 `data/routes.json`、导入/导出 GPX | 不再只靠 `localStorage`；服务端不存路线 |
 | **记录** | 最近记录、详情轨迹地图、提交回执、CSV/GPX 导出 | 回执只读核对；状态来自 `get_one_record` 回读 |
 | **设置** | 11 项学校要求、代理/高德 Key、诊断包 | 登录后优先从服务器自动读取；未返回项留空，不猜规则 |
 
@@ -128,12 +128,13 @@ python run.py --port 65520 --store D:\somewhere\data
 距离、配速、时间窗和学校策略。学校策略里若有必经点，后端会明确拒绝，
 不会假装成功。只在学校确实没有打卡点时使用。
 
-### 路线库 / GPX / 样本库
+### 路线库 / GPX
 
 - 路线从 `localStorage` 迁到本机 `data/routes.json`；换端口或用 exe 都不会丢。
 - 「路线库」支持导入 GPX/GeoJSON/JSON/CSV，选中路线或当前路线可导出 GPX。
-- 「样本库（3 km+）」只收平台判定通过的 3 km 以上记录；采集是显式只读动作，
-  可把样本轨迹设为当前路线。
+
+> 采集与样本库属于内部研究能力，已移出产品界面与 bridge API，
+> 见 `private/README.md`；公开版本不提供该功能。
 
 ### 学期进度与 14 天计划
 

@@ -1,5 +1,9 @@
 # 交接：好想跑 v0.1.1（jhp_phase1）
 
+> **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
+> 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
+> 回归基线更新为 `pytest 85 passed`、`selfcheck 22/22`。
+
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
 > `apk_work/unidbg/PORT_FROM_NEKO.md`；更早的文档已统一封存到 `archive/`。
