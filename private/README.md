@@ -10,7 +10,7 @@
 
 ## 边界
 
-- 公共代码（`jhp_phase1/replica`、`frontend`）**不得** import `private.*`。
+- 公共代码（`app/replica`、`frontend`）**不得** import `private.*`。
 - 私有代码**可以** import 公共包（只读复用 `readonly` 等能力）。
 - `private/data/` 已被 `.gitignore` 排除；样本默认写入
   `private/data/corpus/<uid>.jsonl`，可用 `JHP_CORPUS_DIR` 覆盖。

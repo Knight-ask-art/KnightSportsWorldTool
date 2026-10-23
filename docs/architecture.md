@@ -55,9 +55,9 @@ adapters  ──▶ application ──▶ domain
 | `python -m replica.selfcheck` | `replica/diagnostics/selfcheck.py` | 由 `replica/selfcheck.py` 薄包装转发 |
 | `POST /bridge/<method>` | `replica/adapters/bridge_api.py` | 本地 UI 的 JSON 接口 |
 
-`replica` 是唯一 canonical 导入名。`jhp_phase1.replica` 仍可在把
-`jhp_phase1/` 的父目录加入 `sys.path` 时导入，仅作历史兼容；测试、工具和应用
-代码都不再使用它。
+`replica` 是唯一 canonical 导入名（工作目录为 `app/`）。从仓库根目录执行
+`python -m app.replica.*` 也能运行，但那是命名空间路径，不应在代码里使用；
+测试、工具和应用统一从 `replica` 导入，避免同一模块被加载两次。
 
 ---
 
@@ -65,9 +65,9 @@ adapters  ──▶ application ──▶ domain
 
 | 路径 | 内容 | 入库/打包 |
 |---|---|---|
-| `jhp_phase1/data/` | 会话、设备指纹、限额、回执、点位缓存、路线库 | 否 |
-| `jhp_phase1/backup/` | 本机数据备份 | 否 |
-| `jhp_phase1/dist/` | 构建产物 | 否 |
+| `app/data/` | 会话、设备指纹、限额、回执、点位缓存、路线库 | 否 |
+| `app/backup/` | 本机数据备份 | 否 |
+| `app/dist/` | 构建产物 | 否 |
 | `private/data/` | 采集样本（含轨迹） | 否 |
 
 `JHP_DATA_DIR` 覆盖应用数据目录；`JHP_CORPUS_DIR` 覆盖私有样本目录。
@@ -100,7 +100,7 @@ adapters  ──▶ application ──▶ domain
 ## 6. 验证基线
 
 ```powershell
-cd 好想跑/jhp_phase1
+cd 好想跑/app
 python -m pytest tests -q                 # 86 passed
 python -m replica.selfcheck               # 22/22 modules
 python tests\legacy\legacy_bridge_suite.py  # 38 checks
@@ -109,4 +109,4 @@ python tools\validate_sim.py              # 1/2/3/5 km + validator
 python app.py --check                     # exit 0
 ```
 
-真实登录 / 真实提交 / OBS 回放仍未在本轮验证，状态见 `04-decisions.md`。
+真实登录 / 真实提交 / OBS 回放仍未在本轮验证，状态见 `decisions.md`。

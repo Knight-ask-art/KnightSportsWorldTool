@@ -15,7 +15,7 @@ from unittest import mock
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-for path in (str(ROOT / 'jhp_phase1'), str(ROOT)):
+for path in (str(ROOT / 'app'), str(ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
 

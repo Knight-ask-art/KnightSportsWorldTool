@@ -9,43 +9,61 @@
 
 ```text
 好想跑/
-├─ README.md                  # 本文件：入口、边界、命令
-├─ .gitignore                 # 运行数据/凭据/研究资料全部排除
-├─ docs/                      # 使用、API、运维、决策、历史、架构
-│  ├─ architecture.md         # 分层规则与迁移映射
-│  ├─ handoff.md              # 会话交接（历史记录）
-│  ├─ 01-usage.md
-│  ├─ 02-api.md
-│  ├─ 03-operations.md
-│  ├─ 04-decisions.md
-│  └─ 05-history.md
-├─ jhp_phase1/                # 应用源码与构建根
-│  ├─ app.py                  # 桌面入口
-│  ├─ run.py                  # 浏览器入口
-│  ├─ build.ps1               # 兼容包装 → packaging/build.ps1
-│  ├─ pyproject.toml          # 依赖与 pytest/ruff 配置
-│  ├─ README.md               # 代码结构与分层说明
-│  ├─ replica/                # 分层包（transport/domain/application/...）
-│  ├─ frontend/               # 单页 UI + Leaflet
-│  ├─ tests/                  # pytest；legacy/ 为历史运行器
-│  ├─ tools/                  # validate_sim.py；legacy/ 为归档脚本
-│  ├─ fixtures/               # 静态样例
-│  ├─ packaging/              # PyInstaller + 图标 + 用户说明
-│  ├─ design/                 # 设计源文件
-│  ├─ data/  backup/  dist/   # 运行时/构建产物（忽略）
-├─ private/                   # 不公开：采集与样本库（不打包、不进 UI/API）
+├─ README.md                        # 本文件：入口、边界、命令
+├─ .gitignore                       # 运行数据 / 凭据 / 研究资料排除规则
+├─ app/                             # 桌面应用：源码、前端、测试、打包
+│  ├─ app.py                        # 桌面窗口入口（pywebview）
+│  ├─ run.py                        # 浏览器模式入口
+│  ├─ build.ps1                     # 构建包装脚本 → packaging/build.ps1
+│  ├─ pyproject.toml                # 依赖、pytest、ruff 配置
+│  ├─ README.md                     # 代码结构与分层说明
+│  ├─ replica/                      # 协议复刻与业务核心
+│  │  ├─ transport/                 # 网络、加密、登录、OBS
+│  │  ├─ domain/                    # 坐标、轨迹、规则、安全边界
+│  │  ├─ application/               # 用例编排：预检、保活、限额、查询
+│  │  ├─ adapters/                  # HTTP bridge、静态服务、CLI
+│  │  ├─ compat/                    # 旧接口的兼容 mock
+│  │  └─ diagnostics/               # 自检与脱敏诊断
+│  ├─ frontend/                     # 单页界面（HTML/CSS/JS + Leaflet）
+│  ├─ tests/                        # pytest；legacy/ 为历史运行器
+│  ├─ tools/                        # 仿真校验；legacy/ 为归档脚本
+│  ├─ packaging/                    # PyInstaller 配置、图标、用户说明
+│  ├─ fixtures/                     # 测试样例数据
+│  ├─ design/                       # 设计源文件
+│  └─ data/  backup/  dist/         # 运行时 / 构建产物（不提交）
+├─ docs/                            # 项目文档
+│  ├─ usage.md                      # 安装、界面、命令行、环境变量
+│  ├─ api.md                        # 接口与字段
+│  ├─ operations.md                 # 文件位置、限额、排错
+│  ├─ decisions.md                  # 设计与取舍
+│  ├─ history.md                    # 历史与证据
+│  ├─ architecture.md               # 分层规则与迁移映射
+│  └─ handoff.md                    # 会话交接
+├─ private/                         # 私有采集与样本库（不打包、不进 UI/API）
 │  ├─ README.md
-│  ├─ research/               # collection.py / corpus.py + 私有测试
-│  └─ data/                   # 采集产物（忽略）
-├─ archive/                   # 历史文档（忽略；含旧凭据，勿外发）
-├─ apk_work/                  # 逆向证据与反编译产物（忽略）
-└─ platform-tools/            # adb 等外部工具（忽略）
+│  ├─ research/                     # collection.py / corpus.py + 私有测试
+│  └─ data/                         # 采集产物（不提交）
+├─ reverse-engineering/             # APK / 协议逆向证据（不提交，勿外发）
+├─ archive/                         # 历史归档（不提交；含旧凭据）
+└─ third_party/                     # 外部工具
+   └─ platform-tools/               # adb / fastboot（不提交）
 ```
+
+### 各目录做什么
+
+| 目录 | 用途 | 是否进安装包 |
+|---|---|---|
+| `app/` | 唯一的产品代码根：桌面入口、核心逻辑、前端、测试、打包配置 | 是 |
+| `docs/` | 使用、接口、运维、决策、历史与架构文档 | 否 |
+| `private/` | 采集与样本库，只在本机研究使用，不注册接口 | 否 |
+| `reverse-engineering/` | APK 逆向、协议分析、历史证据，体积大且含敏感信息 | 否 |
+| `archive/` | 早期文档与备份，仅供追溯 | 否 |
+| `third_party/` | 外部下载的工具（Android platform-tools） | 否 |
 
 ## 快速开始
 
 ```powershell
-cd 好想跑\jhp_phase1
+cd 好想跑\app
 
 # 1) 安装依赖（已有环境可跳过）
 python -m pip install -e .
@@ -62,7 +80,7 @@ python run.py --port 65520
 ## 测试
 
 ```powershell
-cd 好想跑\jhp_phase1
+cd 好想跑\app
 python -m pytest tests -q            # 主测试套件
 python -m replica.selfcheck          # 22 个模块离线自测
 python tools\validate_sim.py         # 造数/校验器矩阵
@@ -79,7 +97,7 @@ python -m pytest private\research\tests -q
 ## 构建
 
 ```powershell
-cd 好想跑\jhp_phase1
+cd 好想跑\app
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 # 输出 dist\好想跑_v<版本>\ + dist\好想跑_v<版本>_win64.zip
 ```
@@ -95,8 +113,8 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 ## 文档
 
-- 使用说明：[`docs/01-usage.md`](docs/01-usage.md)
-- Bridge API：[`docs/02-api.md`](docs/02-api.md)
-- 运行与排错：[`docs/03-operations.md`](docs/03-operations.md)
+- 使用说明：[`docs/usage.md`](docs/usage.md)
+- Bridge API：[`docs/api.md`](docs/api.md)
+- 运行与排错：[`docs/operations.md`](docs/operations.md)
 - 架构与分层：[`docs/architecture.md`](docs/architecture.md)
-- 决策记录：[`docs/04-decisions.md`](docs/04-decisions.md)
+- 决策记录：[`docs/decisions.md`](docs/decisions.md)

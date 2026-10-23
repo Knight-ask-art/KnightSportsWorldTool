@@ -1,4 +1,4 @@
-# 交接：好想跑 v0.1.1（jhp_phase1）
+# 交接：好想跑 v0.1.1（app）
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
@@ -6,7 +6,7 @@
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
-> `apk_work/unidbg/PORT_FROM_NEKO.md`；更早的文档已统一封存到 `archive/`。
+> `reverse-engineering/unidbg/PORT_FROM_NEKO.md`；更早的文档已统一封存到 `archive/`。
 > 旧 `交接文档.md`（2026-09-07）的响应解密部分已被纯 Python `netsec.py` 取代，
 > 不要再按它去修 unidbg。
 
@@ -92,15 +92,15 @@ GET /                                           200；css/js/Leaflet 静态资�
 好想跑/
 ├── docs/                          ← 当前文档（从这里开始）
 │   ├── README.md                  ← 索引 + 5 分钟上手
-│   ├── 01-usage.md                ← 运行 / UI / CLI
-│   ├── 02-api.md                  ← 接口 / 字段 / 单位
-│   ├── 03-operations.md           ← 数据文件 / 风控闸门 / 排错
-│   ├── 04-decisions.md            ← 关键决策与证据
-│   └── 05-history.md              ← 时间线 → 封存文档
+│   ├── usage.md                ← 运行 / UI / CLI
+│   ├── api.md                  ← 接口 / 字段 / 单位
+│   ├── operations.md           ← 数据文件 / 风控闸门 / 排错
+│   ├── decisions.md            ← 关键决策与证据
+│   └── history.md              ← 时间线 → 封存文档
 ├── archive/                       ← 过时文档（只读，不再维护）
 │   ├── unidbg-era/                ← unidbg / Frida 时代
 │   └── reference/                 ← 旧协议、探针、算法题
-├── jhp_phase1/                    ← 交付代码（就是这里）
+├── app/                    ← 交付代码（就是这里）
 │   ├── replica/                   ← 全部业务模块
 │   ├── frontend/                  ← 单页 UI（Leaflet + 高德瓦片）
 │   ├── tests/                     ← pytest + 自定义 runner 双兼容
@@ -109,7 +109,7 @@ GET /                                           200；css/js/Leaflet 静态资�
 │   ├── HANDOFF.md                 ← 本文（会话交接）
 │   ├── app.py / run.py            ← pywebview / 浏览器入口
 │   └── build.ps1 / build.spec     ← 旧打包脚本
-└── apk_work/unidbg/
+└── reverse-engineering/unidbg/
     ├── PORT_FROM_NEKO.md          ← 技术主日志（最权威）
     └── OracleFlow.java            ← 旧预言机（已退役，别再启动）
 ```
@@ -117,7 +117,7 @@ GET /                                           200；css/js/Leaflet 静态资�
 ### 常用命令
 
 ```powershell
-cd D:\C-Drive-Archive\Downloads\聚合跑最新版（点进去下载）\好想跑\jhp_phase1
+cd D:\C-Drive-Archive\Downloads\聚合跑最新版（点进去下载）\好想跑\app
 
 # Web UI（开发）
 python run.py --port 65520
@@ -135,7 +135,7 @@ python -m replica.pipeline --token <t> --uid <uid> --random --proxy http://127.0
 python -m replica.pipeline ... --route-file my.gpx --route-close --snap-route
 
 # 田径场（会拟合真实打卡点）
-python -m jhp_phase1.replica.pipeline ... --km 3.0 --stadium 400
+python -m app.replica.pipeline ... --km 3.0 --stadium 400
 
 # 回归
 python -m replica.selfcheck
@@ -295,7 +295,7 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
 总览真实数值、记录列表/详情、规则填充、模型 92 分、点位/围栏渲染、提交成功日志；
 登录页单独验证过：无 token 显示门禁、密码错误提示、登录成功进入 app 并自动启动
 保活、退出登录回到门禁；旧账号禁用/清除状态也验证过（不探测、不重登；历史凭据已删除）；
-无 page error。回归截图在 `frontend/shots/newui-*`。
+无 page error。回归截图在 `frontend/screenshots/newui-*`。
 
 ### P0-5 跑步合格模型（已实现后端 + 新 UI）
 
@@ -331,7 +331,7 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
 - 验证不通过就保留本地 token，返回失败，绝不假装登出；
 - `replica_api.real_logout` 成功后才清空 `accounts_emu.json` 的 token/uid；
 - 旧 UI 已有「退出登录」按钮；CLI：
-  `python -m jhp_phase1.replica.pipeline --logout --token <t> --uid <uid>`；
+  `python -m app.replica.pipeline --logout --token <t> --uid <uid>`；
 - 本轮修正了 `logout_and_verify` 的假阳性：HTTP 500、解密失败、空响应、业务
   `error=500` 现在一律是 `verify-error`，只有 HTTP 401/403 或业务 401/403/10121
   才算 `stage=verified`；仍 200 + `error=10000` 明确是 `still-alive`。
@@ -346,7 +346,7 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
   - `live_account.json` 已删除；
   - `data/accounts.json` 写成 `[]`，`data/accounts_emu.json` 写成 `{}`，
     `data/points_cache.json` 写成 `{}`；
-  - `apk_work` 里的旧账号抓包/请求/内存产物已删除；
+  - `reverse-engineering` 里的旧账号抓包/请求/内存产物已删除；
   - `archive/` 文档、工具脚本里的旧 uid、手机号、密码、昵称、旧 token 已替换为
     `[REDACTED_*]` 或环境变量读取；
   - `%TEMP%` 下含旧账号的 `jhp_*` 测试目录已删除。
@@ -397,7 +397,7 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
    已加 `_ensure_data_dir()` 模块级兜底，pytest 也用自己的临时目录。
 3. 去掉 `login_flow.py` / `pipeline.py` / `tests/test_netsec.py` 的硬编码绝对路径，
    改成按 `__file__` 计算；`login_flow` 改相对导入，为打包做准备。
-   两种启动方式（`python -m replica.*` 与 `python -m jhp_phase1.replica.*`）都实测通过。
+   两种启动方式（`python -m replica.*` 与 `python -m app.replica.*`）都实测通过。
 
 ---
 
