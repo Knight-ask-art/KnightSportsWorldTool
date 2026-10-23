@@ -1001,6 +1001,13 @@ function beijingParts(){
     weekday: '周' + '日一二三四五六'[d.getUTCDay()]
   };
 }
+function greetingText(){
+  const h = beijingNowDate().getHours();
+  if(h < 5) return '夜深了';
+  if(h < 12) return '早上好';
+  if(h < 18) return '下午好';
+  return '晚上好';
+}
 function nowHM(){
   // Logs are read alongside server timestamps; always show Beijing time even
   // when the desktop is set to another timezone.
@@ -1125,7 +1132,7 @@ function renderSession(){
   $('#ovLoginChip').className = 'chip ' + (s.disabled ? 'red' : (logged ? (verified ? 'ok' : 'warn') : 'warn'));
   $('#ovLoginChip').innerHTML = '<i></i>' + $('#ovLoginChip').textContent;
   const bp = beijingParts();
-  $('#ovGreeting').textContent = '早上好' + (name ? '，' + name : '');
+  $('#ovGreeting').textContent = greetingText() + (name ? '，' + name : '');
   $('#ovDate').textContent = bp.iso + ' ' + bp.weekday;
   // #runDate is owned by updateRunDateLabel(); resetting it here overwrote a
   // backfill date the operator had already chosen.
