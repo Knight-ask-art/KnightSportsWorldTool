@@ -33,8 +33,8 @@ def main():
         import numpy  # noqa: F401
         import requests  # noqa: F401
         import webview  # noqa: F401
-        from replica import (  # noqa: F401
-            gt4, login_flow, netsec, realclient, replica_api, server)
+        from replica.transport import gt4, netsec, realclient  # noqa: F401
+        from replica import login_flow, replica_api, server  # noqa: F401
         if not all(ok for _, ok, _ in gt4.self_test()):
             raise SystemExit(3)
         index = os.path.join(server.FRONTEND_DIR, 'index.html')

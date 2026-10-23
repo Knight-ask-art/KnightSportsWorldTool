@@ -24,7 +24,7 @@ import requests
 
 from . import crypto as C
 from .rundata import generate_run_data
-from .realclient import as_dict
+from .transport.realclient import as_dict
 
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
 #: open-source build; AMap binds keys to a domain/app and a leaked one is a
@@ -772,7 +772,7 @@ class ReplicaApi:
 
     def _real_account(self):
         """Build a realclient.Account from the stored session."""
-        from .realclient import Account
+        from .transport.realclient import Account
         d = self._read_session()
         # A disabled session is never used, even if a stale token survived.
         if d.get('disabled') or not d.get('token'):
@@ -802,7 +802,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         try:
             rc = R.RealClient()
             res = rc.request(acct, 'api/v70100/user/info', method='GET',
@@ -875,7 +875,7 @@ class ReplicaApi:
     def _remote_logout_background(acct) -> None:
         """Best-effort server logout after the local gate is already closed."""
         try:
-            from . import realclient as R
+            from .transport import realclient as R
             R.RealClient().logout_and_verify(acct)
         except Exception:  # noqa: BLE001
             pass
@@ -939,7 +939,7 @@ class ReplicaApi:
         res = None
         verify_error = ''
         if acct is not None:
-            from . import realclient as R
+            from .transport import realclient as R
             try:
                 res = R.RealClient().logout_and_verify(acct)
             except Exception as e:  # noqa: BLE001
@@ -978,8 +978,7 @@ class ReplicaApi:
                 self._keeper = None
 
     def _keeper_instance(self):
-        from .tokenkeeper import (DEFAULT_INTERVAL_S, TokenKeeper,
-                                  probe_real_session, relogin_real)
+        from .tokenkeeper import DEFAULT_INTERVAL_S, TokenKeeper, probe_real_session, relogin_real
         with self._keeper_lock:
             if self._keeper is None:
                 d = self._read_session()
@@ -1097,7 +1096,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         if unid is not None:
             acct.unid = int(unid)
         try:
@@ -1229,7 +1228,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import points as P
         try:
             rc = R.RealClient()
@@ -1247,7 +1246,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import readonly as RO
         try:
             rc = R.RealClient()
@@ -1269,7 +1268,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import readonly as RO
         from . import safety as S
         from . import limits as L
@@ -1305,7 +1304,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import readonly as RO
         from . import safety as S
         from . import limits as L
@@ -1413,7 +1412,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import readonly as RO
         from . import safety as S
         try:
@@ -1485,7 +1484,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import readonly as RO
         try:
             rc = R.RealClient()
@@ -1501,7 +1500,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import readonly as RO
         try:
             rc = R.RealClient()
@@ -1559,7 +1558,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import readonly as RO
         try:
             rc = R.RealClient()
@@ -1601,7 +1600,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import policy as POL
         try:
             rc = R.RealClient()
@@ -1739,7 +1738,7 @@ class ReplicaApi:
         follows streets instead of cutting across buildings.  Slow by design
         (one request per leg, rate-limited), so the UI shows progress.
         """
-        from . import amap
+        from .transport import amap
         pts = [(float(a), float(b)) for a, b in (points or [])]
         if len(pts) < 2:
             return _fail('至少需要 2 个点')
@@ -1775,7 +1774,7 @@ class ReplicaApi:
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
-        from . import realclient as R
+        from .transport import realclient as R
         from . import points as P
         from .rundata import build_upload_entity, sign_upload_entity
         from .guard import ReceiptStore, AlreadySubmitted, UnknownPending, GuardError
@@ -2023,7 +2022,7 @@ class ReplicaApi:
         # column. Without this the run exists but shows no track and no
         # checkpoints (upstream issue #85).
         try:
-            from . import obs as OBS
+            from .transport import obs as OBS
             time.sleep(1.0)          # reference: flow.rs sleeps 1 s here
             fpj = json.dumps(run['fixed_point_json'], separators=(',', ':'))
             obs_res = OBS.upload_obs(rc, acct, run, res['rrid'], res['uuid'],

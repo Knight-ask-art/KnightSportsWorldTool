@@ -1,9 +1,9 @@
 """One-shot pipeline: login -> checkpoints -> forge -> sign -> guard -> submit.
 
-    python -m jhp_phase1.replica.pipeline --user 137... --pass *** --km 2.5
-    python -m jhp_phase1.replica.pipeline --token <tok> --uid <uid> --km 2.5
-    python -m jhp_phase1.replica.pipeline --token ... --dry-run        # no upload
-    python -m jhp_phase1.replica.pipeline --token ... --custom "A地址" "B地址"
+    python -m replica.pipeline --user 137... --pass *** --km 2.5
+    python -m replica.pipeline --token <tok> --uid <uid> --km 2.5
+    python -m replica.pipeline --token ... --dry-run        # no upload
+    python -m replica.pipeline --token ... --custom "A地址" "B地址"
 
 Everything is pure protocol: no emulator, no unidbg, no browser (see netsec.py
 and gt4.py).  A write-ahead receipt blocks accidental double submission.
@@ -22,18 +22,11 @@ import random
 import sys
 import time
 
-# Make both entry points work: `python -m jhp_phase1.replica.pipeline` and
-# `python -m replica.pipeline` (cwd=jhp_phase1).  Computed, not hardcoded, so
-# moving the archive does not break imports.
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-from jhp_phase1.replica import health, safety
-from jhp_phase1.replica.guard import (AlreadySubmitted, GuardError, ReceiptStore,
+from . import health, safety
+from .guard import (AlreadySubmitted, GuardError, ReceiptStore,
                                        UnknownPending)
-from jhp_phase1.replica.realclient import Account, RealClient, as_dict
-from jhp_phase1.replica.rundata import (build_upload_entity, generate_run_data,
+from .transport.realclient import Account, RealClient, as_dict
+from .rundata import (build_upload_entity, generate_run_data,
                                         sign_upload_entity, validate_run_data)
 
 
@@ -53,7 +46,7 @@ def _keepalive_cli(args):
     liveness; a fresh password login is the only reliable renewal.  The
     password is held in memory and is never written to the session file.
     """
-    from jhp_phase1.replica.tokenkeeper import (
+    from .tokenkeeper import (
         TokenKeeper, _read_json, _write_json, probe_real_session,
         relogin_real, ensure_state,
     )
@@ -114,7 +107,7 @@ def _keepalive_cli(args):
 # --------------------------------------------------------------------------
 
 def do_login(args):
-    from jhp_phase1.replica.login_flow import login
+    from .login_flow import login
     log('[1/6] 登录（纯协议，本地解极验）...')
     sess = login(args.user, args.password, captcha_id=args.captcha_id, log=log)
     log('      uid=%s unid=%s name=%s'
@@ -168,8 +161,8 @@ def do_points(client, acct, args, must_points=None):
     without them yields a record that can never be complete (this used to be
     the behaviour of both `--custom` and the UI's hand-drawn waypoints).
     """
-    from jhp_phase1.replica import points as P
-    from jhp_phase1.replica import routes as RT
+    from . import points as P
+    from . import routes as RT
 
     cps = []
     if not args.no_points:
@@ -196,7 +189,7 @@ def do_points(client, acct, args, must_points=None):
         source = 'file'
 
     elif args.custom:
-        from jhp_phase1.replica import amap
+        from .transport import amap
         log('      高德路线（%s）...' % args.custom_mode)
         pts = amap.custom_route(start_address=args.custom[0],
                                 end_address=args.custom[1],
@@ -211,7 +204,7 @@ def do_points(client, acct, args, must_points=None):
         source = 'custom'
 
     elif getattr(args, 'stadium', None):
-        from jhp_phase1.replica import stadium
+        from . import stadium
         log('      田径场模式（周长 %.0fm）...' % args.stadium)
         if cps:
             fit = stadium.make_stadium_ring(
@@ -315,8 +308,8 @@ def do_forge(acct, cps, wps, args, start_ms=None):
 
 def do_sign(run, acct, args, policy_data=None):
     log('[4/6] 签名...')
-    from jhp_phase1.replica import policy as POL
-    from jhp_phase1.replica import riskcheck
+    from . import policy as POL
+    from . import riskcheck
 
     # `address` is the device city (upstream flow.rs fills it from
     # identity.city, whose default is 大连市 — that default is issue #16).
@@ -363,7 +356,7 @@ def do_policy(client, acct):
     a required checkpoint would produce a record that can never be complete
     (policy.rs raises the same way).  Callers may override deliberately.
     """
-    from jhp_phase1.replica import policy as POL
+    from . import policy as POL
     pol = None
     for rm in (1, 2):
         try:
@@ -409,7 +402,7 @@ def do_submit(client, acct, run, ent, store, policy_ts=None):
 
     # OBS trail: this is what the replay reads
     try:
-        from jhp_phase1.replica import obs as OBS
+        from .transport import obs as OBS
         time.sleep(1.0)                      # reference: flow.rs sleeps 1 s here
         fpj = json.dumps(run['fixed_point_json'], separators=(',', ':'))
         o = OBS.upload_obs(client, acct, run, res['rrid'], res['uuid'], fpj, log=log)
@@ -545,7 +538,7 @@ def main(argv=None, client_factory=None):
     args = ap.parse_args(argv)
 
     if getattr(args, 'logout', False):
-        from jhp_phase1.replica import realclient as R
+        from .transport import realclient as R
         if not args.token or not args.uid:
             return _fail('--logout 需要 --token 和 --uid', 1)
         acct = R.Account(name='logout', uid=str(args.uid), token=args.token)
@@ -565,7 +558,7 @@ def main(argv=None, client_factory=None):
     if args.plan is not None:
         if args.plan < 1:
             return _fail('--plan 需要 >= 1 天', 1)
-        from jhp_phase1.replica import variation
+        from . import variation
         rng = random.Random(args.seed) if args.seed is not None else None
         slots = variation.plan(args.plan, rng=rng,
                                dist_band=tuple(args.km_range))
@@ -599,7 +592,7 @@ def main(argv=None, client_factory=None):
     acct.osVersion = args.os_version
 
     # device fingerprint: remembered once, never silently rotated
-    from jhp_phase1.replica import identity
+    from . import identity
     dev = identity.resolve(acct.uid, explicit=args.device_id,
                            defaults={'DeviceId': acct.DeviceId})
     if dev.get('DeviceId'):
@@ -616,7 +609,7 @@ def main(argv=None, client_factory=None):
         log('   出口代理 = %s' % client.proxy)
 
     # ---- variation: pick this run's shape ------------------------------
-    from jhp_phase1.replica import variation as V
+    from . import variation as V
 
     history = []
     if not args.no_history:
@@ -695,7 +688,7 @@ def main(argv=None, client_factory=None):
 
     # ---- pre-flight risk checks ---------------------------------------
     if not getattr(args, 'no_preflight', False):
-        from jhp_phase1.replica import riskcheck
+        from . import riskcheck
         rc = riskcheck.preflight(acct.campusName, acct.schoolName,
                                  start_ms=resolved_start,
                                  explicit_start=backfill)
@@ -728,9 +721,9 @@ def main(argv=None, client_factory=None):
     run = do_forge(acct, cps, wps, args, start_ms=resolved_start)
 
     # ---- user-defined school rules -> qualification model --------------
-    from jhp_phase1.replica import qualification as Q
-    from jhp_phase1.replica import limits as L
-    from jhp_phase1.replica import readonly as RO
+    from . import qualification as Q
+    from . import limits as L
+    from . import readonly as RO
     rules = Q.load_rules()
     run_start = int(run['locPoints'][0]['flag'])
     run_bj = safety.to_beijing(run_start)
@@ -781,7 +774,7 @@ def main(argv=None, client_factory=None):
         return 0
 
     # ---- local risk gate: daily cap + night window --------------------
-    from jhp_phase1.replica import limits
+    from . import limits
     if not args.no_limit:
         refusal = limits.check(
             acct.uid, ent['startTime'],

@@ -12,8 +12,8 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, r'D:\C-Drive-Archive\Downloads\聚合跑最新版（点进去下载）'
                    r'\好想跑\jhp_phase1')
 
-from replica.sidecar import get_sidecar
-from replica.realclient import Account, build_headers
+from replica.transport.sidecar import get_sidecar
+from replica.transport.realclient import Account, build_headers
 
 HOST = 'run.gxapp.iydsj.com'
 sc = get_sidecar()

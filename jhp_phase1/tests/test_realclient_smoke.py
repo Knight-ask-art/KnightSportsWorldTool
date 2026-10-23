@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from replica.realclient import RealClient, Account, token_sign, build_headers
-from replica.sidecar import UnidbgSidecar
+from replica.transport.realclient import RealClient, Account, token_sign, build_headers
+from replica.transport.sidecar import UnidbgSidecar
 
 
 def main():

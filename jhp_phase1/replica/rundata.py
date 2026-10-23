@@ -735,7 +735,7 @@ def validate_run_data(d: dict) -> list[str]:
 
     # ---- laps must cover the distance -----------------------------------
     try:
-        from . import obs as _obs
+        from .transport import obs as _obs
         laps = _obs.build_laps(d, locs[0]['ts'])
         if not laps:
             errs.append('laps empty')

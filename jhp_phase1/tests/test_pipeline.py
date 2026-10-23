@@ -4,7 +4,7 @@ The pipeline is the only code that decides whether a record is submitted, so
 these tests drive `pipeline.main()` with a fake client and check the decisions
 it reaches — not the wire format (that is `validate_sim.py`).
 
-Run:  python jhp_phase1/tests/test_pipeline.py
+Run:  python tests/test_pipeline.py
 """
 
 import contextlib
@@ -14,10 +14,11 @@ import os
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from jhp_phase1.replica import netsec, obs, pipeline, stadium   # noqa: E402
+from replica.transport import netsec, obs
+from replica import pipeline, stadium   # noqa: E402
 
 try:                                    # pytest is optional for the script runner
     import pytest
@@ -281,7 +282,7 @@ def test_local_gate_daily_cap():
 
 def test_backfill_time():
     """--days-ago/--time stamps the record in the chosen 09:00-22:00 slot."""
-    from jhp_phase1.replica import safety as S
+    from replica import safety as S
 
     y = S.now_ms() - 24 * 3600 * 1000
     ydate = S.to_beijing(y).strftime('%Y-%m-%d')
@@ -323,7 +324,7 @@ def test_backfill_daily_reminder_from_server():
     path = os.path.join(tmp, 'school_rules.json')
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(rules, f)
-    from jhp_phase1.replica import safety as S
+    from replica import safety as S
     y_ms = S.now_ms() - 24 * 3600 * 1000
     try:
         c = FakeClient(policy=POLICY_OK, points=POINTS_OK, records=[

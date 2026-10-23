@@ -150,7 +150,7 @@ def probe_real_session(session: dict, proxy: str | None = None,
     if not token:
         return {'ok': False, 'auth_failed': False, 'message': '未配置 token'}
 
-    from .realclient import Account, RealClient
+    from .transport.realclient import Account, RealClient
 
     try:
         acct = Account(

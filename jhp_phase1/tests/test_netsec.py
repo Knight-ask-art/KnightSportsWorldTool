@@ -9,12 +9,12 @@ import os
 import sys
 import unittest
 
-# Parent of jhp_phase1, computed so the tree can move.
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Application root, computed so the tree can move.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from jhp_phase1.replica import netsec
+from replica.transport import netsec
 
 
 class TestFold32(unittest.TestCase):

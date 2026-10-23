@@ -35,7 +35,7 @@ import threading
 import time
 import uuid
 
-from . import netsec
+from .transport import netsec
 from . import coords
 
 POINTS_PATH_PREFIX = '/api/v560/get/1/distance/'
@@ -180,7 +180,7 @@ def build_body(acct, lat: float, lon: float, session: netsec.EnvelopeSession,
 
 
 def _host() -> str:
-    from .realclient import HOST
+    from .transport.realclient import HOST
     return HOST
 
 

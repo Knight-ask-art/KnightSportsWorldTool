@@ -22,8 +22,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, r'C:\Users\20969\AppData\Local\Temp\opencode\apk_work')
 
 from replica import rundata
-from replica.realclient import Account, RealClient, build_headers, SUBMIT_URL
-from replica.sidecar import UnidbgSidecar
+from replica.transport.realclient import Account, RealClient, build_headers, SUBMIT_URL
+from replica.transport.sidecar import UnidbgSidecar
 
 OLD_RESP = Path(r'C:\Users\20969\AppData\Local\Temp\opencode\apk_work\unidbg\gmttime_env_compact.json')
 

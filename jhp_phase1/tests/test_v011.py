@@ -8,11 +8,11 @@ import tempfile
 import unittest
 from unittest import mock
 
-from jhp_phase1.replica import points
-from jhp_phase1.replica import policy
-from jhp_phase1.replica import readonly
-from jhp_phase1.replica import replica_api as RA
-from jhp_phase1.replica import safety
+from replica import points
+from replica import policy
+from replica import readonly
+from replica import replica_api as RA
+from replica import safety
 
 
 class PointsPathTest(unittest.TestCase):
@@ -107,7 +107,7 @@ class RouteCleanTest(unittest.TestCase):
 
 class ReceiptsBridgeTest(unittest.TestCase):
     def test_receipts_are_read_from_the_store(self):
-        from jhp_phase1.replica.guard import ReceiptStore
+        from replica.guard import ReceiptStore
         old = os.environ.get('JHP_DATA_DIR')
         tmp = tempfile.mkdtemp(prefix='jhp_v011_')
         try:
@@ -128,7 +128,7 @@ class ReceiptsBridgeTest(unittest.TestCase):
             self.assertEqual(got['data']['receipts'][0]['state'], 'unknown')
             self.assertEqual(got['data']['receipts'][0]['distance_m'], 2500)
 
-            with mock.patch('jhp_phase1.replica.realclient.RealClient',
+            with mock.patch('replica.transport.realclient.RealClient',
                             return_value=object()), \
                  mock.patch.object(readonly, 'recent_records',
                                    return_value={'ok': True, 'records': [{
@@ -187,7 +187,7 @@ class BridgeIntegrationTest(unittest.TestCase):
             'stepTop': 200, 'stepBottom': 150,
             'validTime': [{'start': '06:30:00', 'end': '22:00:00'}],
         }}
-        with mock.patch('jhp_phase1.replica.realclient.RealClient',
+        with mock.patch('replica.transport.realclient.RealClient',
                         return_value=object()), \
              mock.patch.object(policy, 'fetch_policy', return_value=data):
             got = api.real_fetch_school_rules()
@@ -208,7 +208,7 @@ class BridgeIntegrationTest(unittest.TestCase):
         def fake_fetch(client, acct, run_mode=1, **kw):
             return {} if run_mode == 1 else data
 
-        with mock.patch('jhp_phase1.replica.realclient.RealClient',
+        with mock.patch('replica.transport.realclient.RealClient',
                         return_value=object()), \
              mock.patch.object(policy, 'fetch_policy', side_effect=fake_fetch):
             got = api.real_fetch_school_rules()

@@ -11,8 +11,8 @@ import urllib.request
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from replica.realclient import Account, build_headers, HOST  # noqa: E402
-from replica.sidecar import JARS  # noqa: E402
+from replica.transport.realclient import Account, build_headers, HOST  # noqa: E402
+from replica.transport.sidecar import JARS  # noqa: E402
 
 UNIDBG = r'C:\Users\20969\AppData\Local\Temp\opencode\apk_work\unidbg'
 JAVA = r'D:\Codex\tools\jdk-21\jdk-21.0.11+10\bin\java.exe'

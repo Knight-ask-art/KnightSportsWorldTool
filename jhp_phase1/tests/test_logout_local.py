@@ -4,11 +4,11 @@ import os
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from jhp_phase1.replica import realclient  # noqa: E402
-from jhp_phase1.replica.replica_api import ReplicaApi  # noqa: E402
+from replica.transport import realclient  # noqa: E402
+from replica.replica_api import ReplicaApi  # noqa: E402
 
 
 def test_logout_uses_the_official_v6_endpoint():

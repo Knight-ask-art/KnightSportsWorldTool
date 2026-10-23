@@ -11,7 +11,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, r'D:\C-Drive-Archive\Downloads\聚合跑最新版（点进去下载）'
                    r'\好想跑\jhp_phase1')
 
-from replica.realclient import Account, RealClient, build_headers, token_sign, LOGIN_URL
+from replica.transport.realclient import Account, RealClient, build_headers, token_sign, LOGIN_URL
 import os
 
 acct = Account(name='emu', uid='', token='')

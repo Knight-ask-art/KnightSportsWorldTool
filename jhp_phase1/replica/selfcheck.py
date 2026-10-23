@@ -14,9 +14,9 @@ import sys
 import traceback
 
 MODULES = [
-    'coords', 'netsec', 'gt4', 'health', 'safety', 'guard', 'amap',
-    'obs', 'policy', 'points', 'routes', 'stadium', 'readonly', 'riskcheck',
-    'diagnostics', 'variation', 'identity', 'limits', 'realclient', 'server',
+    'coords', 'transport.netsec', 'transport.gt4', 'health', 'safety', 'guard', 'transport.amap',
+    'transport.obs', 'policy', 'points', 'routes', 'stadium', 'readonly', 'riskcheck',
+    'diagnostics', 'variation', 'identity', 'limits', 'transport.realclient', 'server',
     'qualification', 'tokenkeeper',
 ]
 

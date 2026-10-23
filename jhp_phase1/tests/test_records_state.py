@@ -3,10 +3,10 @@
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from jhp_phase1.replica.readonly import normalise_record  # noqa: E402
+from replica.readonly import normalise_record  # noqa: E402
 
 
 def _row(**kw):
