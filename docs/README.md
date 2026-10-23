@@ -20,12 +20,12 @@ python run.py --port 65520
 python -m replica.pipeline --token X --uid 1 --km 2.0 --dry-run --no-preflight --no-history
 
 # 3. 跑一遍离线回归（不联网、不提交）
-cd ..
 python -m replica.selfcheck
 ```
 
 > 在 `jhp_phase1/` 里用 `python -m replica.pipeline`；在仓库根目录用
 > `python -m jhp_phase1.replica.pipeline`。两种都行，别在 `jhp_phase1/` 里跑后者。
+> `jhp_phase1.replica` 只是兼容别名，新代码统一从 `replica` 导入。
 
 启动后先显示**登录页**；没有有效本地会话时必须登录后才能进入工作台。
 进入后的顺序：**总览 → 点位/围栏 → 画路线 → 节奏 → 提交 → 记录**。
@@ -49,14 +49,14 @@ python -m replica.selfcheck
 
 ---
 
-## 当前状态（2026-10-23）
+## 当前状态（2026-10-24）
 
 **离线回归**
 
 ```
-23/23 模块自测     PASS
-pytest            87 passed
-test_pipeline     56 passed
+22/22 模块自测     PASS
+pytest（tests/）   86 passed
+私有 corpus tests   3 passed
 legacy_bridge_suite  38 checks passed
 legacy_http_suite    23 checks passed
 validate_sim      1/2/3/5 km PASS

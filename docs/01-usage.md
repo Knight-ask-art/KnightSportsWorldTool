@@ -319,24 +319,25 @@ python -m jhp_phase1.replica.pipeline --plan 14
 ## 7. 自测
 
 ```powershell
-cd 好想跑
+cd 好想跑/jhp_phase1
 
 # 全部模块自测（离线）
 python -m replica.selfcheck
 
-# 流水线端到端（假客户端，不联网）
-python jhp_phase1/tests/test_pipeline.py
+# 主测试套件（假客户端，不联网）
+python -m pytest tests -q
 
-# 其它
-python jhp_phase1/tests/legacy/legacy_bridge_suite.py
-python jhp_phase1/tests/legacy/legacy_http_suite.py
-python jhp_phase1/tests/test_netsec.py
-python jhp_phase1/tools/validate_sim.py
+# 历史协议/加密运行器
+python tests/legacy/legacy_bridge_suite.py
+python tests/legacy/legacy_http_suite.py
+
+# 造数仿真
+python tools/validate_sim.py
 ```
 
 单个模块也能直接跑，例如：
 
 ```powershell
-python -m jhp_phase1.replica.readonly
-python -m jhp_phase1.replica.routes
+python -m replica.readonly
+python -m replica.routes
 ```

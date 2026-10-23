@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 85 passed`、`selfcheck 22/22`。
+> 回归基线更新为 `pytest 86 passed`、`selfcheck 22/22`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -26,7 +26,7 @@
   **学校规则自动读取**：登录/进入设置时若本地未配置，读取
   `runModePolicy.runRuleModel` 并填入距离/配速/时长/步频/时间窗；
   主动清空保存会写 `auto_fetch=false`，停止后续自动读取。
-- 回归：`pytest` 87 passed；`replica.selfcheck` 23/23；`node --check` 通过。
+- 回归（重构后）：`pytest` 86 passed；`replica.selfcheck` 22/22；`node --check` 通过。
 - 本轮 bug 修复：`build.ps1` 改为版本化输出且保留同版本 `data/`；学期空响应
   不再显示空白成功；样本库采集改为增量合并；OBS/回读增加 uuid 回退；
   日志时间统一北京时间；下载 blob 延迟释放。
@@ -67,17 +67,17 @@ OBS 轨迹双 key 上传 + 回读           ✅ 本地模拟通过，线上待�
 自由跑（无点位学校）                  ✅ 策略有必经点时后端拒绝
 ```
 
-**回归现状（自检 2026-10-23，v0.1.1）**
+**回归现状（自检 2026-10-24，结构重构后）**
 
 ```
-python -m replica.selfcheck        23/23 模块 PASS（含 tokenkeeper）
-python -m pytest tests -q          87 passed
-python tests/test_pipeline.py      56 passed
-python tests/test_phase1.py        38 passed
-python tests/test_phase2.py        23 passed
-python tools/validate_sim.py       1/2/3/5 km + 验证器反向测试 ALL PASS
-GET /                              200；Leaflet 静态资源 200
-新 UI                              node --check 通过；浏览器无 page error
+python -m replica.selfcheck                     22/22 模块 PASS（含 tokenkeeper）
+python -m pytest tests -q                       86 passed
+python tests/legacy/legacy_bridge_suite.py      38 passed
+python tests/legacy/legacy_http_suite.py        23 passed
+python -m pytest ../private/research/tests -q    3 passed
+python tools/validate_sim.py                    1/2/3/5 km + 验证器反向测试 ALL PASS
+GET /                                           200；css/js/Leaflet 静态资源 200
+新 UI                                           node --check 通过；浏览器无 page error
 ```
 
 本轮新增回归：`tests/test_v011.py`（点位距离路径/缓存分键、学期归一化、回执匹配、

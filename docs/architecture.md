@@ -101,7 +101,7 @@ adapters  ──▶ application ──▶ domain
 
 ```powershell
 cd 好想跑/jhp_phase1
-python -m pytest tests -q                 # 85 passed
+python -m pytest tests -q                 # 86 passed
 python -m replica.selfcheck               # 22/22 modules
 python tests\legacy\legacy_bridge_suite.py  # 38 checks
 python tests\legacy\legacy_http_suite.py    # 23 checks

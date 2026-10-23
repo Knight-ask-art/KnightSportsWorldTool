@@ -168,36 +168,38 @@ POST /bridge/real_weekly_summary   {"args": {"weeks": 4}}
 ## 5. 回归与自检
 
 ```powershell
-cd 好想跑
+cd 好想跑/jhp_phase1
 
-# 一把梭：23 个模块
+# 一把梭：22 个模块
 python -m replica.selfcheck
 
-# 端到端（假客户端；不联网、不提交）
-python jhp_phase1/tests/test_pipeline.py
+# 主测试套件
+python -m pytest tests -q
 
-# 协议/加密
-python jhp_phase1/tests/legacy/legacy_bridge_suite.py
-python jhp_phase1/tests/legacy/legacy_http_suite.py
-python jhp_phase1/tests/test_netsec.py
+# 协议/加密历史运行器（不进入 pytest）
+python tests/legacy/legacy_bridge_suite.py
+python tests/legacy/legacy_http_suite.py
+
+# 私有采集/样本库（不属于产品）
+python -m pytest ../private/research/tests -q
 
 # 造数仿真
-python jhp_phase1/tools/validate_sim.py
+python tools/validate_sim.py
 
 # 单模块
-python -m jhp_phase1.replica.readonly
-python -m jhp_phase1.replica.routes
-python -m jhp_phase1.replica.points
+python -m replica.readonly
+python -m replica.routes
+python -m replica.points
 ```
 
-期望输出（2026-10-22）：
+期望输出（2026-10-24）：
 
 ```
-23/23 模块通过（含 tokenkeeper）
-43 passed（pytest）
-44 passed（pipeline）
-38 passed（phase1）
-23 passed（phase2）
+22/22 模块通过（含 tokenkeeper）
+86 passed（pytest tests/）
+3 passed（private/research/tests）
+38 passed（legacy_bridge_suite）
+23 passed（legacy_http_suite）
 validate_sim: PASS
 ```
 
