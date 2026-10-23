@@ -1,0 +1,320 @@
+"""v0.1.1 protocol/UI-adjacent unit tests (no network)."""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+from jhp_phase1.replica import points
+from jhp_phase1.replica import policy
+from jhp_phase1.replica import readonly
+from jhp_phase1.replica import replica_api as RA
+from jhp_phase1.replica import safety
+
+
+class PointsPathTest(unittest.TestCase):
+    def test_distance_is_in_the_path(self):
+        self.assertTrue(points.points_path(2500).endswith('/distance/2500'))
+        self.assertTrue(points.points_path(2000.4).endswith('/distance/2000'))
+        self.assertTrue(points.points_path(0).endswith('/distance/1'))
+        self.assertTrue(points.points_path('bad').endswith('/distance/2000'))
+
+    def test_cache_key_is_distance_scoped(self):
+        a = points.cache_key('u', '1', None, 22.4, 112.9, 2000)
+        b = points.cache_key('u', '1', None, 22.4, 112.9, 3000)
+        self.assertNotEqual(a, b)
+        self.assertIn('|d2000', a)
+        self.assertIn('|d3000', b)
+
+
+class SemesterViewTest(unittest.TestCase):
+    def test_personal_fields_are_normalised(self):
+        end = safety.now_ms() + 30 * 86400000
+        view = RA.semester_view(
+            {'semesterDis': 60000, 'semesterValidDis': 12000,
+             'semesterCount': 30, 'semesterValidCount': 8},
+            {'sname': '2026 秋', 'curValidDis': 12345, 'semesterGoal': 60,
+             'semesterGoalCount': 30, 'semesterValidCount': 12,
+             'endDate': end})
+        self.assertEqual(view['sname'], '2026 秋')
+        self.assertEqual(view['goal_km'], 60)
+        self.assertEqual(view['done_km'], 12.35)
+        self.assertEqual(view['remaining_km'], 47.65)
+        self.assertEqual(view['goal_count'], 30)
+        self.assertEqual(view['valid_count'], 12)
+        self.assertEqual(view['remaining_count'], 18)
+        self.assertIn(view['days_left'], (29, 30))
+        self.assertEqual(view['source'], 'personal')
+
+    def test_missing_values_stay_none(self):
+        view = RA.semester_view({}, {})
+        self.assertIsNone(view['goal_km'])
+        self.assertIsNone(view['done_km'])
+        self.assertIsNone(view['remaining_km'])
+        self.assertIsNone(view['completed_pct'])
+        self.assertIsNone(view['source'])
+
+    def test_1000_metres_is_one_km(self):
+        view = RA.semester_view({}, {'semesterGoal': 1000,
+                                      'curValidDis': 1000})
+        self.assertEqual(view['goal_km'], 1.0)
+        self.assertEqual(view['done_km'], 1.0)
+
+    def test_second_timestamps_are_normalised(self):
+        # Some builds return startDate/endDate in seconds while others use ms.
+        start_s = int((safety.now_ms() - 86400000) / 1000)
+        end_s = int((safety.now_ms() + 30 * 86400000) / 1000)
+        view = RA.semester_view({}, {'startDate': start_s, 'endDate': end_s})
+        self.assertEqual(view['start_ms'], start_s * 1000)
+        self.assertEqual(view['end_ms'], end_s * 1000)
+        self.assertIn(view['days_left'], (29, 30))
+
+
+class ReceiptMatchTest(unittest.TestCase):
+    def test_start_and_distance_match(self):
+        rec = {'rrid': 9, 'start_ms': 1_000_000, 'distance_m': 2480}
+        got = RA._receipt_match(
+            {'rrid': None, 'start': 1_060_000, 'distance_m': 2500}, [rec])
+        self.assertIs(got, rec)
+
+    def test_distance_mismatch_is_not_a_match(self):
+        rec = {'rrid': 9, 'start_ms': 1_000_000, 'distance_m': 1500}
+        got = RA._receipt_match(
+            {'rrid': None, 'start': 1_000_000, 'distance_m': 2500}, [rec])
+        self.assertIsNone(got)
+
+    def test_explicit_rrid_wins(self):
+        rec = {'rrid': 42, 'start_ms': 1, 'distance_m': 1}
+        got = RA._receipt_match(
+            {'rrid': 42, 'start': 999999, 'distance_m': 2500}, [rec])
+        self.assertIs(got, rec)
+
+
+class RouteCleanTest(unittest.TestCase):
+    def test_line_is_validated(self):
+        got = RA._clean_route({'name': 'x', 'type': 'auto',
+                               'line': [[22.4, 112.9], {'lat': 22.5, 'lon': 113.0}]})
+        self.assertEqual(len(got['line']), 2)
+        self.assertEqual(got['type'], 'auto')
+
+    def test_bad_line_is_dropped(self):
+        self.assertIsNone(RA._clean_route({'line': [[22.4, 200]]}))
+        self.assertIsNone(RA._clean_route({'line': []}))
+
+
+class ReceiptsBridgeTest(unittest.TestCase):
+    def test_receipts_are_read_from_the_store(self):
+        from jhp_phase1.replica.guard import ReceiptStore
+        old = os.environ.get('JHP_DATA_DIR')
+        tmp = tempfile.mkdtemp(prefix='jhp_v011_')
+        try:
+            api = RA.ReplicaApi('http://example.invalid', 'http://example.invalid',
+                                b'', tmp)
+            with open(os.path.join(tmp, 'accounts_emu.json'), 'w',
+                      encoding='utf-8') as f:
+                json.dump({'uid': '1', 'token': 'test', 'unid': 47203,
+                           'schoolName': '广州软件学院',
+                           'campusName': '江门校区'}, f)
+            store = ReceiptStore(os.path.join(tmp, 'submission_receipts'))
+            store.reserve('1', 'uuid-1', 1_000_000, 1_600_000,
+                          school='47203', distance_m=2500)
+            store.mark('1', 'uuid-1', 'unknown', school='47203')
+            got = api.real_receipts()
+            self.assertEqual(got['code'], 200)
+            self.assertEqual(len(got['data']['receipts']), 1)
+            self.assertEqual(got['data']['receipts'][0]['state'], 'unknown')
+            self.assertEqual(got['data']['receipts'][0]['distance_m'], 2500)
+
+            with mock.patch('jhp_phase1.replica.realclient.RealClient',
+                            return_value=object()), \
+                 mock.patch.object(readonly, 'recent_records',
+                                   return_value={'ok': True, 'records': [{
+                                       'rrid': 99, 'start_ms': 1_000_000,
+                                       'distance_m': 2500,
+                                   }]}):
+                rec = api.real_reconcile_receipts()
+            self.assertEqual(rec['code'], 200)
+            self.assertEqual(len(rec['data']['matched']), 1)
+            self.assertEqual(api.real_receipts()['data']['receipts'][0]['state'],
+                             'accepted')
+        finally:
+            if old is None:
+                os.environ.pop('JHP_DATA_DIR', None)
+            else:
+                os.environ['JHP_DATA_DIR'] = old
+
+
+class BridgeIntegrationTest(unittest.TestCase):
+    def _api(self):
+        old = os.environ.get('JHP_DATA_DIR')
+        self.addCleanup(lambda: (os.environ.__setitem__('JHP_DATA_DIR', old)
+                                 if old is not None else
+                                 os.environ.pop('JHP_DATA_DIR', None)))
+        tmp = tempfile.mkdtemp(prefix='jhp_v011_bridge_')
+        api = RA.ReplicaApi('http://example.invalid', 'http://example.invalid',
+                            b'', tmp)
+        with open(os.path.join(tmp, 'accounts_emu.json'), 'w',
+                  encoding='utf-8') as f:
+            json.dump({'uid': '1', 'token': 'test', 'unid': 47203,
+                       'schoolName': '广州软件学院',
+                       'campusName': '江门校区'}, f)
+        return api
+
+    def test_semester_bridge(self):
+        api = self._api()
+        with mock.patch.object(readonly, 'semester_summary',
+                               return_value={'ok': True, 'data': {
+                                   'semesterDis': 60000,
+                                   'semesterValidDis': 12000}}), \
+             mock.patch.object(readonly, 'semester_personal',
+                               return_value={'ok': True, 'data': {
+                                   'sname': '2026 秋', 'curValidDis': 12345,
+                                   'semesterGoal': 60, 'semesterGoalCount': 30,
+                                   'semesterValidCount': 12}}):
+            got = api.real_semester()
+        self.assertEqual(got['code'], 200)
+        self.assertEqual(got['data']['view']['sname'], '2026 秋')
+        self.assertEqual(got['data']['view']['done_km'], 12.35)
+
+    def test_school_rules_bridge_maps_run_rule_model(self):
+        api = self._api()
+        data = {'runRuleModel': {
+            'minDistance': 2000, 'minRunTime': 600, 'maxRunTime': 5400,
+            'speedTop': 5.5, 'speedBottom': 8.0,
+            'stepTop': 200, 'stepBottom': 150,
+            'validTime': [{'start': '06:30:00', 'end': '22:00:00'}],
+        }}
+        with mock.patch('jhp_phase1.replica.realclient.RealClient',
+                        return_value=object()), \
+             mock.patch.object(policy, 'fetch_policy', return_value=data):
+            got = api.real_fetch_school_rules()
+        self.assertEqual(got['code'], 200)
+        self.assertEqual(got['data']['run_mode'], 1)
+        self.assertEqual(got['data']['rules']['min_km'], 2.0)
+        self.assertEqual(got['data']['rules']['step_min'], 150)
+        self.assertEqual(got['data']['rules']['step_max'], 200)
+        self.assertEqual(got['data']['rules']['window_start'], '06:30')
+        self.assertEqual(got['data']['rules']['window_end'], '22:00')
+
+    def test_school_rules_bridge_falls_back_to_second_mode(self):
+        api = self._api()
+        data = {'runRuleModel': {'minDistance': 1500,
+                                 'validTime': [{'start': '07:00',
+                                                'end': '21:00'}]}}
+
+        def fake_fetch(client, acct, run_mode=1, **kw):
+            return {} if run_mode == 1 else data
+
+        with mock.patch('jhp_phase1.replica.realclient.RealClient',
+                        return_value=object()), \
+             mock.patch.object(policy, 'fetch_policy', side_effect=fake_fetch):
+            got = api.real_fetch_school_rules()
+        self.assertEqual(got['code'], 200)
+        self.assertEqual(got['data']['run_mode'], 2)
+        self.assertEqual(got['data']['rules']['min_km'], 1.5)
+
+    def test_empty_semester_is_a_failure(self):
+        api = self._api()
+        with mock.patch.object(readonly, 'semester_summary',
+                               return_value={'ok': True, 'data': {}}), \
+             mock.patch.object(readonly, 'semester_personal',
+                               return_value={'ok': True, 'data': {}}):
+            got = api.real_semester()
+        self.assertEqual(got['code'], 500)
+        self.assertIn('学期数据读取失败', got['message'])
+
+    def test_corpus_collect_keeps_old_samples(self):
+        from jhp_phase1.replica import corpus as CO
+        api = self._api()
+        os.makedirs(CO.corpus_dir(), exist_ok=True)
+        old = {'rrid': 1, 'start_ms': 1, 'summary': {'distance_m': 3100},
+               'track': [{'lat': 22.41, 'lng': 112.94}], 'five_point': []}
+        with open(CO.corpus_path('1'), 'w', encoding='utf-8') as f:
+            f.write(json.dumps(old, ensure_ascii=False) + '\n')
+        listing = {'ok': True, 'records': [{
+            'rrid': 2, 'uuid': 'u2', 'start_ms': 2,
+            'distance_m': 3200, 'duration_s': 1200,
+            'pace_s_per_km': 375, 'avg_step_freq': 170, 'steps': 3400,
+            'calorie': 200, 'complete': True, 'reasons': [], 'status': '有效',
+        }]}
+        detail = {'ok': True, 'detail': {'complete': True},
+                  'stats': {'has_track': True},
+                  'track': [{'lat': 22.42, 'lng': 112.95}],
+                  'five_point': []}
+        with mock.patch.object(readonly, 'recent_records',
+                               return_value=listing), \
+             mock.patch.object(readonly, 'record_detail',
+                               return_value=detail):
+            report = CO.collect_style(object(), SimpleNamespace(uid='1'))
+        self.assertTrue(report['ok'])
+        self.assertEqual(report['count'], 1)
+        self.assertEqual(report['kept'], 1)
+        self.assertEqual(report['total'], 2)
+        kept = list(CO.load_style('1'))
+        self.assertEqual({s['rrid'] for s in kept}, {1, 2})
+
+    def test_corpus_bridge(self):
+        from jhp_phase1.replica import corpus as CO
+        api = self._api()
+        os.makedirs(CO.corpus_dir(), exist_ok=True)
+        sample = {
+            'rrid': 7, 'start_ms': 1_000_000,
+            'summary': {'distance_m': 3200, 'pace_s_per_km': 366,
+                        'cadence': 174, 'steps': 3000},
+            'track': [{'lat': 22.41, 'lng': 112.94},
+                      {'lat': 22.411, 'lng': 112.941}],
+            'five_point': [],
+        }
+        with open(CO.corpus_path('1'), 'w', encoding='utf-8') as f:
+            f.write(json.dumps(sample, ensure_ascii=False) + '\n')
+        got = api.real_corpus()
+        self.assertEqual(got['code'], 200)
+        self.assertEqual(got['data']['count'], 1)
+        self.assertEqual(got['data']['samples'][0]['points'], 2)
+        used = api.real_corpus_use(7)
+        self.assertEqual(used['code'], 200)
+        self.assertEqual(len(used['data']['line']), 2)
+
+    def test_daily_counts_bridge(self):
+        api = self._api()
+        today = safety.to_beijing(safety.now_ms()).date()
+        day = today.isoformat()
+        with mock.patch.object(readonly, 'daily_counts',
+                               return_value={'ok': True, 'source': 'server',
+                                             'counts': {day: 2}}):
+            got = api.real_daily_counts([day])
+        self.assertEqual(got['code'], 200)
+        self.assertEqual(got['data']['dates'][0]['date'], day)
+        self.assertEqual(got['data']['dates'][0]['runs'], 2)
+
+
+class DailyCountsTest(unittest.TestCase):
+    def test_counts_group_one_response(self):
+        rows = [
+            {'date': '2026-10-23'}, {'date': '2026-10-23'},
+            {'date': '2026-10-22'}, {'date': '2026-10-20'},
+        ]
+        with mock.patch.object(readonly, 'recent_records',
+                               return_value={'ok': True, 'records': rows}):
+            got = readonly.daily_counts(None, None, [
+                '2026-10-23', '2026-10-22', '2026-10-21', '2026-10-20'])
+        self.assertTrue(got['ok'])
+        self.assertEqual(got['counts']['2026-10-23'], 2)
+        self.assertEqual(got['counts']['2026-10-22'], 1)
+        self.assertEqual(got['counts']['2026-10-21'], 0)
+        self.assertEqual(got['counts']['2026-10-20'], 1)
+
+    def test_failure_stays_unknown(self):
+        with mock.patch.object(readonly, 'recent_records',
+                               return_value={'ok': False, 'error': 'x'}):
+            got = readonly.daily_counts(None, None, ['2026-10-23'])
+        self.assertFalse(got['ok'])
+        self.assertIsNone(got['counts']['2026-10-23'])
+
+
+if __name__ == '__main__':
+    unittest.main()

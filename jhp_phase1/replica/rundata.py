@@ -1,0 +1,861 @@
+"""Clean-room run-data generator, following the binary-evidence format.
+
+Evidence (mock_db实测 + 反汇编局部变量表, see 逆向分析完整报告 §10):
+- allLocJson: 25 track points {lat/lng/ts/alt/index}  (report: glat/glon/ts/alt/index)
+- speed_json: 90 segments {startSecond/endSecond/speed/state} (10s each)
+- step_freq_json: 90 segments (steps per 10s; display stepsNum*6 = cadence/min)
+- segmentJson: 5 segments {180s/500m, speedColor=#4CAF50}
+- fivePoint: 5 calibration points, every 6th track point
+- juli/km, sportTime, sportunid
+- sample: 2.5km/900s, speed ~2.7-2.9 m/s, steps ~172/min
+- route: circular random route, drift +-0.0004deg, altitude 20-50m
+"""
+import json
+import math
+import random
+import time
+import uuid
+from .crypto import jbool, official_presign, official_sign
+from . import health
+from . import coords
+from . import safety
+
+N_POINTS = 25
+N_SEGMENTS = 90
+SEG_SECONDS = 10
+
+#: A loop shorter than this cannot be repeated into a believable run: the
+#: samples end up zig-zagging on the spot and the measured geometry collapses.
+MIN_LOOP_M = 80.0
+#: Beyond this many laps the track reads as "someone shaking a pen".
+MAX_LAPS = 30
+FIVE_EVERY = 6
+
+
+def _adjacent_ok(locs: list[dict], limit_m: float = 95.0) -> bool:
+    for a, b in zip(locs, locs[1:]):
+        dx = (b['lng'] - a['lng']) * 111320 * math.cos(math.radians(a['lat']))
+        dy = (b['lat'] - a['lat']) * 110540
+        if math.hypot(dx, dy) > limit_m:
+            return False
+    return True
+
+
+def _polyline_len(poly: list) -> float:
+    return sum(math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
+                          (b[0] - a[0]) * 110540)
+               for a, b in zip(poly, poly[1:]))
+
+
+def _point_at(poly: list, seg_lens: list, target_m: float) -> tuple:
+    """Interpolate the (lat, lng) sitting `target_m` along the polyline."""
+    walked = 0.0
+    for k, seg in enumerate(seg_lens):
+        if walked + seg >= target_m or k == len(seg_lens) - 1:
+            frac = (target_m - walked) / seg if seg > 0 else 0.0
+            frac = min(max(frac, 0.0), 1.0)
+            a, b = poly[k], poly[k + 1]
+            return (a[0] + (b[0] - a[0]) * frac,
+                    a[1] + (b[1] - a[1]) * frac)
+        walked += seg
+    return poly[-1]
+
+
+def build_loop(waypoints: list, target_m: float) -> list:
+    """Close the polyline and repeat it until it covers `target_m`."""
+    loop = list(waypoints)
+    if len(loop) < 2:
+        return loop
+    if loop[0] != loop[-1]:
+        loop.append(loop[0])
+    lap = _polyline_len(loop)
+    if lap <= 0 or target_m <= 0:
+        return loop
+    if lap < MIN_LOOP_M:
+        raise ValueError('路线周长只有 %.0fm，至少要 %.0fm（画大一点）'
+                         % (lap, MIN_LOOP_M))
+    laps = max(1, int(math.ceil(target_m / lap)))
+    if laps > MAX_LAPS:
+        raise ValueError('路线太短：铺满 %.1fkm 要 %d 圈（上限 %d），请画长一点'
+                         % (target_m / 1000.0, laps, MAX_LAPS))
+    out = []
+    for _ in range(laps):
+        out.extend(loop[:-1])
+    out.append(loop[-1])
+    return out
+
+
+def build_open(waypoints: list, target_m: float) -> list:
+    """Keep a drawn route open; extend it by retracing, never by a jump.
+
+    If the drawn path is shorter than the target, walk it forward then back
+    along the same line (an out-and-back), stopping when there is enough
+    geometry for ``_sample_loop`` to trim.  This avoids a closing chord and
+    avoids scaling the whole route away from the user's waypoints.
+    """
+    path = list(waypoints)
+    if len(path) < 2 or target_m <= 0:
+        return path
+    total = _polyline_len(path)
+    if total <= 0:
+        return path
+    if total < MIN_LOOP_M:
+        raise ValueError('路线只有 %.0fm，至少要 %.0fm（画大一点）'
+                         % (total, MIN_LOOP_M))
+    out = list(path)
+    backwards = True
+    # Bound the loop: 40 km target at 100 m route is already extreme; fail
+    # clearly instead of allocating an unbounded list.
+    max_points = max(10_000, len(path) * 4)
+    while _polyline_len(out) < target_m:
+        if backwards:
+            out.extend(path[-2::-1])
+        else:
+            out.extend(path[1:])
+        backwards = not backwards
+        if len(out) > max_points:
+            raise ValueError('路线太短，铺满目标距离需要重复太多次，请画长一点')
+    return out
+
+
+def _sample_loop(poly: list, n_points: int, target_m: float | None,
+                 rng) -> list[tuple]:
+    seg_lens = [math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
+                           (b[0] - a[0]) * 110540)
+                for a, b in zip(poly, poly[1:])]
+    total = sum(seg_lens)
+    if total <= 0:
+        return []
+    span = min(target_m, total) if target_m else total
+    return [_point_at(poly, seg_lens, span * i / max(1, n_points - 1))
+            for i in range(n_points)]
+
+
+def _passes_near(pts: list[dict], lat: float, lng: float,
+                 radius_m: float = 40.0) -> bool:
+    """`src/track/wire.rs::passes_point` — same 40 m tolerance.
+
+    Upstream excludes anomaly points (ptype == -1); we never generate any.
+    """
+    for p in pts:
+        dy = (p['lat'] - lat) * 110540.0
+        dx = (p['lng'] - lng) * 111320.0 * math.cos(math.radians(lat))
+        if dx * dx + dy * dy <= radius_m * radius_m:
+            return True
+    return False
+
+
+def _snap_to_waypoints(pts: list[dict], waypoints: list, limit_m: float = 35.0):
+    """Guarantee every checkpoint is physically passed (isPass uses 40 m)."""
+    def d2(a, b):
+        return math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
+                          (b[0] - a[0]) * 110540)
+
+    for wp in waypoints:
+        if not any(d2((p['lat'], p['lng']), wp) <= limit_m for p in pts):
+            # insert just after the closest existing sample
+            idx = min(range(len(pts)),
+                      key=lambda i: d2((pts[i]['lat'], pts[i]['lng']), wp))
+            ref = pts[idx]
+            pts.insert(idx + 1, {
+                'lat': round(wp[0], 6),
+                'lng': round(wp[1], 6),
+                'ts': ref.get('ts', 0),
+                'alt': ref.get('alt', 25.0),
+                'index': 0,
+            })
+
+
+def _altitudes(n: int, rng, base: float = 25.0) -> list[float]:
+    """Barometric altitude as an Ornstein-Uhlenbeck process around `base`.
+
+    Ported from `src/track/generator.rs`:
+
+        alt      = base + uniform(-1, 1)
+        alt_sigma = uniform(3.8, 6.2) / (0.40 * n_est)      # n_est = dur / 5
+        each point: alt += 0.04 * (base - alt) + gauss(0, alt_sigma)
+
+    The previous version drew a full sine over the run, which gives a clean
+    climb-and-descend arc.  A flat campus run does not do that — the barometer
+    sits near the local elevation and jitters by a few centimetres.
+
+    `base` is the local elevation in metres, not a constant: 25 m is a rough
+    figure for this part of 江门, and can be overridden from the CLI.
+    """
+    n_est = max(1, n)
+    sigma = rng.uniform(3.8, 6.2) / (0.40 * n_est)
+    alt = base + rng.uniform(-1.0, 1.0)
+    out = []
+    for _ in range(n):
+        alt += 0.04 * (base - alt) + rng.gauss(0.0, sigma)
+        out.append(round(alt, 1))
+    return out
+
+
+def _apply_gps_jitter(pts: list[dict], rng, rho: float = 0.72,
+                      sigma_m: float = 0.75) -> None:
+    """Correlated GPS error, in metres.
+
+    `src/track/generator.rs`:
+        jx = 0.72 * jx + gauss(0, 0.75)
+        jy = 0.72 * jy + gauss(0, 0.75)
+        px = base_x + jx,  py = base_y + jy
+
+    White noise (the old uniform(-4 m, 4 m)) both looks jagged and inflates the
+    measured path length: consecutive samples get ~2.5 m of independent
+    displacement added on top of the real step.
+    """
+    jx = jy = 0.0
+    for p in pts:
+        jx = rho * jx + rng.gauss(0.0, sigma_m)
+        jy = rho * jy + rng.gauss(0.0, sigma_m)
+        p['lat'] = round(p['lat'] + jy / 110540.0, 7)
+        p['lng'] = round(p['lng'] + jx /
+                         (111320.0 * math.cos(math.radians(p['lat']))), 7)
+
+
+def _fit_length(pts: list[dict], target_m: float, rounds: int = 4) -> None:
+    """Scale the sampled track about its centroid until it spans `target_m`.
+
+    Sampling a polyline at a fixed interval measures **chords**, not arcs, so a
+    route with sharp corners comes out shorter than the distance it was built
+    for (a 4-point square lost 4%).  Stretching it back keeps `totalDis` and the
+    coordinates consistent, which is the only property we can actually control.
+    """
+    if not pts or target_m <= 0 or len(pts) < 2:
+        return
+    cur = sum(math.hypot((b['lat'] - a['lat']) * 110540,
+                         (b['lng'] - a['lng']) * 111320
+                         * math.cos(math.radians(a['lat'])))
+              for a, b in zip(pts, pts[1:]))
+    if cur <= 0:
+        return
+    lat0 = sum(p['lat'] for p in pts) / len(pts)
+    lng0 = sum(p['lng'] for p in pts) / len(pts)
+    for _ in range(rounds):
+        k = target_m / cur
+        if abs(k - 1.0) < 0.002:
+            break
+        for p in pts:
+            p['lat'] = lat0 + (p['lat'] - lat0) * k
+            p['lng'] = lng0 + (p['lng'] - lng0) * k
+        cur = sum(math.hypot((b['lat'] - a['lat']) * 110540,
+                             (b['lng'] - a['lng']) * 111320
+                             * math.cos(math.radians(a['lat'])))
+                  for a, b in zip(pts, pts[1:]))
+
+
+def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0006,
+                   rng: random.Random | None = None,
+                   waypoints: list | None = None,
+                   n_points: int | None = None,
+                   target_m: float | None = None,
+                   alt_base: float = 25.0,
+                   closed: bool = True) -> list[dict]:
+    """Track points.
+
+    ``waypoints`` routes the track through the checkpoints.  ``closed`` keeps
+    the legacy loop/repeat behaviour; false keeps the drawn start-to-end
+    polyline open (it is stretched to the target distance, never joined back
+    to the first point).  Every waypoint is snapped so it is passed within
+    ~35 m (the server's isPass threshold is 40 m).
+    """
+    rng = rng or random
+    n_points = int(n_points or N_POINTS)
+    for _ in range(25):
+        now_ms = int(time.time() * 1000)
+        pts = []
+        if waypoints and len(waypoints) >= 2:
+            poly = (build_loop(waypoints, target_m or 0) if closed
+                    else build_open(waypoints, target_m or 0))
+            sampled = _sample_loop(poly, n_points, target_m, rng)
+            if not sampled:
+                return generate_route(center_lat, center_lng, radius_deg, rng,
+                                      n_points=n_points, target_m=target_m,
+                                      alt_base=alt_base, closed=closed)
+            for i, (lat, lng) in enumerate(sampled):
+                pts.append({
+                    'lat': lat,
+                    'lng': lng,
+                    'ts': now_ms + i * 36_000,
+                    'alt': 0.0,
+                    'index': i,
+                })
+        else:
+            # Fallback loop: a small circle repeated until it covers the target.
+            # The old version drew exactly one circle of a fixed radius and
+            # ignored target_m entirely, so a 5 km run had the same 2.1 km
+            # geometry as a 2.5 km one.
+            r_m = radius_deg * 110540.0
+            coslat = math.cos(math.radians(center_lat))
+            base = []
+            for k in range(64):
+                a = 2 * math.pi * k / 64
+                base.append((center_lat + r_m * math.sin(a) / 110540.0,
+                             center_lng + r_m * math.cos(a) / (111320.0 * coslat)))
+            target = float(target_m or 0) or (2 * math.pi * r_m)
+            poly = build_loop(base, target)
+            sampled = _sample_loop(poly, n_points, target, rng)
+            if not sampled:
+                return generate_route(center_lat, center_lng, radius_deg, rng,
+                                      n_points=n_points, target_m=target_m,
+                                      alt_base=alt_base, closed=closed)
+            for i, (lat, lng) in enumerate(sampled):
+                pts.append({
+                    'lat': lat,
+                    'lng': lng,
+                    'ts': now_ms + i * 36_000,
+                    'alt': 0.0,
+                    'index': i,
+                })
+
+        # stretch the sampled chords back to the requested distance, then add
+        # GPS error, then re-snap the checkpoints so isPass still holds
+        _fit_length(pts, float(target_m or 0))
+        _apply_gps_jitter(pts, rng)
+        if waypoints:
+            _snap_to_waypoints(pts, waypoints)
+            for i, p in enumerate(pts):
+                p['index'] = i
+
+        alts = _altitudes(len(pts), rng, base=alt_base)
+        for p, a in zip(pts, alts):
+            p['alt'] = a
+        if _adjacent_ok(pts):
+            return pts
+    return pts
+
+
+def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
+                      cadence: int = 172, center_lat: float = 22.410787,
+                      center_lng: float = 112.940804,
+                      rng: random.Random | None = None,
+                      waypoints: list | None = None,
+                      n_points: int | None = None,
+                      sample_seconds: float = 5.0,
+                      checkpoints: list | None = None,
+                      weight_kg: float = health.DEFAULT_WEIGHT_KG,
+                      altitude_base: float = 25.0,
+                      start_ms: int | None = None,
+                      closed: bool = True) -> dict:
+    """Full forged record. 2.5km default mirrors the verified mock sample.
+
+    waypoints=[(lat,lng),...] routes through those checkpoints; ``closed``
+    repeats a loop until the target distance is covered, while false keeps the
+    drawn start-to-end polyline open.
+    n_points defaults to one sample every `sample_seconds` (the app's own
+    cadence), floored at 25.
+
+    ``start_ms`` pins the run to an explicit Beijing timestamp (the backfill
+    feature).  When omitted the historical behaviour is kept: the run ends
+    1-5 s before `now`, which is what the reference client does.
+    """
+    rng = rng or random
+    if not (distance_km > 0):
+        raise ValueError('distance_km must be > 0 (got %r)' % (distance_km,))
+    if not (pace_min_per_km > 0):
+        raise ValueError('pace_min_per_km must be > 0 (got %r)'
+                         % (pace_min_per_km,))
+    if not (cadence > 0):
+        raise ValueError('cadence must be > 0 (got %r)' % (cadence,))
+    total_seconds = int(distance_km * pace_min_per_km * 60)
+    if total_seconds <= 0:
+        raise ValueError('duration rounds to 0 s (distance*pace too small)')
+    total_meters = int(distance_km * 1000)
+    speed = round(distance_km * 1000 / total_seconds, 2)
+    total_steps = int(total_seconds / 60 * cadence)
+
+    if n_points is None:
+        n_points = max(N_POINTS, int(round(total_seconds / max(0.5, sample_seconds))))
+    n_points = int(n_points)
+
+    locs = generate_route(center_lat, center_lng, rng=rng, waypoints=waypoints,
+                          n_points=n_points, target_m=total_meters,
+                          alt_base=altitude_base, closed=closed)
+    n_locs = len(locs)
+    # retime points across the run duration; last point lands EXACTLY on
+    # t0 + total_ms so that stopTime == last ten-second bucket's endTime.
+    #
+    # The run ends 1-5 s before the submission, not at the exact instant of it:
+    # the reference starts at `now - dur - 5 s` and then adds a 0-4 s jitter
+    # (src/api/flow.rs L184), which puts stopTime 1-5 s in the past.  A stopTime
+    # identical to the request timestamp is a fingerprint in itself.
+    total_ms_run = total_seconds * 1000
+    if start_ms is None:
+        t0 = int(time.time() * 1000) - total_ms_run - rng.randint(1000, 5000)
+    else:
+        t0 = int(start_ms)
+        if t0 <= 0:
+            raise ValueError('start_ms must be a positive epoch (got %r)'
+                             % (start_ms,))
+    for i, p in enumerate(locs):
+        p['ts'] = t0 + round(total_ms_run * i / max(1, n_locs - 1))
+
+    # SpeedPerTenSec: {beginTime,distance,endTime,flag,id,queueNum,state}
+    speed_json = []
+    # StepsPerTenSec: {stepsNum,beginTime,endTime,flag,id,maxDiff,minDiff,avgDiff,state,queueNum}
+    step_freq_json = []
+    per_seg_steps = round(cadence * SEG_SECONDS / 60)
+    # Bucket count MUST cover the whole duration: flooring leaves the tail
+    # uncovered whenever the duration is not a multiple of 10 s, so the last
+    # bucket's endTime stops short of stopTime (and the server sees a gap).
+    n_buckets = max(1, int(math.ceil(total_seconds / float(SEG_SECONDS))))
+    avg_mps = total_meters / max(1, total_seconds)
+    # Real runs are not metronomic: a short ramp-up, a slow fatigue drift and
+    # two low-amplitude waves.  Normalised below so the distance still sums to
+    # totalDis exactly.
+    ph1, ph2 = rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi)
+    raw_d = []
+    for i in range(n_buckets):
+        t = i / max(1, n_buckets - 1)
+        ramp = 0.86 + 0.14 * min(1.0, t / 0.06)
+        fatigue = 1.0 - 0.06 * t
+        wave = (1.0 + 0.025 * math.sin(2 * math.pi * 3 * t + ph1)
+                + 0.015 * math.sin(2 * math.pi * 7 * t + ph2))
+        noise = rng.uniform(0.995, 1.005)
+        raw_d.append(avg_mps * SEG_SECONDS * ramp * fatigue * wave * noise)
+    d_scale = total_meters / max(0.001, sum(raw_d))
+    raw_s = [per_seg_steps + rng.randint(-2, 2) for _ in range(n_buckets)]
+    s_scale = total_steps / max(1, sum(raw_s))
+    stop_ms = t0 + total_seconds * 1000
+    for i in range(n_buckets):
+        b = t0 + i * SEG_SECONDS * 1000
+        # upstream clamps the last window to totalTime (wire.rs build_windows)
+        e = min(b + SEG_SECONDS * 1000, stop_ms)
+        speed_json.append({
+            'beginTime': b,
+            'endTime': e,
+            'distance': round(raw_d[i] * d_scale, 4),
+            'flag': t0,
+            'id': 0,
+            'queueNum': 0,
+            'state': 0,
+        })
+        step_freq_json.append({
+            'stepsNum': int(round(raw_s[i] * s_scale)),
+            'beginTime': b,
+            'endTime': e,
+            'flag': t0,
+            'id': 0,
+            # these are the reference's sentinels for "not computed"
+            'maxDiff': 0.0,
+            'minDiff': 1000.0,
+            'avgDiff': 0.0,
+            'state': 0,
+            'queueNum': 0,
+        })
+    # absorb rounding drift so sum(stepsNum) == totalSteps exactly
+    if step_freq_json:
+        drift = total_steps - sum(x['stepsNum'] for x in step_freq_json)
+        step_freq_json[-1]['stepsNum'] += drift
+    #                   intervalStepModel,originAvgStep,speedStandard,startTime,state}
+    seg_s = max(1, total_seconds // 5)
+    segment_json = [{
+        'avgSpeed': round(speed, 3),
+        'avgStep': cadence,
+        'distance': round(total_meters / 5.0, 3),
+        'startTime': t0 + i * seg_s * 1000,
+        'endTime': t0 + (i + 1) * seg_s * 1000,
+        'flag': 0,
+        'id': 0,
+        'intervalStepModel': 0,
+        'originAvgStep': cadence,
+        'speedStandard': 0,
+        'state': 0,
+    } for i in range(5)]
+
+    # FivePoint: {flag,id,isFixed,isPass,lat,lon,pointName,state,glat,glon,position}
+    #
+    # When the live checkpoints are known they become the five points, mandatory
+    # ones first: that is what makes the app replay draw green ticks at the
+    # right places instead of an empty map (see issue #85 upstream).
+    if checkpoints:
+        # Upstream sends one entry per live checkpoint (wire.rs::five_point_payload
+        # maps the whole list) — the name "FivePoint" describes the usual campus,
+        # not a fixed count.  Truncating to 5 used to drop points silently and
+        # made schools with any other count fail validation.
+        chosen = ([c for c in checkpoints if c.get('isMustPoint')]
+                  + [c for c in checkpoints if not c.get('isMustPoint')])
+        five_point = []
+        for k, c in enumerate(chosen):
+            gcj = (float(c['lat']), float(c['lon']))
+            bd = (float(c.get('bd_lat') if c.get('bd_lat') is not None
+                        else coords.gcj02_to_bd09(*gcj)[0]),
+                  float(c.get('bd_lon') if c.get('bd_lon') is not None
+                        else coords.gcj02_to_bd09(*gcj)[1]))
+            five_point.append({
+                'flag': locs[0]['ts'],
+                'id': c.get('pid') if c.get('pid') is not None else k + 1,
+                'isFixed': 1 if (c.get('isFixed') or c.get('isMustPoint')) else 0,
+                # upstream: passes_point() — the track must actually come
+                # within 40 m, it is not simply asserted true
+                'isPass': _passes_near(locs, gcj[0], gcj[1], 40.0),
+                'lat': round(bd[0], 6),
+                'lon': round(bd[1], 6),
+                'pointName': c.get('name') or '',
+                'state': 0,
+                'glat': round(gcj[0], 6),
+                'glon': round(gcj[1], 6),
+                # Real-device fivePointJson uses the array index (0,1,2,…),
+                # not the server's checkpoint position and never 999
+                # (upstream PR #106).
+                'position': k,
+            })
+    else:
+        step = max(1, (n_locs - 1) // 5)
+        idxs = sorted({min(n_locs - 1, k * step) for k in range(5)})
+        five_point = []
+        for k, i in enumerate(idxs[:5]):
+            gcj = (locs[i]['lat'], locs[i]['lng'])
+            bd = coords.gcj02_to_bd09(*gcj)
+            five_point.append({
+                'flag': locs[0]['ts'],
+                'id': k + 1,
+                'isFixed': 0,
+                'isPass': _passes_near(locs, gcj[0], gcj[1], 40.0),
+                'lat': round(bd[0], 6),
+                'lon': round(bd[1], 6),
+                'pointName': '',
+                'state': 0,
+                'glat': round(gcj[0], 6),
+                'glon': round(gcj[1], 6),
+                'position': k,
+            })
+
+    # PointJsonEntity: {fivePointJson,freedomShowFence,geoFencesJson,runAreaId,useZip}
+    point_json_entity = {
+        'useZip': False,
+        'fivePointJson': json.dumps(five_point, separators=(',', ':')),
+        'runAreaId': None,
+        'geoFencesJson': None,
+        'freedomShowFence': False,
+    }
+
+    # MyLocation track points — the full 28-key shape of wire.rs::conv_point.
+    # Two things that used to be wrong here:
+    #   * totalTime / validTime are SECONDS (GenPoint.totalTime = t_acc), not ms
+    #   * lat/lng are BD-09 while gLat/gLng are GCJ-02 (they differ by ~950 m)
+    n = max(1, len(locs) - 1)
+    v = total_meters / max(1, total_seconds)
+    loc_points = []
+    for i, p in enumerate(locs):
+        frac = i / n
+        dis = round(total_meters * frac, 3)
+        tsec = int(round(total_seconds * frac))
+        steps = int(round(total_steps * frac))
+        bd_lat, bd_lng = coords.gcj02_to_bd09(p['lat'], p['lng'])
+        loc_points.append({
+            'avgSpeed': round(v, 4),
+            'bdA': round(float(p.get('alt', 0.0)), 2),
+            'bdD': 0.0,
+            'bdG': 0,
+            'bdS': round(v, 4),
+            'coorType': 'gcj02',
+            'count': rng.randint(20, 88),
+            'dtr': 0.0,
+            'flag': locs[0]['ts'],
+            'gLat': round(p['lat'], 7),
+            'gLng': round(p['lng'], 7),
+            'gainTime': safety.fmt_beijing(p['ts']),
+            'id': 0,
+            'lat': round(bd_lat, 7),
+            'lng': round(bd_lng, 7),
+            'locType': 0,
+            'locationId': '',
+            'queueNum': i,
+            'radius': round(rng.uniform(1.4, 2.4), 2),
+            'speed': round(v * 3.6, 4),
+            'state': rng.choices([1, 2, 3], weights=[145, 45, 164])[0],
+            'steps': steps,
+            'stepDistance': 0.0,
+            'totalDis': dis,
+            'totalTime': tsec,
+            'type': 0,
+            'validDis': dis,
+            'validTime': tsec,
+        })
+
+    # ---- sentinels + tail deceleration (track/postfix.rs) ------------------
+    if len(loc_points) > 2:
+        # tail: still moving but slowing to a stop, inside the valid pace band
+        stop_ms = rng.uniform(2.0, 2.6)
+        last = loc_points[-1]
+        last['avgSpeed'] = round(stop_ms, 4)
+        last['speed'] = round(stop_ms * 3.6, 4)
+        last['bdS'] = round(rng.uniform(0.05, 0.15), 3)
+        last['type'] = 6
+        last['locType'] = 1
+        last['radius'] = round(rng.uniform(1.5, 3.0), 2)
+
+        # start sentinel: index 1 is the all-zero "setStartPoint" marker
+        sp = loc_points[1]
+        sp['type'] = 5
+        sp['state'] = 1
+        sp['locType'] = 1
+        sp['radius'] = round(rng.uniform(2.0, 3.5), 2)
+        sp['speed'] = 0.0
+        sp['avgSpeed'] = 0.0
+        sp['bdS'] = 0.0
+        sp['totalDis'] = 0.0
+        sp['validDis'] = 0.0
+        sp['totalTime'] = 0
+        sp['validTime'] = 0
+
+        # scattered 1/2/8 in the last third (these are what paint the trail
+        # segments on the map)
+        start = int(len(loc_points) * 0.67)
+        for i in range(start, max(start, len(loc_points) - 2)):
+            if rng.random() < 0.06:
+                loc_points[i]['type'] = rng.choice([1, 1, 2, 8])
+                loc_points[i]['locType'] = 1
+
+        # index 2: first real point, avgSpeed recomputed without the sentinel
+        if len(loc_points) > 3:
+            p2 = loc_points[2]
+            p2['avgSpeed'] = round(max(1.8, min(6.0, p2['totalDis'] / 1.0)), 4)
+            p2['speed'] = round(p2['avgSpeed'] * 3.6, 4)
+
+    # The record's allLocJson column is itself Gson(LocJsonEntity):
+    #   {"useZip":false,"allLocJson":"<List<MyLocation> as a string>"}
+    # OBS uses the same points with the BD pair zeroed (wire.rs sets -1/-1),
+    # so the replay and the record column can never drift apart.
+    wire_points = [dict(q, lat=-1.0, lng=-1.0) for q in loc_points]
+    loc_json_entity = {
+        'useZip': False,
+        'allLocJson': json.dumps(loc_points, separators=(',', ':')),
+    }
+
+    return {
+        'allLocJson': locs,
+        'locPoints': loc_points,
+        'wire_points': wire_points,
+        'locJsonEntity': loc_json_entity,
+        'speed_json': speed_json,
+        'step_freq_json': step_freq_json,
+        'segmentJson': segment_json,
+        'segment_json': segment_json,
+        'fivePoint': five_point,
+        'fivePointJson': point_json_entity,
+        'fixed_point_json': point_json_entity,
+        'juli': total_meters,
+        'km': distance_km,
+        'sportTime': total_seconds,
+        'sporttime': total_seconds,
+        'sportunid': uuid.uuid4().hex,
+        'total_steps': total_steps,
+        # official formulas instead of distance * 0.06 and hard zeros
+        'calorie': health.calorie(weight_kg, total_seconds, total_meters),
+        'avgPower': health.avg_power(weight_kg, total_meters, total_seconds),
+        'totalAscent': health.total_ascent([p.get('alt', 0.0) for p in locs]),
+        'weight_kg': weight_kg,
+    }
+
+
+def validate_run_data(d: dict) -> list[str]:
+    """Pre-submit invariants.  Everything here is something we learned the hard
+    way and do not want to ship a violation of."""
+    errs = []
+    for key in ('allLocJson', 'speed_json', 'step_freq_json', 'segmentJson',
+                'fivePoint', 'juli', 'km', 'sportTime', 'sportunid'):
+        if key not in d:
+            errs.append(f'missing:{key}')
+    locs = d.get('allLocJson', [])
+    if len(locs) < 2:
+        errs.append(f'allLocJson.len={len(locs)}')
+        return errs
+
+    ts = [p.get('ts', 0) for p in locs]
+    if any(b - a <= 0 for a, b in zip(ts, ts[1:])):
+        errs.append('timestamps-not-monotonic')
+
+    # anti-teleport: adjacent points <= 100m (rough equirectangular, meters)
+    for a, b in zip(locs, locs[1:]):
+        dx = (b['lng'] - a['lng']) * 111320 * math.cos(math.radians(a['lat']))
+        dy = (b['lat'] - a['lat']) * 110540
+        if math.hypot(dx, dy) > 100:
+            errs.append('teleport-detected')
+            break
+
+    # ---- geometry must match the claimed distance -----------------------
+    # A 5 km run that only draws 2 km of path is a giveaway; this used to
+    # happen because the fallback route ignored target_m.
+    geo = 0.0
+    for a, b in zip(locs, locs[1:]):
+        geo += math.hypot((b['lng'] - a['lng']) * 111320
+                          * math.cos(math.radians(a['lat'])),
+                          (b['lat'] - a['lat']) * 110540)
+    nominal = float(d.get('juli') or 0)
+    if nominal > 0 and abs(geo - nominal) > max(25.0, nominal * 0.04):
+        errs.append('geometry %.0fm vs claimed %.0fm' % (geo, nominal))
+
+    want_buckets = max(1, int(math.ceil(int(d.get('sportTime', 0))
+                                         / float(SEG_SECONDS))))
+    sp = d.get('speed_json', [])
+    st = d.get('step_freq_json', [])
+    if len(sp) != want_buckets:
+        errs.append(f'speed_json.len={len(sp)} (want {want_buckets})')
+    if len(st) != want_buckets:
+        errs.append(f'step_freq_json.len={len(st)}')
+    if sp and abs(sum(x['distance'] for x in sp) - nominal) > max(5.0, nominal * 0.01):
+        errs.append('bucket distance sum %.1f != %.1f'
+                    % (sum(x['distance'] for x in sp), nominal))
+    if st and abs(sum(x['stepsNum'] for x in st) - d.get('total_steps', 0)) > 2:
+        errs.append('bucket steps sum %d != %d'
+                    % (sum(x['stepsNum'] for x in st), d.get('total_steps', 0)))
+
+    # ---- both coordinate frames must be present and different -----------
+    # lat/lng are BD-09, gLat/gLng are GCJ-02; here they differ by ~0.006 deg.
+    # If they are identical, one of them is wrong.
+    try:
+        wrap = d['locJsonEntity']
+        pts = json.loads(wrap['allLocJson']) if isinstance(wrap.get('allLocJson'), str) \
+            else wrap['allLocJson']
+        p0 = pts[0]
+        if abs(float(p0['lat']) - float(p0['gLat'])) < 0.001:
+            errs.append('track lat/gLat identical (BD and GCJ must differ)')
+    except Exception as e:  # noqa: BLE001
+        errs.append('locJsonEntity unreadable: %s' % e)
+
+    # ---- five point -----------------------------------------------------
+    fps = d.get('fivePoint') or []
+    if not fps:
+        # The count is whatever the campus returns (3, 5, 7...); requiring
+        # exactly 5 rejected every school that is not 5.
+        errs.append('fivePoint empty')
+    for k, fp in enumerate(fps):
+        if abs(float(fp.get('lat', 0)) - float(fp.get('glat', 0))) < 0.001:
+            errs.append('fivePoint[%d] lat/glat identical' % k)
+            break
+        if float(fp.get('lat', 0)) == 0.0 or float(fp.get('glat', 0)) == 0.0:
+            errs.append('fivePoint[%d] has zero coordinate' % k)
+            break
+    missing_pass = [k for k, fp in enumerate(fps) if not fp.get('isPass')]
+    if missing_pass:
+        errs.append('fivePoint not passed: %s' % missing_pass)
+
+    # ---- laps must cover the distance -----------------------------------
+    try:
+        from . import obs as _obs
+        laps = _obs.build_laps(d, locs[0]['ts'])
+        if not laps:
+            errs.append('laps empty')
+        elif abs(sum(l['distance'] for l in laps) - nominal) > max(5.0, nominal * 0.01):
+            errs.append('lap distance sum %.1f != %.1f'
+                        % (sum(l['distance'] for l in laps), nominal))
+        elif any(l['avgPace'] is None for l in laps):
+            errs.append('lap avgPace is None')
+    except Exception as e:  # noqa: BLE001
+        errs.append('laps unbuildable: %s' % e)
+
+    return errs
+
+
+def _submit_windows(values: list) -> list:
+    """`src/api/submit.rs::submit_windows` — submit ids differ from OBS ids."""
+    out = []
+    for i, v in enumerate(values):
+        d = dict(v)
+        d['id'] = 60000 + i
+        d['queueNum'] = i
+        out.append(d)
+    return out
+
+
+def build_upload_entity(run: dict, ctx: dict) -> dict:
+    """Map forged run_data + submit context to the official 47-field
+    UploadFormatEntity shape (Coaixy 7.2.70 source). JSON-string fields
+    (allLocJson/fivePointJson/segmentJson) are stringified like Gson does.
+    """
+    import json as _json
+    locs = run['allLocJson']
+    t0 = locs[0]['ts']
+    t1 = locs[-1]['ts']
+    # UploadFormatEntity.speed is the AVERAGE PACE in minutes/km, stored as
+    # round(pace, 2) * 1000  -- see UploadFormatEntity.setSpeed(double) and
+    # Utils.formatSpeed(double) which renders it back as i'rr".
+    min_per_km = (run['sportTime'] / 60.0) / max(0.001, run['juli'] / 1000.0)
+    ent = {
+        'address': ctx.get('address', ''),
+        'allLocJson': _json.dumps(run['locJsonEntity'], separators=(',', ':')),
+        'avgPower': int(run.get('avgPower', 0) or 0),
+        # upstream: 1i64.max(round(total_steps / total_time * 60))
+        'avgStepFreq': max(1, int(round(
+            run.get('total_steps', 0) / max(1, run.get('sportTime', 1)) * 60.0))),
+        'calorie': int(run.get('calorie', 0) or 0),
+        'complete': True,
+        'errorCode': 0,
+        'faceCheck': ctx.get('faceCheck', 0),
+        'fivePointJson': _json.dumps(run['fivePointJson'], separators=(',', ':')),
+        'geeToken': ctx.get('geeToken', ''),
+        'getPrize': False,
+        'goalId': None,
+        'isUpload': False,
+        'latitude': locs[0]['lat'],
+        'longitude': locs[0]['lng'],
+        'maxRunTime': 0,
+        'minSteps': 0,
+        'more': False,
+        'originalSign': '',
+        # policy selects the server-side completion rule set, and it is decided
+        # CLIENT-side: HomeViewModel.isSequence() sets 1 when the run carries a
+        # first FivePoint with position < 5, else 0.  It is then copied verbatim
+        # into the upload (ExerciseRunPImpl L397: setPolicy(sportRecord.getPolicy())).
+        #   0 -> "经过必经点位" + "至少通过2个普通点位"   (never fully satisfiable
+        #        without the school's real waypoints -> stuck at 5/6)
+        #   1 -> "按顺序通过所有点位"                    (satisfied by the track)
+        # Shipping 1 is what real 学分跑 records carry; verified 6/6 on read-back.
+        'policy': ctx.get('policy', 1),
+        # prizeName / recordUrl / segmentJson do not appear anywhere in the
+        # reference client's submit body (src/api/submit.rs), and the
+        # `Segment` struct in src/track/model.rs has a different shape than
+        # what we used to emit.  Dropped rather than invented.
+        'selDistance': ctx.get('selDistance', run['juli']),
+        'selRunTime': run['sportTime'],
+        'selectedUnid': ctx.get('selectedUnid', 0),
+        'signature': '',
+        'speed': int(round(round(min_per_km, 2) * 1000)),
+        'speedPerTenSec': _submit_windows(run['speed_json']),
+        'sportType': ctx.get('sportType', 1),
+        'startTime': t0,
+        'status': 0,
+        'stepsPerTenSec': _submit_windows(run['step_freq_json']),
+        'stopTime': t1,
+        'themeId': 0,
+        'totalAscent': int(run.get('totalAscent', 0) or 0),
+        'totalDis': run['juli'],
+        'totalSteps': run.get('total_steps', 0),
+        'totalTime': run['sportTime'],
+        'uid': ctx.get('uid', ''),
+        'unCompleteReason': 0,
+        'unauthorized': 0,
+        'useMobilityTools': 0,
+        'uuid': run['sportunid'],
+        'validDis': run['juli'],
+        'validTime': run['sportTime'],
+    }
+    # roomId only exists for indoor runs (src/crypto/sign.rs: sportType=3)
+    if ent['sportType'] == 3:
+        ent['roomId'] = ctx.get('roomId', 0)
+    return ent
+
+
+def sign_upload_entity(ent: dict, salt: str | None = None) -> dict:
+    """Apply official two-phase signing (HttpUtil.signRunRecord):
+    originalSign = getPreSign(31-field map); signature = getSign(map)."""
+    from .crypto import UPLOAD_SIGN_FIELDS
+    m: dict = {}
+    for k in UPLOAD_SIGN_FIELDS:
+        v = ent.get(k)
+        if v is None:
+            # Java: String.valueOf((Object) null) == "null" (a 4-char string),
+            # and SignCode.paraFilter only drops real nulls, so the literal
+            # "null" DOES participate in the signature (e.g. goalId).
+            m[k] = 'null'
+            continue
+        m[k] = v if isinstance(v, str) else (
+            jbool(v) if isinstance(v, bool) else str(v))
+    ent = dict(ent)
+    ent['originalSign'] = official_presign(m)
+    ent['signature'] = (official_sign(m) if salt is None
+                        else official_sign(m, salt))
+    return ent

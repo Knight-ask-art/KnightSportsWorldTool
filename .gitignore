@@ -1,0 +1,38 @@
+# ---- 运行数据 / 凭据（绝不入库）----
+jhp_phase1/data/
+jhp_phase1/backup/
+jhp_phase1/dist/
+jhp_phase1/build/
+jhp_phase1/build_tmp/
+private/
+*.pem
+*.key
+*.token
+accounts*.json
+env_gmttime.txt
+session*.json
+
+# ---- 构建与缓存 ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+*.log
+*.tmp
+*.bak
+
+# ---- 研究资料 / 外部工具（体积大且含历史凭据）----
+archive/
+apk_work/
+platform-tools/
+app.ab
+*.apk
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

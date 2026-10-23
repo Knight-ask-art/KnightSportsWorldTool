@@ -1,0 +1,38 @@
+{
+  "_source": "live API POST api/v1/getGeoFenceForRun with the device-trusted token, 2026-10-12",
+  "_note": "glon/glat are gcj02 and are the coordinates the client must emit. lon/lat come back as 0.0 for this campus.",
+
+  "unid": 47203,
+  "campusName": "广州软件学院 江门校区",
+  "fenceId": 1939,
+  "fenceName": "学校",
+  "updateTime": 1764848072000,
+
+  "center_lat": 22.410787,
+  "center_lng": 112.940804,
+  "bbox": {
+    "lat_min": 22.409870,
+    "lat_max": 22.411670,
+    "lon_min": 112.939998,
+    "lon_max": 112.941630
+  },
+
+  "polygon": [
+    {"n": 1,  "glon": 112.940204, "glat": 22.411505},
+    {"n": 2,  "glon": 112.940453, "glat": 22.411615},
+    {"n": 3,  "glon": 112.941126, "glat": 22.411670},
+    {"n": 4,  "glon": 112.941386, "glat": 22.411384},
+    {"n": 5,  "glon": 112.941630, "glat": 22.410432},
+    {"n": 6,  "glon": 112.941532, "glat": 22.410101},
+    {"n": 7,  "glon": 112.941137, "glat": 22.409915},
+    {"n": 8,  "glon": 112.940470, "glat": 22.409870},
+    {"n": 9,  "glon": 112.940101, "glat": 22.410166},
+    {"n": 10, "glon": 112.939998, "glat": 22.411209}
+  ],
+
+  "sibling_campuses": [
+    {"name": "广州软件学院 本校区", "unid": 47201, "allowChange": true},
+    {"name": "广州软件学院 补考区", "unid": 47202, "allowChange": false},
+    {"name": "广州软件学院 江门校区", "unid": 47203, "allowChange": true}
+  ]
+}
