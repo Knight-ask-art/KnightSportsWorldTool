@@ -96,10 +96,20 @@ def _semester_payload_nonempty(data) -> bool:
 def semester_view(summary, personal):
     """Normalise the two semester payloads into one small display model.
 
-    The API is inconsistent across schools: distance fields are metres, but
-    some builds already divide by 1000.  Values above 1000 are treated as
-    metres; a semester goal below 1000 is already km.  Missing fields stay
-    ``None`` so the UI can say "未知" instead of inventing zero.
+    The two endpoints answer different questions and must not be mixed up:
+
+    * ``getPersonalSemesterInfo`` owns the **goal** (``goalMethod``).  With
+      ``goalMethod=2`` that goal is 室内锻炼 counted in 次 — the official app
+      adds it as a separate ring segment, not as the outdoor semester goal.
+    * ``recordssummary/semester`` owns the **totals** (``semesterValidDis`` /
+      ``semesterDis``, metres) and only answers when it is sent the ``sid``
+      taken from the personal payload.
+
+    ``outdoor_km`` therefore reports what was really run this semester, while
+    ``indoor_*`` keeps the indoor counter separate.  Distance fields are
+    metres; the goal heuristic below still tolerates builds that already send
+    kilometres.  Missing fields stay ``None`` so the UI can say "未知"
+    instead of inventing zero.
     """
     s = as_dict(summary) if summary is not None else {}
     p = as_dict(personal) if personal is not None else {}
@@ -113,12 +123,28 @@ def semester_view(summary, personal):
                 return v
         return None
 
+    def pick_summary(*keys):
+        """Summary first: ``semesterValidDis`` is the server's running total.
+
+        The personal payload only carries the goal, and its ``curValidDis``
+        alias is not always present, so the cumulative numbers must come from
+        the summary record when it has them.
+        """
+        for src in (s, p):
+            v = _semester_num(src, *keys)
+            if v is not None:
+                return v
+        return None
+
     def km(v):
         if v is None:
             return None
         # 1000 m is exactly 1 km; the old ``> 1000`` turned a 1000 m goal into
         # 1000 km.  Values below 1000 are already kilometres in this API.
         return round(v / 1000.0, 2) if v >= 1000 else round(v, 2)
+
+    def metres_to_km(v):
+        return round(v / 1000.0, 2) if v is not None else None
 
     def timestamp_ms(v):
         """Normalise epoch seconds *and* milliseconds to milliseconds."""
@@ -144,44 +170,58 @@ def semester_view(summary, personal):
     except (TypeError, ValueError):
         goal_method = None
 
-    def metres_to_km(v):
-        return round(v / 1000.0, 2) if v is not None else None
+    # Cumulative semester distance (metres on the wire).  ``semesterValidDis``
+    # is the part the school counted; ``semesterDis`` includes rejected runs.
+    outdoor_km = metres_to_km(pick_summary('semesterValidDis', 'validTotalDis',
+                                           'curValidDis'))
+    outdoor_total_km = metres_to_km(pick_summary('semesterDis'))
+    if outdoor_km is None:
+        outdoor_km = outdoor_total_km
+
+    indoor_goal = indoor_valid = indoor_remaining = None
 
     if goal_method == 0:
         # Distance goal: the app compares validTotalDis (metres) with
         # semesterGoal / 1000.  Do not apply the heuristic here: a 500 m
         # goal would otherwise become 500 km.
         goal_km = metres_to_km(raw_goal_distance)
-        done_km = metres_to_km(raw_done_distance)
+        done_km = (outdoor_km if outdoor_km is not None
+                   else metres_to_km(raw_done_distance))
         goal_count = None
         valid_count = None
         goal_unit = 'km'
-    elif goal_method in (1, 2):
-        # Count goal.  goalMethod=2 uses semesterGoal/semesterValid directly
-        # (the official app shows them with the unit "次"); goalMethod=1 uses
-        # semesterGoalCount/validTotalCount, with the same fields as fallback.
-        if goal_method == 2 and p.get('semesterGoal') is not None:
-            goal_count = p.get('semesterGoal')
-            valid_count = p.get('semesterValid')
-            if valid_count is None:
-                valid_count = raw_valid_count
-        elif goal_method == 1:
-            goal_count = p.get('semesterGoalCount')
-            if goal_count is None or goal_count <= 0:
-                goal_count = raw_goal_count
-            valid_count = p.get('validTotalCount')
-            if valid_count is None:
-                valid_count = raw_valid_count
-        else:
+        goal_kind = 'distance'
+    elif goal_method == 2:
+        # goalMethod=2 is the 室内锻炼 target, not the outdoor semester goal:
+        # the official app renders it as a separate ring segment with the
+        # unit 次 (``setIndoorExerciseProgress(semesterValid, semesterGoal,
+        # "次")``).  Counting it as the semester goal hid the real outdoor
+        # distance and always read "0/1 次".
+        indoor_goal = _semester_num(p, 'semesterGoal')
+        indoor_valid = _semester_num(p, 'semesterValid')
+        if indoor_valid is None:
+            indoor_valid = _semester_num(p, 'semesterValidCount')
+        if indoor_goal is not None and indoor_valid is not None:
+            indoor_remaining = max(0, int(indoor_goal - indoor_valid))
+        goal_km = None
+        done_km = outdoor_km
+        goal_count = None
+        valid_count = None
+        goal_unit = 'indoor'
+        goal_kind = 'indoor'
+    elif goal_method == 1:
+        # Count goal: semesterGoalCount / validTotalCount, with the plural
+        # summary counters as fallback.
+        goal_count = p.get('semesterGoalCount')
+        if goal_count is None or goal_count <= 0:
             goal_count = raw_goal_count
-            if goal_count is None or goal_count <= 0:
-                goal_count = raw_goal_distance
+        valid_count = p.get('validTotalCount')
+        if valid_count is None:
             valid_count = raw_valid_count
-            if valid_count is None:
-                valid_count = raw_done_distance
         goal_km = None
         done_km = None
         goal_unit = 'count'
+        goal_kind = 'count'
     else:
         # Older/unknown payloads: keep the old heuristic and expose both views
         # when the server returned both.
@@ -190,6 +230,8 @@ def semester_view(summary, personal):
         goal_count = raw_goal_count
         valid_count = raw_valid_count
         goal_unit = ('km' if goal_km is not None
+                     else ('count' if goal_count is not None else None))
+        goal_kind = ('distance' if goal_km is not None
                      else ('count' if goal_count is not None else None))
 
     start_ms = timestamp_ms(pick('startDate', 'semesterStartTime',
@@ -217,6 +259,7 @@ def semester_view(summary, personal):
     return {
         'sname': sname,
         'goal_method': goal_method,
+        'goal_kind': goal_kind,
         'goal_unit': goal_unit,
         'goal_km': goal_km,
         'done_km': done_km,
@@ -224,6 +267,12 @@ def semester_view(summary, personal):
         'goal_count': int(goal_count) if goal_count is not None else None,
         'valid_count': int(valid_count) if valid_count is not None else None,
         'remaining_count': remaining_count,
+        'outdoor_km': outdoor_km,
+        'outdoor_total_km': outdoor_total_km,
+        'indoor_goal': int(indoor_goal) if indoor_goal is not None else None,
+        'indoor_valid': (int(indoor_valid) if indoor_valid is not None
+                         else None),
+        'indoor_remaining': indoor_remaining,
         'start_ms': int(start_ms) if start_ms else None,
         'end_ms': int(end_ms) if end_ms else None,
         'days_left': days_left,
@@ -983,9 +1032,9 @@ class ReplicaApi:
             name=d.get('name', 'emu'),
             uid=str(d.get('uid') or ''),
             token=d['token'],
-            schoolName=d.get('schoolName', '广州软件学院'),
-            campusName=d.get('campusName', '江门校区'),
-            unid=int(d.get('unid') or 47203),
+            schoolName=d.get('schoolName') or '',
+            campusName=d.get('campusName') or '',
+            unid=int(d.get('unid') or 0),
         )
         DP.apply_to_account(acct, self._effective_device(d))
         if d.get('lat') and d.get('lon'):
@@ -1778,6 +1827,37 @@ class ReplicaApi:
             return _fail('路线保存失败: %s' % e)
         return _ok({'routes': out, 'count': len(out)})
 
+    def _semester_payloads(self, rc, acct):
+        """Fetch the semester goal and that semester's totals.
+
+        Order matters: ``getPersonalSemesterInfo`` is the only payload that
+        carries ``sid``, and ``recordssummary/semester`` answers a blank
+        record (empty ``sname``, every counter 0) when ``sid`` is missing.
+        Querying the summary first is what made the card read 0.0% while the
+        account actually had 10.24 km of valid semester distance.
+        """
+        from ..application import readonly as RO
+        out = {'summary': None, 'personal': None, 'errors': []}
+        try:
+            r = RO.semester_personal(rc, acct, run_mode=1)
+        except Exception as e:  # noqa: BLE001
+            r = {'ok': False, 'error': str(e)}
+        if r.get('ok'):
+            out['personal'] = r.get('data')
+        else:
+            out['errors'].append('personal: %s' % (r.get('error') or 'failed'))
+        personal = out['personal']
+        sid = personal.get('sid') if isinstance(personal, dict) else None
+        try:
+            r = RO.semester_summary(rc, acct, sid=sid)
+        except Exception as e:  # noqa: BLE001
+            r = {'ok': False, 'error': str(e)}
+        if r.get('ok'):
+            out['summary'] = r.get('data')
+        else:
+            out['errors'].append('summary: %s' % (r.get('error') or 'failed'))
+        return out
+
     def real_semester(self):
         """Semester summary + personal completion, normalised for the UI.
 
@@ -1789,29 +1869,14 @@ class ReplicaApi:
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
         from ..transport import realclient as R
-        from ..application import readonly as RO
         try:
             rc = R.RealClient()
         except Exception as e:  # noqa: BLE001
             return _fail('sidecar/加密层启动失败: %s' % e)
-        errors = []
-        summary = personal = None
-        try:
-            r = RO.semester_summary(rc, acct)
-            if r.get('ok'):
-                summary = r.get('data')
-            else:
-                errors.append('summary: %s' % (r.get('error') or 'failed'))
-        except Exception as e:  # noqa: BLE001
-            errors.append('summary: %s' % e)
-        try:
-            r = RO.semester_personal(rc, acct, run_mode=1)
-            if r.get('ok'):
-                personal = r.get('data')
-            else:
-                errors.append('personal: %s' % (r.get('error') or 'failed'))
-        except Exception as e:  # noqa: BLE001
-            errors.append('personal: %s' % e)
+        payloads = self._semester_payloads(rc, acct)
+        summary = payloads['summary']
+        personal = payloads['personal']
+        errors = payloads['errors']
         if (not _semester_payload_nonempty(summary)
                 and not _semester_payload_nonempty(personal)):
             return _fail('学期数据读取失败: %s' % ('; '.join(errors) or '返回为空'),
@@ -1831,7 +1896,6 @@ class ReplicaApi:
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
         from ..transport import realclient as R
-        from ..application import readonly as RO
 
         errors = []
         try:
@@ -1879,17 +1943,10 @@ class ReplicaApi:
         semester_error = ''
         try:
             rc = R.RealClient()
-            r = RO.semester_summary(rc, acct)
-            if r.get('ok'):
-                summary = r.get('data')
-            else:
-                semester_error = r.get('error') or 'summary 读取失败'
-            r = RO.semester_personal(rc, acct, run_mode=1)
-            if r.get('ok'):
-                personal = r.get('data')
-            else:
-                semester_error = semester_error or (r.get('error')
-                                                    or 'personal 读取失败')
+            payloads = self._semester_payloads(rc, acct)
+            summary = payloads['summary']
+            personal = payloads['personal']
+            semester_error = '; '.join(payloads['errors'])
         except Exception as e:  # noqa: BLE001
             semester_error = str(e)
 

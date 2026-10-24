@@ -80,17 +80,65 @@ class SemesterViewTest(unittest.TestCase):
         self.assertEqual(view['remaining_km'], 0.25)
         self.assertIsNone(view['goal_count'])
 
-    def test_count_goal_method_two_uses_semester_fields(self):
-        view = RA.semester_view({}, {'sname': '体能训练 III',
-                                      'semesterGoal': 1,
-                                      'semesterValid': 0,
-                                      'goalMethod': 2})
-        self.assertEqual(view['goal_unit'], 'count')
+    def test_indoor_goal_is_kept_out_of_the_semester_goal(self):
+        # Live shape: personal says indoor 0/1 次, summary says 10.24 km valid.
+        view = RA.semester_view(
+            {'semesterDis': 10667, 'semesterValidDis': 10240,
+             'sname': '2026-2027-1体能训练Ⅲ',
+             'semesterCount': 0, 'semesterValidCount': 0},
+            {'sname': '2026-2027-1体能训练Ⅲ', 'semesterGoal': 1,
+             'semesterValid': 0, 'goalMethod': 2})
+        self.assertEqual(view['goal_kind'], 'indoor')
+        self.assertEqual(view['goal_unit'], 'indoor')
         self.assertIsNone(view['goal_km'])
-        self.assertIsNone(view['done_km'])
-        self.assertEqual(view['goal_count'], 1)
-        self.assertEqual(view['valid_count'], 0)
-        self.assertEqual(view['remaining_count'], 1)
+        self.assertIsNone(view['goal_count'])
+        self.assertIsNone(view['valid_count'])
+        self.assertEqual(view['outdoor_km'], 10.24)
+        self.assertEqual(view['outdoor_total_km'], 10.67)
+        # the real mileage must survive as the headline number
+        self.assertEqual(view['done_km'], 10.24)
+        self.assertEqual(view['indoor_goal'], 1)
+        self.assertEqual(view['indoor_valid'], 0)
+        self.assertEqual(view['indoor_remaining'], 1)
+
+    def test_blank_summary_does_not_erase_the_mileage(self):
+        # The old code called the summary endpoint without `sid`; it answered
+        # an all-zero record and the card read "0.0%".
+        view = RA.semester_view(
+            {'semesterDis': 0, 'semesterValidDis': 0, 'sname': '',
+             'semesterCount': 0, 'semesterValidCount': 0},
+            {'sname': '2026-2027-1体能训练Ⅲ', 'semesterGoal': 1,
+             'semesterValid': 0, 'goalMethod': 2})
+        self.assertEqual(view['outdoor_km'], 0.0)
+        self.assertEqual(view['sname'], '2026-2027-1体能训练Ⅲ')
+
+    def test_semester_summary_sends_the_semester_id(self):
+        class Client:
+            def __init__(self):
+                self.path = self.payload = None
+
+            def request(self, acct, path, payload=None, retries=2):
+                self.path, self.payload = path, payload
+                return {'json': {'error': 10000, 'data': {'sname': 'x'}}}
+
+        client = Client()
+        out = readonly.semester_summary(client, object(), sid=9382)
+        self.assertTrue(out['ok'])
+        self.assertEqual(client.path, readonly.SEMESTER_SUMMARY_PATH)
+        self.assertEqual(client.payload, {'sid': 9382})
+
+    def test_semester_summary_omits_a_missing_semester_id(self):
+        class Client:
+            def __init__(self):
+                self.payload = None
+
+            def request(self, acct, path, payload=None, retries=2):
+                self.payload = payload
+                return {'json': {'error': 10000, 'data': {}}}
+
+        client = Client()
+        readonly.semester_summary(client, object())
+        self.assertEqual(client.payload, {})
 
     def test_count_goal_method_one_uses_goal_count_fields(self):
         view = RA.semester_view({}, {'semesterGoalCount': 30,

@@ -128,9 +128,23 @@ def is_stale(result: dict, now_ms: int | None = None) -> bool:
 # semester progress
 # --------------------------------------------------------------------------
 
-def semester_summary(client, acct) -> dict:
+def semester_summary(client, acct, sid=None) -> dict:
+    """Semester totals for one ``sid``.
+
+    The endpoint is not "current semester" aware: with an empty body it
+    answers a blank record (``sname: ''`` and every counter 0), which used to
+    be rendered as a real "0.0%" card.  The semester id comes from
+    ``getPersonalSemesterInfo`` and must be sent explicitly.
+    """
+    payload = {}
+    if sid not in (None, '', 0, '0'):
+        try:
+            payload['sid'] = int(sid)
+        except (TypeError, ValueError):
+            payload = {}
     try:
-        return {'ok': True, 'data': _call(client, acct, SEMESTER_SUMMARY_PATH)}
+        return {'ok': True,
+                'data': _call(client, acct, SEMESTER_SUMMARY_PATH, payload)}
     except Exception as e:  # noqa: BLE001
         return {'ok': False, 'error': str(e)}
 

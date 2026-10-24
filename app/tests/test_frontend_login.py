@@ -195,8 +195,27 @@ def test_overview_state_is_reactive():
     assert '学校要求已配置' in JS
 
 
+def test_semester_indoor_goal_is_rendered_separately():
+    # goalMethod=2 is the indoor-exercise counter, not the semester goal.
+    assert "v.goal_kind === 'indoor'" in JS
+    assert "室内锻炼 ' + (v.indoor_valid || 0)" in JS
+    assert "户外未设目标" in JS
+    # the remaining indoor count must land in the 还差 cell, not only in text
+    assert "v.indoor_remaining != null ? (v.indoor_remaining + '<small> 次</small>')" in JS
+    assert "doneLabel.textContent = indoorMode ? '户外里程' : '已完成'" in JS
+    assert "leftLabel.textContent = indoorMode ? '室内还差' : '还差'" in JS
+
+
 def test_semester_count_goal_is_rendered_in_runs():
-    # goalMethod=2 means semesterGoal/semesterValid are counts, not km.
+    # goalMethod=1 still renders a real count goal in 次.
     assert "v.goal_unit === 'count'" in JS
     assert "got + '<small> 次</small>'" in JS
     assert "v.remaining_count + '<small> 次</small>'" in JS
+
+
+def test_semester_card_hides_an_empty_progress_bar():
+    # 0% with no goal behind it reads as "no data"; hide the track instead.
+    assert 'const showBar = v.completed_pct != null' in JS
+    assert 'bar.parentElement.hidden = !showBar' in JS
+    assert 'id="ovSemesterNote"' in HTML
+    assert 'id="profSemesterNote"' in HTML
