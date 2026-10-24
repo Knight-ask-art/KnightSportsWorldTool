@@ -73,6 +73,14 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 > 记录详情先试 `v61200`（APK 里实际用的），失败再试 `v70260`（上游用的）。
 > 两条都失败时错误信息会同时带上两边的原因。
 >
+> 学期汇总必须带 `{"sid": <getPersonalSemesterInfo 返回的 sid>}`。空 body 不会报错，
+> 而是返回 `sname: ""`、所有计数为 0 的空记录；早期版本因此把有 10.24 km 的账号
+> 显示成 0.0%。
+>
+> `goalMethod`：`0` = 户外距离目标（米），`1` = 户外次数目标，
+> `2` = **室内锻炼**（`semesterGoal`/`semesterValid` 单位是“次”，官方 App 作为
+> 独立圆环分段显示）。`2` 不是户外学期目标，不能拿来当整张学期卡的百分比。
+>
 > 详情返回 `jsonFromObs=1` 时，数据库行里的 `allLocJson` / `fivePointJson` 是空的；
 > 完整轨迹在 OBS 对象 `run_data/{rrid//1000000}/{rrid}.json`（与上传的第二条 key
 > 相同）。详情接口会按需 GET 该对象，再解析 `run_data.allLocJson`；
@@ -223,7 +231,7 @@ data.segment_json       → JSON 字符串
 | `readonly.record_detail(rrid, uuid)` | 轨迹 + 步频 + 海拔 + 爬升 + 分段 + `fields` |
 | `readonly.weekly_summary(weeks)` | 按周（周一~周日）聚合，空周补 0，`truncated` 标明页数用尽 |
 | `readonly.check_violations()` | `none_found` / `violations` / `unknown` / `failed` 四态，失败不伪装成“干净” |
-| `readonly.semester_summary()` | 学期汇总 |
+| `readonly.semester_summary(client, acct, sid)` | 学期汇总；不带 `sid` 只会拿到空记录 |
 | `readonly.rank(kind)` | `main` / `history` / `indoor` |
 | `readonly.daily_count(client, acct, day)` | 指定北京日期已有几条记录；读不到返回 `(None, 'unknown')`，不伪装成 0 |
 
