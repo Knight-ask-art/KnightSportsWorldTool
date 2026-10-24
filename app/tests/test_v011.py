@@ -256,6 +256,7 @@ class RecordDetailFlagsTest(unittest.TestCase):
         self.assertEqual(detail['pace_slow'], 10.0)
         self.assertEqual(detail['step_min'], 60)
         self.assertEqual(detail['step_max'], 300)
+        self.assertEqual(detail['appeal_status'], 4)
         self.assertEqual(detail['appeal_info'], '申诉未通过')
 
 

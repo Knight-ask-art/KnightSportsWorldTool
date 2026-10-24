@@ -1996,7 +1996,8 @@ function recordState(r){
   if(r && (r.state === 'ok' || r.state === 'warn' || r.state === 'issue')) return r.state;
   const reasons = (r && r.reasons) || [];
   if(r && (r.normal_run === false || String(r.normal_run).toLowerCase() === 'false')) return 'issue';
-  if(r && (String(r.status_code) === '2' || String(r.status) === '2')) return 'issue';
+  const rawCode = String(r && (r.status_code != null ? r.status_code : r.status));
+  if(r && (rawCode === '1' || rawCode === '2')) return 'issue';
   if(reasons.some(x => !x.complete)) return 'issue';
   const text = String((r && r.status) || '');
   if(/问题|异常|无效|违规|可疑|失败/.test(text)) return 'issue';
@@ -2922,7 +2923,7 @@ async function selectRecord(i){
   LIVE.lastDetail = d;
   const km = (+x.distance_m || 0) / 1000;
   const state = x.state || recordState(x);
-  const risky = !!(+x.is_cheat || +x.policy);
+  const risky = !!(+x.is_cheat || +x.policy || +x.step_freq_status);
   const tagText = risky || state === 'issue' ? '有问题'
     : state === 'ok' ? '已通过' : '待核对';
   $('#rdTag').textContent = tagText;
@@ -2944,13 +2945,18 @@ async function selectRecord(i){
   $('#rdCheat').textContent = risk.length ? risk.join(' · ') : '正常';
   $('#rdCheat').className = risk.length ? 'risk-bad' : 'risk-ok';
   const curPace = paceFromSec(x.duration_s, km);
-  $('#rdPolicy').textContent = (x.pace_fast != null && x.pace_slow != null)
-    ? (paceText(x.pace_fast) + '–' + paceText(x.pace_slow) +
+  const pf = +x.pace_fast, ps = +x.pace_slow;
+  $('#rdPolicy').textContent = (pf > 0 && ps > 0)
+    ? (paceText(pf) + '–' + paceText(ps) +
        (curPace ? ' · 本次 ' + paceText(curPace) : ''))
     : (curPace ? paceText(curPace) : '—');
+  // A status without text still has to be visible, otherwise a pending or
+  // rejected appeal looks like there was none.
+  const appeal = x.appeal_info ||
+    (+x.appeal_status ? `状态 ${x.appeal_status}` : '');
   const appealRow = $('#rdAppealRow');
-  if(appealRow) appealRow.hidden = !x.appeal_info;
-  if($('#rdAppeal')) $('#rdAppeal').textContent = x.appeal_info || '—';
+  if(appealRow) appealRow.hidden = !appeal;
+  if($('#rdAppeal')) $('#rdAppeal').textContent = appeal || '—';
   $('#rdRrid').textContent = x.rrid || r.rrid || '—';
   const reasons = x.reasons || [];
   const badReasons = reasons.filter(y => !y.complete);

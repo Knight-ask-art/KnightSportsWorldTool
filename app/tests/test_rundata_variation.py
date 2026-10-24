@@ -7,6 +7,18 @@ from replica.domain.rundata import generate_run_data, new_run_uuid, validate_run
 
 WAYPOINTS = [(22.4108, 112.9408), (22.4118, 112.9418), (22.4100, 112.9410)]
 
+#: Six waypoints in a small campus box.  This seed used to crowd the last two
+#: samples until the 2 s floor pushed one past stopTime, making the final gap
+#: negative (`timestamps-not-monotonic` in validate_run_data).
+CROWDED_WAYPOINTS = [
+    (22.40504173, 112.93276581),
+    (22.40382004, 112.93371518),
+    (22.40602909, 112.93467491),
+    (22.40468653, 112.93471078),
+    (22.40341647, 112.93475016),
+    (22.40506008, 112.93332831),
+]
+
 
 def _run(seed=7, **kw):
     return generate_run_data(4.0, 6.0, 172, waypoints=WAYPOINTS,
@@ -40,6 +52,37 @@ def test_totals_stay_exact():
     assert last['totalDis'] == run['juli'] == 4000
     assert last['totalTime'] == run['sportTime'] == 1440
     assert last['steps'] == run['total_steps']
+
+
+def test_crowded_tail_keeps_timestamps_increasing():
+    run = generate_run_data(3.0791117675740813, 5.593286746278895, 173,
+                            waypoints=CROWDED_WAYPOINTS, closed=True,
+                            rng=random.Random(1695))
+    ts = [p['ts'] for p in run['allLocJson']]
+    assert all(b > a for a, b in zip(ts, ts[1:]))
+    assert ts[-1] - ts[0] == run['sportTime'] * 1000
+    assert validate_run_data(run) == []
+
+
+def test_tight_window_still_passes_every_waypoint():
+    """A naive 20-50 m start offset cut the far must-point out of a 2 km window."""
+    wps = [
+        (22.4109, 112.9407),
+        (22.405248476301683, 112.93376972722123),
+        (22.404859229355317, 112.93466748860722),
+        (22.403851928519252, 112.934068637221),
+    ]
+    run = generate_run_data(2.0, 6.0, 172, waypoints=wps, closed=True,
+                            rng=random.Random(3))
+    pts = run['allLocJson']
+    for lat, lng in wps:
+        near = min(
+            math.hypot((p['lat'] - lat) * 110540,
+                       (p['lng'] - lng) * 111320
+                       * math.cos(math.radians(lat)))
+            for p in pts)
+        assert near <= 40.0, (lat, lng, near)
+    assert validate_run_data(run) == []
 
 
 def test_runs_start_at_different_points():

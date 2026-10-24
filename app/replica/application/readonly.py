@@ -239,8 +239,9 @@ def _record_state(complete: bool, normal_run, status, reasons: list,
     must not be painted green as “已通过”.
 
     The list endpoint does not include `statusInfo`/`reasonList`; it only has
-    the numeric `status` (observed 0 = normal, 2 = suspicious).  That code is
-    therefore the only honest signal available before opening the detail.
+    the numeric `status` (observed 0 = normal, 1 = invalid data, 2 =
+    suspicious).  That code is therefore the only honest signal available
+    before opening the detail.
     """
     text = str(status or '')
     normal_bad = (normal_run is False
@@ -254,8 +255,8 @@ def _record_state(complete: bool, normal_run, status, reasons: list,
             code = int(status_code)
         except (TypeError, ValueError):
             code = None
-    code_bad = code == 2
-    other_code = code not in (None, 0, 2)
+    code_bad = code in (1, 2)
+    other_code = code not in (None, 0, 1, 2)
     if normal_bad or reason_bad or text_bad or code_bad:
         return 'issue'
     if other_code:
@@ -759,7 +760,7 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
         'step_min': opt_num('stepBottom'),
         'step_max': opt_num('stepTop'),
         'appeal_status': int(_num(obj.get('appealStatus'))),
-        'appeal_info': obj.get('appealStatusInfo') or '',
+        'appeal_info': str(obj.get('appealStatusInfo') or ''),
         'state': _record_state(bool(obj.get('complete')), obj.get('normalRun'),
                                obj.get('statusInfo') or '', reasons,
                                obj.get('status')),

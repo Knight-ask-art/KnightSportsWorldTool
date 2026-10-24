@@ -612,6 +612,12 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             # neighbour; real samples are 4-6 s apart, so keep a 2 s floor.
             locs[i]['ts'] = locs[i - 1]['ts'] + 2000
     locs[-1]['ts'] = t0 + total_ms_run
+    # The 2 s floor is best-effort: when the last samples are crowded, it can
+    # push a point past the fixed stopTime and leave the final gap negative.
+    # Pull the interior points back instead of moving the end of the run.
+    for i in range(n_locs - 2, -1, -1):
+        if locs[i]['ts'] >= locs[i + 1]['ts']:
+            locs[i]['ts'] = locs[i + 1]['ts'] - 1000
 
     # SpeedPerTenSec: {beginTime,distance,endTime,flag,id,queueNum,state}
     speed_json = []
@@ -753,7 +759,10 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     for i, p in enumerate(locs):
         frac = fracs_geo[i]
         dis = round(total_meters * frac, 3)
-        tsec = int(round(point_times[i]))
+        # Derive the stats clock from the final (possibly compressed) track
+        # timestamp: after the 2 s floor is pulled back, point_times is no
+        # longer the value the server will read from allLocJson.
+        tsec = max(0, int(round((p['ts'] - t0) / 1000.0)))
         steps = int(round(cum_steps[i]))
         if i == len(locs) - 1:
             dis, tsec, steps = total_meters, total_seconds, total_steps

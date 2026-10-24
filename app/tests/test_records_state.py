@@ -24,6 +24,11 @@ def test_numeric_status_two_is_issue():
     assert r['status_code'] == 2
 
 
+def test_numeric_status_one_is_issue():
+    """Real flagged runs came back with status=1, not 2."""
+    assert _row(status=1)['state'] == 'issue'
+
+
 def test_numeric_status_zero_is_ok():
     assert _row(status=0)['state'] == 'ok'
 

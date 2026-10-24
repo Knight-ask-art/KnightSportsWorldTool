@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 190 passed`、`selfcheck 23/23`。
+> 回归基线更新为 `pytest 193 passed`、`selfcheck 23/23`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -87,11 +87,13 @@
 - **轨迹真实性加固（2026-10-24）**：配速不再恒定——每 10 秒桶叠加起步、疲劳、双正弦和噪声，采样点按同一曲线落位；
   采样间隔改为 4–6 s（不再固定 5 s）；闭合路线每次从“最大点位空隙前 20–50 m”起步，使目标距离窗口仍覆盖所有
   必经点，避免 `_snap_to_waypoints` 补点绕路把几何撑过 4% 容差；每点 `speed/avgSpeed` 由相邻点实际位移/时间
-  计算（限制在均速 0.6–1.6 倍），修掉第 3 点固定 21.6 km/h 的假值；`steps` 按每段时长累积。
+  计算（限制在均速 0.6–1.6 倍），修掉第 3 点固定 21.6 km/h 的假值；`steps` 按每段时长累积；收尾点拥挤时
+  向后回压时间戳，保证 `ts` 严格递增且终点仍等于 `stopTime`。
 - `sportunid` 按平台生成：Android 小写带横线、iOS 大写带横线（对应 `UUID.randomUUID()` / `UUID().uuidString`），
   不再使用 32 位裸 hex。
 - 记录详情新增「风险标记 / 配速区间 / 申诉」，直接展示服务器 `isCheat`、`policy`、`stepFreqStatus`、
-  `speedTop`/`speedBottom`（min/km）、`stepBottom`/`stepTop`、`appealStatus`。
+  `speedTop`/`speedBottom`（min/km）、`stepBottom`/`stepTop`、`appealStatus`；列表/详情把 `status=1`
+  （运动数据有问题）与 `status=2`（可疑）都标成“有问题”，不再显示成“已通过”。
 
 ---
 
@@ -124,7 +126,7 @@ UI 点位按校区固定范围拉取（提交按目标距离补点） ✅ 离线
 
 ```
 python -m replica.selfcheck                     23/23 模块 PASS（含 tokenkeeper / device_profile）
-python -m pytest tests -q                       182 passed
+python -m pytest tests -q                       193 passed
 python tests/legacy/legacy_bridge_suite.py      38 passed
 python tests/legacy/legacy_http_suite.py        23 passed
 python -m pytest ../private/research/tests -q    3 passed
