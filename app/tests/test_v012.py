@@ -14,11 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_frontend_version_matches_app_version():
-    html = (ROOT / 'frontend' / 'index.html').read_text(encoding='utf-8')
-    assert f'v{APP_VERSION}' in html
-    assert 'v0.1.1' not in html
-    found = set(re.findall(r'v(\d+\.\d+\.\d+)', html))
-    assert found == {APP_VERSION}, found
+    for rel in ('frontend/index.html', 'packaging/USAGE.txt'):
+        text = (ROOT / rel).read_text(encoding='utf-8')
+        assert f'v{APP_VERSION}' in text, rel
+        assert 'v0.1.1' not in text, rel
+        found = set(re.findall(r'v(\d+\.\d+\.\d+)', text))
+        assert found == {APP_VERSION}, (rel, found)
 
 
 def test_band_edges_do_not_warn():
