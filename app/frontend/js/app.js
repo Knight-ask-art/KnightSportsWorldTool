@@ -1382,7 +1382,9 @@ function renderSession(){
   $('#accDeviceChip').className = 'chip' + (s.device_source === 'error' ? ' red' : '');
   $('#accDeviceChip').title = s.device_source === 'error'
     ? (s.device_error || '设备指纹读取失败')
-    : '设备指纹在本机生成一次，登录和提交共用；不要频繁更换。';
+    : (s.device_platform === 'ios'
+       ? 'iOS 提交链尚未真实验证；如提交异常，可在高级里切回 Android。'
+       : '设备指纹在本机生成一次，登录和提交共用；不要频繁更换。');
   $('#accUidChip').textContent = s.uid ? ('uid ' + s.uid) : 'uid —';
   $('#accDisabledChip').hidden = !s.disabled;
   $('#accTokenMasked').textContent = logged

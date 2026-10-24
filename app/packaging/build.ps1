@@ -76,6 +76,26 @@ Copy-Item (Join-Path $PSScriptRoot 'USAGE.txt') (Join-Path $BUILT '使用说明.
 if (Test-Path $ZIP) { Remove-Item $ZIP -Force }
 Compress-Archive -Path (Join-Path $BUILT '*') -DestinationPath $ZIP -CompressionLevel Optimal
 
+# Never ship a live data/ directory (tokens, receipts, device_profile.json).
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipCheck = [System.IO.Compression.ZipFile]::OpenRead($ZIP)
+try {
+    $entries = @($zipCheck.Entries | ForEach-Object { $_.FullName })
+    if ($entries | Where-Object { $_ -like 'data/*' -or $_ -like 'data\*' }) {
+        throw 'Refusing to ship: zip contains a data/ directory'
+    }
+    if (-not ($entries -contains '好想跑.exe')) {
+        throw 'Refusing to ship: zip has no 好想跑.exe'
+    }
+} finally {
+    $zipCheck.Dispose()
+}
+$HASH = Join-Path $DIST ($NAME + '_win64.sha256')
+if (Test-Path $HASH) { Remove-Item $HASH -Force }
+$hashValue = (Get-FileHash $ZIP -Algorithm SHA256).Hash
+($hashValue + '  ' + (Split-Path $ZIP -Leaf)) |
+    Set-Content -Path $HASH -Encoding ASCII
+
 Write-Host '== 5/5 Install (preserve live data) =='
 # If rebuilding the same version, move its data aside before replacing the
 # binaries, then put it back.  The archive above was built without it.

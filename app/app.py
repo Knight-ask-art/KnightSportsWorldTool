@@ -33,7 +33,7 @@ def main():
         import numpy  # noqa: F401
         import requests  # noqa: F401
         import webview  # noqa: F401
-        from replica.transport import gt4, netsec, realclient  # noqa: F401
+        from replica.transport import gt4, ios_headers, netsec, realclient  # noqa: F401
         from replica.application import login_flow  # noqa: F401
         from replica.adapters import bridge_api, http_server  # noqa: F401
         if not all(ok for _, ok, _ in gt4.self_test()):

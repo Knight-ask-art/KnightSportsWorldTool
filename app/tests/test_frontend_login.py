@@ -138,6 +138,7 @@ def test_device_profile_is_single_source_and_visible():
     assert 'device_os' in JS
     assert 'device_platform' in JS
     assert "s.device_platform === 'ios'" in JS
+    assert 'iOS 提交链尚未真实验证' in JS
     assert '设备指纹在本机生成一次' in JS
     assert 's.deviceName' not in JS
     assert 's.deviceModel' not in JS
