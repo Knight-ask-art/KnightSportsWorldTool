@@ -2950,10 +2950,10 @@ async function selectRecord(i){
     ? (paceText(pf) + '–' + paceText(ps) +
        (curPace ? ' · 本次 ' + paceText(curPace) : ''))
     : (curPace ? paceText(curPace) : '—');
-  // A status without text still has to be visible, otherwise a pending or
-  // rejected appeal looks like there was none.
-  const appeal = x.appeal_info ||
-    (+x.appeal_status ? `状态 ${x.appeal_status}` : '');
+  // Only show the appeal row when the server sent text.  `appealStatus=1`
+  // appears on ordinary records with no appeal, so a raw status number would
+  // add a meaningless row to every valid run.
+  const appeal = x.appeal_info || '';
   const appealRow = $('#rdAppealRow');
   if(appealRow) appealRow.hidden = !appeal;
   if($('#rdAppeal')) $('#rdAppeal').textContent = appeal || '—';
