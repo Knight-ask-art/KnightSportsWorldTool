@@ -142,6 +142,16 @@ def test_device_profile_is_single_source_and_visible():
     assert 's.DeviceId' not in JS
 
 
+def test_device_rotation_is_advanced_and_double_confirmed():
+    assert 'id="deviceRotateBtn"' in HTML
+    assert 'id="deviceRotateConfirm"' in HTML
+    assert '高级：更换设备指纹' in HTML
+    assert '更换后需要重新登录' in HTML
+    assert "liveApi('real_rotate_device'" in JS
+    assert "input.value.trim() !== '更换'" in JS
+    assert '不要频繁更换' in JS
+
+
 def test_distance_follows_drawn_route_until_manual_edit():
     assert 'function autoFillDistanceFromRoute(m)' in JS
     assert 'distanceManual' in JS

@@ -698,6 +698,24 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
 .danger-zone p{font-size:10.5px;color:var(--pencil);margin:0 0 10px}
 .btn.danger{border-color:rgba(182,72,60,.55);color:var(--stamp)}
 .btn.danger:hover{background:rgba(182,72,60,.1)}
+.device-advanced{
+  margin-top:10px;padding-top:8px;border-top:1px dashed var(--rule);
+}
+.device-advanced summary{
+  cursor:pointer;font-size:10.5px;color:var(--faint);list-style:none;
+}
+.device-advanced summary::-webkit-details-marker{display:none}
+.device-advanced summary::before{
+  content:"▸";display:inline-block;margin-right:5px;transition:transform .15s;
+}
+.device-advanced[open] summary::before{transform:rotate(90deg)}
+.device-advanced p{font-size:10px;line-height:1.55;color:var(--pencil);margin:7px 0}
+.device-advanced label{display:block;font-size:10px;color:var(--faint);margin:0 0 4px}
+.device-advanced input{
+  width:100%;padding:5px 8px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--paper-2);font:11px var(--sans);
+}
+.device-advanced .btn{width:100%;margin-top:7px}
 
 /* ---------- run console (map-first) ---------- */
 .run-top{

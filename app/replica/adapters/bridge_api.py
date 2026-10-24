@@ -882,6 +882,30 @@ class ReplicaApi:
         self._invalidate_device()
         return _ok(self._public_session(d))
 
+    def real_rotate_device(self, confirm=''):
+        """Advanced one-time device rotation.
+
+        The caller must send the literal confirmation string.  The local
+        session is ended first so the old token is never reused with the new
+        device; ``device_profile.rotate`` backs up the old fingerprint.  The
+        operator must log in again after this call.
+        """
+        if confirm != '更换设备指纹':
+            return _fail('确认文字不正确')
+        if not self._read_session().get('token'):
+            return _fail('先登录再更换设备指纹')
+        self.real_logout(local_only=True)
+        try:
+            new, backup = DP.rotate(self.store_dir, force=True)
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'更换设备指纹失败: {e}')
+        self._invalidate_device()
+        return _ok({
+            'device': DP.public_view(new),
+            'backup': os.path.basename(backup) if backup else '',
+            'relogin_required': True,
+        })
+
     def _real_account(self):
         """Build a realclient.Account from the stored session."""
         from ..transport.realclient import Account

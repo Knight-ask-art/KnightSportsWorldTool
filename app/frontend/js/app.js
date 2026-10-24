@@ -1390,6 +1390,8 @@ function renderSession(){
     ? (s.device_id_masked || '—') : '—';
   $('#accCampus').textContent = logged ? (s.campusName || '—') : '—';
   $('#accUnid').textContent = logged ? (s.unid || '—') : '—';
+  if($('#deviceRotateBtn')) $('#deviceRotateBtn').disabled = !logged || LIVE.submitting;
+  if(!logged && $('#deviceRotateConfirm')) $('#deviceRotateConfirm').value = '';
 
   $('#setSession').textContent = s.disabled ? '账号已禁用' : (logged ? '已加载 token' : '未登录');
   $('#setCampus').textContent = logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ') || '—') : '—';
@@ -1669,6 +1671,54 @@ async function liveLogout(){
     toast('退出失败：' + (j.message || ''));
   }
   accountBusy = false;
+}
+
+/* ---------------- device rotation (advanced) ---------------- */
+async function rotateDeviceProfile(){
+  if(LIVE.submitting){ toast('提交进行中，完成后再更换设备指纹'); return; }
+  if(!hasSession()){ toast('先登录再更换设备指纹'); return; }
+  const input = $('#deviceRotateConfirm');
+  if(!input || input.value.trim() !== '更换'){
+    toast('请输入“更换”确认');
+    if(input) input.focus();
+    return;
+  }
+  if(!confirm('确定更换设备指纹？\n\n· 会像换了一台手机\n· 旧指纹会先备份\n· 更换后需要重新登录\n· 不要频繁更换')) return;
+  const btn = $('#deviceRotateBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '更换中…'; }
+  try{
+    const j = await liveApi('real_rotate_device', {confirm: '更换设备指纹'}, 30000);
+    if(!liveOk(j)){
+      liveLog('更换设备指纹失败', j.message || '', 'err');
+      toast('更换失败：' + (j.message || '未知错误'));
+      return;
+    }
+    const d = j.data || {};
+    const dev = d.device || {};
+    input.value = '';
+    liveLog('设备指纹已更换',
+      [dev.device_name, dev.device_os ? ('Android ' + dev.device_os) : '',
+       dev.device_id_masked].filter(Boolean).join(' · '), 'warn');
+    if(d.backup) liveLog('旧指纹已备份', d.backup, 'info');
+    // The backend already cleared the local session; never reuse the old
+    // token with the new device.
+    LIVE.session = {}; LIVE.checked = null;
+    clearAccountActivity();
+    renderSession();
+    renderEmptyData();
+    await loadKeepalive();
+    showLoginGate('设备指纹已更换，请重新登录。');
+    await restoreSavedLogin();
+    toast('设备指纹已更换，请重新登录');
+  }catch(e){
+    liveLog('更换设备指纹失败', e && e.message ? e.message : String(e), 'err');
+    toast('更换失败：' + (e && e.message ? e.message : String(e)));
+  }finally{
+    if(btn){
+      btn.disabled = !hasSession();
+      btn.textContent = '更换设备指纹';
+    }
+  }
 }
 
 /* ---------------- keepalive ---------------- */
@@ -4059,6 +4109,7 @@ function liveWire(){
   });
   $('#accTest').addEventListener('click', liveTestSession);
   $('#accLogout').addEventListener('click', liveLogout);
+  if($('#deviceRotateBtn')) $('#deviceRotateBtn').addEventListener('click', rotateDeviceProfile);
   $('#kaStart').addEventListener('click', liveKeepaliveStart);
   $('#kaCheck').addEventListener('click', liveKeepaliveCheck);
   $('#kaStop').addEventListener('click', liveKeepaliveStop);

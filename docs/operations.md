@@ -29,9 +29,10 @@
 > **设备指纹**：`device_profile.json` 每个 data 目录只生成一次，之后登录、提交、回读
 > 都读同一份，不会逐请求漂移。旧数据首次升级时冻结原来的提交指纹（`source=legacy-*`），
 > 不会静默换机；要更换必须显式执行
-> `python -m replica.application.device_profile --data-dir <data> --rotate`，旧指纹会先
-> 备份到 `device_profile.backup-*.json`。回滚时把备份文件复制回
-> `device_profile.json` 并重启程序。**升级/迁移时复制整个 `data/` 目录（含
+> `python -m replica.application.device_profile --data-dir <data> --rotate`，或在
+> 账号页「高级：更换设备指纹」输入“更换”二次确认；两种方式都会先备份旧指纹并
+> 退出本机登录。旧指纹备份到 `device_profile.backup-*.json`。回滚时把备份文件
+> 复制回 `device_profile.json` 并重启程序。**升级/迁移时复制整个 `data/` 目录（含
 > `device_profile.json`）；只复制 `accounts_emu.json` 会被当成旧数据并冻结旧指纹。**
 > **`data/` 不参与打包；把整个 `data/` 复制给别人等于复制同一台设备。**
 

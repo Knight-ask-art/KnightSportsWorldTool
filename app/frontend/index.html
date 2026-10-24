@@ -287,6 +287,16 @@
               <div class="detail-row"><span>token</span><span class="mono" id="accTokenMasked">—</span></div>
               <div class="detail-row"><span>校区</span><span id="accCampus">—</span></div>
               <div class="detail-row"><span>unid</span><span id="accUnid">—</span></div>
+              <details class="device-advanced">
+                <summary>高级：更换设备指纹</summary>
+                <p>会像换了一台手机，旧指纹先备份；更换后需要重新登录。不要频繁更换。</p>
+                <label for="deviceRotateConfirm">输入“更换”确认</label>
+                <input id="deviceRotateConfirm" type="text" maxlength="8"
+                       autocomplete="off" spellcheck="false" placeholder="更换">
+                <button class="btn small danger" id="deviceRotateBtn" disabled>
+                  更换设备指纹
+                </button>
+              </details>
             </section>
 
             <section class="sec">

@@ -280,3 +280,34 @@ def test_rotate_repairs_corrupt_profile_with_legacy_session(tmp_path):
     assert backup and backup.endswith('.corrupt.json')
     backups = list(tmp_path.glob('device_profile.backup-*'))
     assert len(backups) >= 2
+
+def test_rotate_device_endpoint_requires_confirmation_and_login(tmp_path):
+    from replica.adapters.bridge_api import ReplicaApi
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    assert api.real_rotate_device('')['code'] != 200
+    assert api.real_rotate_device('更换')['code'] != 200
+    assert api.real_rotate_device('更换设备指纹')['code'] != 200
+
+
+def test_rotate_device_endpoint_rotates_and_clears_session(tmp_path,
+                                                            monkeypatch):
+    from replica.adapters.bridge_api import ReplicaApi
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    api.real_set_session(uid='1', token='tok', DeviceId='dev-1')
+    monkeypatch.setattr(api, '_remote_logout_background', lambda acct: None)
+    old = api._effective_device()['DeviceId']
+
+    out = api.real_rotate_device('更换设备指纹')
+    assert out['code'] == 200, out
+    assert out['data']['relogin_required'] is True
+    assert out['data']['device']['device_source'] == 'rotated'
+    assert out['data']['device']['device_id_masked']
+    assert out['data']['backup'].startswith('device_profile.backup-')
+
+    session = api._read_session()
+    assert 'token' not in session and 'uid' not in session
+    new = DP.read_profile(str(tmp_path))
+    assert new['DeviceId'] != old
+    assert new['source'] == 'rotated'

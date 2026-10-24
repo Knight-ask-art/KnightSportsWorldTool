@@ -268,6 +268,7 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_save_routes` | `routes` | 整体替换并校验路线库，替代仅靠 localStorage |
 | `real_diagnostics` | — | 生成脱敏诊断包（不含 token/密码/uid/坐标/IP） |
 | `real_get_session` | — | 返回脱敏会话；`device_name`、`device_os`、`device_source` 是本机实际生效的设备指纹，`device_id_masked` 只露首尾 |
+| `real_rotate_device` | `confirm` | 高级：输入 `更换设备指纹` 才执行；先退出本机登录，再备份旧指纹并生成新指纹；返回 `device`、`backup`、`relogin_required` |
 
 `device_source`：`generated`（本机随机）、`legacy-default` / `legacy-session`
 （旧数据冻结）、`rotated`（已更换）、`session`（手动覆盖）、`error`（指纹文件损坏）。
