@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 164 passed`、`selfcheck 23/23`。
+> 回归基线更新为 `pytest 165 passed`、`selfcheck 23/23`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -53,7 +53,7 @@
   `22081212C` 应为 `1220x2712 / 444x986`；**未自动修改**。确认后可运行
   `device_profile --data-dir <data> --repair-pixels`（保留 DeviceId，先备份旧文件），
   或在未真实使用前直接 rotate 到 Android。
-- 回归（iOS 后）：`pytest` 164 passed；`selfcheck` 23/23；`node --check` 通过。
+- 回归（iOS 后）：`pytest` 165 passed；`selfcheck` 23/23；`node --check` 通过。
 - **2026-10-24 UI 修正**：`我的` 页设备标签不再写死 Android，统一走
   `deviceLabelText()`；总览「出门前 3 件事」与「本周节奏」改为响应式重绘，
   点位/学校要求晚到也会更新；学期 `goalMethod=2` 按“次”显示（不再把 1 次
@@ -109,7 +109,7 @@ UI 点位按校区固定范围拉取（提交按目标距离补点） ✅ 离线
 
 ```
 python -m replica.selfcheck                     23/23 模块 PASS（含 tokenkeeper / device_profile）
-python -m pytest tests -q                       164 passed
+python -m pytest tests -q                       165 passed
 python tests/legacy/legacy_bridge_suite.py      38 passed
 python tests/legacy/legacy_http_suite.py        23 passed
 python -m pytest ../private/research/tests -q    3 passed

@@ -165,6 +165,13 @@ def semester_view(summary, personal):
             valid_count = p.get('semesterValid')
             if valid_count is None:
                 valid_count = raw_valid_count
+        elif goal_method == 1:
+            goal_count = p.get('semesterGoalCount')
+            if goal_count is None or goal_count <= 0:
+                goal_count = raw_goal_count
+            valid_count = p.get('validTotalCount')
+            if valid_count is None:
+                valid_count = raw_valid_count
         else:
             goal_count = raw_goal_count
             if goal_count is None or goal_count <= 0:

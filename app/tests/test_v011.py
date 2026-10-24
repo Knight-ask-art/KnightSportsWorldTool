@@ -102,6 +102,15 @@ class SemesterViewTest(unittest.TestCase):
         self.assertEqual(view['remaining_count'], 18)
         self.assertIsNone(view['goal_km'])
 
+    def test_count_goal_method_one_prefers_personal_counts(self):
+        view = RA.semester_view({'semesterValidCount': 99},
+                                {'semesterGoalCount': 30,
+                                 'validTotalCount': 12,
+                                 'goalMethod': 1})
+        self.assertEqual(view['goal_count'], 30)
+        self.assertEqual(view['valid_count'], 12)
+        self.assertEqual(view['remaining_count'], 18)
+
 
 class ReceiptMatchTest(unittest.TestCase):
     def test_start_and_distance_match(self):
