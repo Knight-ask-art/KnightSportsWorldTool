@@ -54,11 +54,17 @@
   `device_profile --data-dir <data> --repair-pixels`（保留 DeviceId，先备份旧文件），
   或在未真实使用前直接 rotate 到 Android。
 - 回归（iOS 后）：`pytest` 159 passed；`selfcheck` 23/23；`node --check` 通过。
+- **打包后冻结冒烟**：`dist/好想跑_v0.1.1/好想跑.exe` 通过 `--check`、HTTP 登录页；
+  用 `JHP_IOS_CHANCE=100` 启动后 `/bridge/real_get_session` 返回
+  `platform=ios`、`iPhone 13 / 16.7.10`，`device_profile --audit` 为空。
+  这只验证冻结包与指纹生成，**没有真实登录/提交**。
 - 本轮 bug 修复：`build.ps1` 改为版本化输出且保留同版本 `data/`；学期空响应
   不再显示空白成功；样本库采集改为增量合并；OBS/回读增加 uuid 回退；
   日志时间统一北京时间；下载 blob 延迟释放。
-- v0.1.1 已打包：`dist/好想跑_v0.1.1/` + `dist/好想跑_v0.1.1_win64.zip`；
-  旧 `dist/好想跑/` 的 live 数据未覆盖。`EXE_README.txt` 已改版本号。
+- v0.1.1 已重新打包（2026-10-24 17:50，含 iOS 指纹池）：
+  `dist/好想跑_v0.1.1/` + `dist/好想跑_v0.1.1_win64.zip`（74.5 MB）+
+  `dist/好想跑_v0.1.1_win64.sha256`；目标目录 186.0 MB，zip 不含 `data/`。
+  旧 `dist/好想跑/` 的 live 数据未覆盖。
 - 学校要求改为**全部可选**：空白 = 未要求；只填一项也会启用模型，未填项显示“未要求”，不影响分数。
 - 退出登录改为**先退本机**：`real_logout(local_only=true)` 立即清 token/身份并回登录页，服务端注销在后台尽力尝试；不再因验证失败把用户困在工作台。
 - 服务端注销端点已从错误的 `api/v70100/logout` 修正为官方 APK 的 `api/v6/user/logout`；本轮已用真实会话验证：logout 200 → user/info 401，`stage=verified`，本机 token/uid 已清除。
@@ -279,10 +285,13 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
 - `app.py --check` 做冻结导入检查：cv2/numpy/webview/login_flow/gt4；
 - `build.ps1` 自动做 HTTP smoke test，确认冻结后的 exe 能返回登录页；
 - v0.1.1 产物：`dist/好想跑_v0.1.1/好想跑.exe` + `_internal`，约 186 MB；
-  `dist/好想跑_v0.1.1_win64.zip` 约 76 MB。`data/` 首次启动时自动生成。
+  `dist/好想跑_v0.1.1_win64.zip` 约 74.5 MB；
+  SHA256 `be0fde60763f25e8f8555888d83cd662662fb76cab805fe6726bfbb519958fec`。
+  zip 已检查不含 `data/`；首次启动自动生成 `data/` 和随机指纹。
   旧 `dist/好想跑/` 保留原 live 数据，未覆盖。
 - `build.ps1` 现在按 `APP_VERSION` 输出 `dist/好想跑_v<版本>/`，同版本重建时
   先把 `data/` 移出再还原；zip 在还原前生成，因此不会把 live 数据打进去。
+  zip 生成后会拒绝含 `data/` 的包，并写同目录 `.sha256`。
 
 ### P0-4 新 UI 正式启用（`frontend/index.html`）
 
