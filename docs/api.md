@@ -81,6 +81,10 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 > `2` = **室内锻炼**（`semesterGoal`/`semesterValid` 单位是“次”，官方 App 作为
 > 独立圆环分段显示）。`2` 不是户外学期目标，不能拿来当整张学期卡的百分比。
 >
+> 服务器没有户外目标时，程序会用本机 `data/semester_goal.json` 里的
+> `target_km` 计算百分比和“还差”，并在卡片上标注“本机目标”。该值和 `sid`
+> 绑定，换学期自动失效；服务器有目标时永远以服务器为准。
+>
 > 详情返回 `jsonFromObs=1` 时，数据库行里的 `allLocJson` / `fivePointJson` 是空的；
 > 完整轨迹在 OBS 对象 `run_data/{rrid//1000000}/{rrid}.json`（与上传的第二条 key
 > 相同）。详情接口会按需 GET 该对象，再解析 `run_data.allLocJson`；
@@ -267,7 +271,9 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_preflight` | `start_ms`、`campus_name`、`school_name` | 显式网络自检；会查询公网 IP，只在 UI 点击时调用 |
 | `real_receipts` | `limit` | 列出写前回执（pending/accepted/rejected/unknown） |
 | `real_reconcile_receipts` | `uuid`、`limit` | **只读**核对未决回执与服务器记录；匹配到才回写 accepted，绝不重发 |
-| `real_semester` | — | 学期汇总 + 个人完成度，返回归一化 `view` 与原始数据 |
+| `real_semester` | — | 学期汇总 + 个人完成度，返回归一化 `view` 与原始数据。服务器没有户外目标时，回落本机设置的目标（`goal_source=local`） |
+| `get_semester_goal` | `sid`（可选） | 读取本机户外学期目标；换了学期（sid 不同）会返回未设置 |
+| `save_semester_goal` | `target_km`、`sid`（可选） | 保存/清除本机户外学期目标；只写本机，不上传 |
 | `real_profile` | — | 合并 `user/info` 资料与学期进度；`user/info` 失败时回落本地会话并返回 `errors` |
 | `real_violations` | `page`、`page_size` | **只读** `v78/cheat/cheatlist`；返回 `state`（`none_found`/`violations`/`unknown`/`failed`）、`records`、`stale` |
 | `real_fetch_school_rules` | `run_mode` | 只读 `runModePolicy.runRuleModel`，映射成设置页规则；不猜未返回字段 |

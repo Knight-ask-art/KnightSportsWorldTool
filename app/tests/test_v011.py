@@ -234,6 +234,20 @@ class SemesterGoalTest(unittest.TestCase):
         self.assertEqual(view['remaining_count'], 18)
 
 
+class PlanHorizonTest(unittest.TestCase):
+    def test_plan_days_are_clamped(self):
+        self.assertEqual(
+            RA.ReplicaApi.real_plan(object(), days=999)['data']['days'], 60)
+        self.assertEqual(
+            RA.ReplicaApi.real_plan(object(), days=0)['data']['days'], 1)
+        self.assertEqual(
+            RA.ReplicaApi.real_plan(object(), days='oops')['data']['days'], 14)
+
+    def test_plan_slots_match_the_requested_horizon(self):
+        out = RA.ReplicaApi.real_plan(object(), days=7, seed=1)['data']
+        self.assertEqual(len(out['slots']), 7)
+
+
 class ReceiptMatchTest(unittest.TestCase):
     def test_start_and_distance_match(self):
         rec = {'rrid': 9, 'start_ms': 1_000_000, 'distance_m': 2480}

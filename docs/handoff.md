@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 170 passed`、`selfcheck 23/23`。
+> 回归基线更新为 `pytest 179 passed`、`selfcheck 23/23`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -53,7 +53,7 @@
   `22081212C` 应为 `1220x2712 / 444x986`；**未自动修改**。确认后可运行
   `device_profile --data-dir <data> --repair-pixels`（保留 DeviceId，先备份旧文件），
   或在未真实使用前直接 rotate 到 Android。
-- 回归（iOS 后）：`pytest` 170 passed；`selfcheck` 23/23；`node --check` 通过。
+- 回归（iOS 后）：`pytest` 179 passed；`selfcheck` 23/23；`node --check` 通过。
 - **2026-10-24 UI 修正**：`我的` 页设备标签不再写死 Android，统一走
   `deviceLabelText()`；总览「出门前 3 件事」与「本周节奏」改为响应式重绘，
   点位/学校要求晚到也会更新；学期 `goalMethod=2` 按“次”显示（不再把 1 次
@@ -72,6 +72,9 @@
   旧 `dist/好想跑/` 的 live 数据未覆盖。
 - 学期卡修正：汇总接口必须带 `{"sid": ...}`，否则返回空记录（曾把 10.24 km 显示成 0.0%）；
   `goalMethod=2` 是室内锻炼（单位“次”），已从学期目标里拆出，单独显示“室内还差 N 次”。
+- 服务器没给户外目标时（例如只配了室内锻炼），可在「设置 → 本学期目标」填一个
+  本机目标（km）。卡片按它算百分比和“还差”，并标注“本机目标”；目标与本学期
+  `sid` 绑定，换学期自动失效，服务器有目标时以服务器为准。
 - 学校要求改为**全部可选**：空白 = 未要求；只填一项也会启用模型，未填项显示“未要求”，不影响分数。
 - 退出登录改为**先退本机**：`real_logout(local_only=true)` 立即清 token/身份并回登录页，服务端注销在后台尽力尝试；不再因验证失败把用户困在工作台。
 - 服务端注销端点已从错误的 `api/v70100/logout` 修正为官方 APK 的 `api/v6/user/logout`；本轮已用真实会话验证：logout 200 → user/info 401，`stage=verified`，本机 token/uid 已清除。
@@ -111,7 +114,7 @@ UI 点位按校区固定范围拉取（提交按目标距离补点） ✅ 离线
 
 ```
 python -m replica.selfcheck                     23/23 模块 PASS（含 tokenkeeper / device_profile）
-python -m pytest tests -q                       170 passed
+python -m pytest tests -q                       179 passed
 python tests/legacy/legacy_bridge_suite.py      38 passed
 python tests/legacy/legacy_http_suite.py        23 passed
 python -m pytest ../private/research/tests -q    3 passed

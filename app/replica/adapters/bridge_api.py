@@ -1558,9 +1558,17 @@ class ReplicaApi:
         return _ok({'rules': clean, 'configured': Q.is_configured(clean)})
 
     def real_plan(self, days=14, seed=None, km_min=2.0, km_max=3.0):
-        """Future run schedule, offline.  Same generator as `--plan`."""
+        """Future run schedule, offline.  Same generator as `--plan`.
+
+        The caller decides the horizon (the UI stops at the semester end);
+        this only rejects nonsense such as 0 or 5000 days.
+        """
         from ..application import variation as V
         import random as _r
+        try:
+            days = max(1, min(int(days), 60))
+        except (TypeError, ValueError):
+            days = 14
         rng = _r.Random(int(seed)) if seed is not None else None
         slots = V.plan(int(days), rng=rng,
                        dist_band=(float(km_min), float(km_max)))

@@ -1963,6 +1963,8 @@ function renderOverviewEmpty(){
   LIVE.week = null; LIVE.weekLoaded = false;
   LIVE.weekError = null;
   LIVE.planError = null;
+  LIVE.plan = null;
+  LIVE.planDays = null;
   LIVE.semester = null;
   LIVE.semesterError = null;
   const bp = beijingParts();
@@ -2397,11 +2399,19 @@ function renderViolations(data, error){
 function renderPlanGrid(){
   const wrap = $('#ovPlanGrid');
   if(!wrap) return;
+  if($('#ovPlanTitle')){
+    const n = LIVE.planDays;
+    $('#ovPlanTitle').textContent = n === 0
+      ? '本学期已结束'
+      : ('未来 ' + (n == null ? 14 : n) + ' 天');
+  }
   const slots = (LIVE.plan && LIVE.plan.slots) || [];
   if(!slots.length){
     wrap.innerHTML = LIVE.planError
       ? `<div class="hint">计划生成失败：${esc(LIVE.planError)}</div>`
-      : '<div class="hint">暂时没有可用计划。</div>';
+      : (LIVE.planDays === 0
+        ? '<div class="hint">本学期已结束，不再生成计划。</div>'
+        : '<div class="hint">暂时没有可用计划。</div>');
     if($('#ovPlanRange')) $('#ovPlanRange').textContent = '—';
     return;
   }
@@ -2487,15 +2497,25 @@ async function loadOverview(){
     renderOverviewEmpty();
     return;
   }
-  const [rj, wj, pj, sj] = await Promise.all([
+  // The plan has to stop at the semester deadline: a 14-day horizon that runs
+  // past it would recommend runs the school will never count.  The semester
+  // call is therefore awaited first, then the plan is generated for the days
+  // that actually remain (today inclusive).
+  const [rj, wj, sj] = await Promise.all([
     liveApi('real_recent_records', {limit: 20}),
     liveApi('real_weekly_summary', {weeks: 4}),
-    liveApi('real_plan', {days: 14}),
     liveApi('real_semester')
   ]);
-  // Logout or an account switch may have happened while these four requests
-  // were in flight.  Applying them now would show the previous account's
-  // records and semester under the new session.
+  if(seq !== _overviewSeq) return;
+  const semOk = liveOk(sj);
+  const semView = semOk && sj.data ? sj.data.view : null;
+  const planDays = planHorizonDays(semView);
+  const pj = planDays > 0
+    ? await liveApi('real_plan', {days: planDays})
+    : {code: 200, message: 'semester over', data: {days: 0, slots: []}};
+  // Logout or an account switch may have happened while these requests were
+  // in flight.  Applying them now would show the previous account's records
+  // and semester under the new session.
   if(seq !== _overviewSeq) return;
   const recordsOk = liveOk(rj);
   const records = recordsOk ? ((rj.data && rj.data.records) || []) : [];
@@ -2509,16 +2529,24 @@ async function loadOverview(){
   LIVE.week = week;
   LIVE.weekLoaded = weekOk;
   LIVE.weekError = weekOk ? null : (wj.message || '周汇总加载失败');
+  LIVE.planDays = planDays;
   LIVE.planError = liveOk(pj) ? null : (pj.message || '计划生成失败');
   LIVE.plan = liveOk(pj) ? (pj.data || null) : null;
-  LIVE.semester = liveOk(sj) ? (sj.data || null) : null;
-  LIVE.semesterError = liveOk(sj) ? null : (sj.message || '学期数据加载失败');
+  LIVE.semester = semOk ? (sj.data || null) : null;
+  LIVE.semesterError = semOk ? null : (sj.message || '学期数据加载失败');
   renderOverview(records, week, weeks, LIVE.semester);
   loadSemesterGoal();          // the sid only becomes known with the semester
   if(!recordsOk) liveLog('记录加载失败', LIVE.recordsError, 'err');
   if(!weekOk) liveLog('周汇总加载失败', LIVE.weekError, 'warn');
   if(!liveOk(pj)) liveLog('计划生成失败', LIVE.planError, 'warn');
-  if(!liveOk(sj)) liveLog('学期数据加载失败', LIVE.semesterError, 'warn');
+  if(!semOk) liveLog('学期数据加载失败', LIVE.semesterError, 'warn');
+}
+
+function planHorizonDays(view){
+  // 14 days is the default only while the semester end is unknown.
+  if(!view || view.days_left == null) return 14;
+  if(view.days_left < 0) return 0;          // semester already ended
+  return Math.max(1, Math.min(14, +view.days_left + 1));
 }
 
 /* The overview's right-hand cards depend on data that arrives after its first
@@ -4344,7 +4372,11 @@ function liveWire(){
     }
   });
   $('#planFill').addEventListener('click', async () => {
-    const j = await liveApi('real_plan', {days: 14});
+    // Same horizon as the overview grid: never suggest a day past the
+    // semester deadline.
+    const days = planHorizonDays(LIVE.semester && LIVE.semester.view);
+    if(days === 0){ toast('本学期已结束，不再生成计划'); return; }
+    const j = await liveApi('real_plan', {days: days});
     if(!liveOk(j)){ toast(j.message || '计划生成失败'); return; }
     const slot = nextPlanSlot((j.data && j.data.slots) || []);
     if(!slot){ toast('计划为空'); return; }

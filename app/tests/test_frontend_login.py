@@ -222,6 +222,16 @@ def test_semester_count_goal_is_rendered_in_runs():
     assert "v.remaining_count + '<small> 次</small>'" in JS
 
 
+def test_plan_horizon_stops_at_the_semester_end():
+    # A 14-day plan must not recommend runs after the semester deadline.
+    assert 'function planHorizonDays' in JS
+    assert '+view.days_left + 1' in JS
+    assert "liveApi('real_plan', {days: planDays})" in JS
+    assert 'const days = planHorizonDays(LIVE.semester && LIVE.semester.view)' in JS
+    assert 'id="ovPlanTitle"' in HTML
+    assert '本学期已结束' in JS
+
+
 def test_semester_card_hides_an_empty_progress_bar():
     # 0% with no goal behind it reads as "no data"; hide the track instead.
     assert 'const showBar = v.completed_pct != null' in JS
