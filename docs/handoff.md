@@ -66,7 +66,7 @@
 - 本轮 bug 修复：`build.ps1` 改为版本化输出且保留同版本 `data/`；学期空响应
   不再显示空白成功；样本库采集改为增量合并；OBS/回读增加 uuid 回退；
   日志时间统一北京时间；下载 blob 延迟释放。
-- v0.1.1 已重新打包（2026-10-24 17:50，含 iOS 指纹池）：
+- v0.1.1 已重新打包（2026-10-24 18:32，含 iOS 指纹池与 UI 修正）：
   `dist/好想跑_v0.1.1/` + `dist/好想跑_v0.1.1_win64.zip`（74.5 MB）+
   `dist/好想跑_v0.1.1_win64.sha256`；目标目录 186.0 MB，zip 不含 `data/`。
   旧 `dist/好想跑/` 的 live 数据未覆盖。
@@ -291,7 +291,7 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
 - `build.ps1` 自动做 HTTP smoke test，确认冻结后的 exe 能返回登录页；
 - v0.1.1 产物：`dist/好想跑_v0.1.1/好想跑.exe` + `_internal`，约 186 MB；
   `dist/好想跑_v0.1.1_win64.zip` 约 74.5 MB；
-  SHA256 `be0fde60763f25e8f8555888d83cd662662fb76cab805fe6726bfbb519958fec`。
+  SHA256 `817a3a7dc01b9b5ae1579ff691c70cac0d3e0e3b360a308c63307a80002b5b3c`。
   zip 已检查不含 `data/`；首次启动自动生成 `data/` 和随机指纹。
   旧 `dist/好想跑/` 保留原 live 数据，未覆盖。
 - `build.ps1` 现在按 `APP_VERSION` 输出 `dist/好想跑_v<版本>/`，同版本重建时
