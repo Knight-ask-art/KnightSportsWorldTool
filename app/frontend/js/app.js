@@ -16,6 +16,19 @@ document.addEventListener('click', ev => {
   toast(el.dataset.toast);
 });
 
+/* Request/data sequence counters.  Declared before the first top-level call
+   (redraw -> scheduleModelPreview) so no let/const is read in its TDZ. */
+let _pointsSeq = 0, _recordsSeq = 0, _overviewSeq = 0;
+let _receiptsSeq = 0, _dateCountsSeq = 0, _detailSeq = 0, _modelSeq = 0;
+let _headerDay = '', _modelTimer = null, accountBusy = false;
+let distanceManual = false, lastRouteLength = 0;
+function invalidateLiveRequests(){
+  // Bump every request sequence so replies that belong to a previous account
+  // (or a previous logout) cannot repopulate the UI after the switch.
+  _pointsSeq++; _recordsSeq++; _overviewSeq++;
+  _receiptsSeq++; _dateCountsSeq++; _detailSeq++; _modelSeq++;
+}
+
 /* ---------- map ---------- */
 const CENTER = [22.4108, 112.9408];
 const map = L.map('map', {zoomControl: false, attributionControl: false, doubleClickZoom: false})
@@ -40,13 +53,22 @@ const pointLayer = L.layerGroup().addTo(map);
 /* kept name for the existing route code; it contains only real checkpoints */
 let livePoints = [];
 
-function renderPoints(points){
-  livePoints = (points || []).map((p, i) => ({
-    n: p.name || p.pointName || ('点位 ' + (i + 1)),
-    lat: +p.lat, lng: +p.lon,
-    must: !!p.isMustPoint,
-    r: 0
-  })).filter(p => isFinite(p.lat) && isFinite(p.lng));
+function renderPoints(points, opts){
+  opts = opts || {};
+  livePoints = (points || []).map((p, i) => {
+    // Accept both the server shape (name/lat/lon/isMustPoint) and the
+    // normalised shape this function produces (n/lat/lng/must).  Toggling a
+    // checkbox re-renders from the latter; reading only p.lon blanked every
+    // checkpoint on the map.
+    const lat = p.lat != null ? p.lat : p.glat;
+    const lng = p.lon != null ? p.lon : p.lng;
+    return {
+      n: p.name || p.pointName || p.n || ('点位 ' + (i + 1)),
+      lat: +lat, lng: +lng,
+      must: p.isMustPoint != null ? !!p.isMustPoint : !!p.must,
+      r: 0
+    };
+  }).filter(p => isFinite(p.lat) && isFinite(p.lng));
 
   pointLayer.clearLayers();
   const list = $('#ptList');
@@ -65,6 +87,14 @@ function renderPoints(points){
     if(list){
       const row = document.createElement('div');
       row.innerHTML = `<span class="star">${p.must ? '★' : '·'}</span>${esc(p.n)}`;
+      row.title = '在地图上定位：' + p.n;
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      const focusPoint = () => map.setView([p.lat, p.lng], Math.max(map.getZoom(), 18));
+      row.addEventListener('click', focusPoint);
+      row.addEventListener('keydown', e => {
+        if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); focusPoint(); }
+      });
       list.appendChild(row);
     }
   });
@@ -90,12 +120,12 @@ function renderPoints(points){
         ? '服务器没有返回打卡点；点「刷新」重试。'
         : '登录后从服务器拉取打卡点。')) + '</div>';
   }
-  if(livePoints.length){
+  if(livePoints.length && opts.fit !== false){
     const b = L.latLngBounds(livePoints.map(p => [p.lat, p.lng]));
-    map.fitBounds(b.pad(.18), {paddingTopLeft: [36, 38], paddingBottomRight: [390, 38]});
+    map.fitBounds(b.pad(.18), runMapPadding());
   }
 }
-function setFence(polygon, name){
+function setFence(polygon, name, opts){
   const pts = (Array.isArray(polygon) ? polygon : [])
     .map(p => [p && (p.lat ?? p.glat), p && (p.lon ?? p.glon)])
     .filter(p => isFinite(p[0]) && isFinite(p[1]));
@@ -103,9 +133,7 @@ function setFence(polygon, name){
   fenceLayer.setTooltipContent(esc(name || '跑步围栏') + (pts.length ? '' : '（未加载）'));
   fenceBounds = L.latLngBounds(pts);
   try{ routeFenceLayer.setLatLngs(pts); }catch(e){}
-  if(pts.length) map.fitBounds(fenceBounds.pad(.18), {
-    paddingTopLeft: [36, 38], paddingBottomRight: [390, 38]
-  });
+  if(pts.length && (!opts || opts.fit !== false)) map.fitBounds(fenceBounds.pad(.18), runMapPadding());
 }
 
 let route = [];
@@ -116,20 +144,27 @@ const ink = L.polyline([], {color: '#2E4A7D', weight: 3.1, opacity: .96, lineCap
 const start = L.circleMarker([0, 0], {radius: 5, color: '#FBF8F0', weight: 2, fillColor: '#2E4A7D', fillOpacity: 1})
   .bindTooltip('起点', {permanent: true, direction: 'top', offset: [0, -6], className: 'pt-tip'});
 
+function runMapPadding(){
+  const small = window.innerWidth <= 900;
+  return {
+    paddingTopLeft: [36, 38],
+    // On narrow windows the run panel sits at the bottom, so don't reserve
+    // 390px on the right and hide the route behind the panel.
+    paddingBottomRight: [small ? 16 : 390,
+                         small ? Math.round(window.innerHeight * 0.48) : 38]
+  };
+}
 function fitRunMap(){
-  const padRight = window.innerWidth > 900 ? 390 : 16;
   if(fenceBounds.isValid()){
-    map.fitBounds(fenceBounds, {
-      paddingTopLeft: [36, 38],
-      paddingBottomRight: [padRight, 38]
-    });
+    map.fitBounds(fenceBounds, runMapPadding());
   }else{
     map.setView(CENTER, 16);
   }
 }
 
 /* ---------- route library map ---------- */
-const routeMap = L.map('routeMap', {zoomControl: true, attributionControl: true})
+const routeMap = L.map('routeMap', {zoomControl: true, attributionControl: true,
+  scrollWheelZoom: false})
   .setView(CENTER, 16);
 L.tileLayer(
   'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
@@ -149,7 +184,9 @@ let ctrlDots = [];
 
 function setPen(on, silent){
   pen = on;
-  $('#penBtn').classList.toggle('active', on);
+  const btn = $('#penBtn');
+  btn.classList.toggle('active', on);
+  btn.setAttribute('aria-pressed', String(on));
   map.getContainer().style.cursor = on ? 'crosshair' : '';
   if(on && !silent) toast('画笔已打开：单击加点，右键删点；地图仍可拖动');
 }
@@ -228,6 +265,22 @@ function drawDots(){
     ctrlDots.push(d);
   });
 }
+function autoFillDistanceFromRoute(m){
+  // Keep the target distance tied to the line until the operator edits it.
+  // A closed line is one lap: 996 m must not round up to 1.00 km and become
+  // two laps, so the lap calculation below also uses a small tolerance.
+  if(distanceManual || !(m > 0)) return false;
+  const value = Math.min(RUN_LIMITS.km.max,
+    Math.max(RUN_LIMITS.km.min, Math.round(m / 10) / 100));
+  const el = $('#inKm');
+  if(!el) return false;
+  const current = +el.value;
+  if(isFinite(current) && Math.abs(current - value) < 1e-9) return false;
+  el.value = String(Math.round(value * 100) / 100);
+  refreshParams();
+  updateRunDateLabel();
+  return true;
+}
 function redraw(){
   const path = displayPath();
   hi.setLatLngs(path);
@@ -235,6 +288,10 @@ function redraw(){
   drawDots();
 
   if(!path.length){
+    // Reset the “manual target” flag only when a route actually disappears;
+    // setting a target before drawing must not be immediately overwritten.
+    if(lastRouteLength) distanceManual = false;
+    lastRouteLength = 0;
     if(map.hasLayer(start)) map.removeLayer(start);
     $('#routeKm').innerHTML = '0.00<small>km</small>';
     $('#routeNote').innerHTML = '<b>·</b> 点击地图开始';
@@ -250,11 +307,16 @@ function redraw(){
   start.setLatLng(path[0]);
 
   const m = pathLength(path);
+  lastRouteLength = route.length;
+  autoFillDistanceFromRoute(m);
   const km = m / 1000;
   $('#routeKm').innerHTML = km.toFixed(2) + '<small>km</small>';
   const target = (+$('#inKm').value || 2.5) * 1000;
   const closed = routeClosed && route.length >= 3;
-  const laps = closed && m > 5 ? Math.max(1, Math.ceil(target / m)) : 0;
+  // 0.5% tolerance: a target equal to one lap must stay one lap after the
+  // route length was rounded to centimetres for the input field.
+  const laps = closed && m > 5
+    ? Math.max(1, Math.ceil(target / m - 0.005)) : 0;
   const cov = typeof computeCoverage === 'function' ? computeCoverage() : null;
   let status;
   if(!routeClosed) status = '开放路线 · 再点可以继续';
@@ -306,6 +368,7 @@ $('#undoTool').addEventListener('click', () => {
   redraw();
 });
 $('#clearBtn').addEventListener('click', () => {
+  if(route.length >= 3 && !confirm('清空当前路线？')) return;
   route = [];
   redraw();
   toast('已清空：从你的第一个落点开始画');
@@ -313,6 +376,7 @@ $('#clearBtn').addEventListener('click', () => {
 $('#smoothToggle').addEventListener('click', () => {
   smoothOn = !smoothOn;
   $('#smoothToggle').classList.toggle('on', smoothOn);
+  $('#smoothToggle').setAttribute('aria-pressed', String(smoothOn));
   redraw();
   toast(smoothOn ? '平滑曲线已开' : '平滑已关，按折线显示');
 });
@@ -361,6 +425,38 @@ function durationText(totalMin){
   const total = Math.max(0, Math.round((+totalMin || 0) * 60));
   return Math.floor(total / 60) + "'" + String(total % 60).padStart(2, '0') + '"';
 }
+function kmText(v){
+  return (+v || 0).toFixed(2).replace(/\.?0+$/, '');
+}
+const RUN_LIMITS = {
+  km: {min: 0.1, max: 42.2, label: '目标距离', unit: 'km'},
+  pace: {min: 2, max: 20, label: '配速', unit: 'min/km'},
+  cadence: {min: 60, max: 260, label: '步频', unit: 'spm', integer: true},
+  altitude: {min: -100, max: 5000, label: '海拔基准', unit: 'm'}
+};
+function readRunParams(){
+  return {
+    km: +$('#inKm').value,
+    pace: +$('#inPace').value,
+    cadence: +$('#inCad').value,
+    altitude: +$('#inAlt').value
+  };
+}
+function validateRunParams(p){
+  p = p || readRunParams();
+  for(const key of Object.keys(RUN_LIMITS)){
+    const spec = RUN_LIMITS[key], v = p[key];
+    if(!isFinite(v)) return '请填写有效的' + spec.label;
+    if(spec.integer && Math.abs(v - Math.round(v)) > 1e-9){
+      return spec.label + '需要是整数';
+    }
+    if(v < spec.min || v > spec.max){
+      return spec.label + '需要在 ' + spec.min + '–' + spec.max + ' ' +
+        spec.unit + ' 之间';
+    }
+  }
+  return '';
+}
 function refreshParams(){
   const km = +$('#inKm').value || 0;
   const pace = +$('#inPace').value || 0;
@@ -369,7 +465,7 @@ function refreshParams(){
   const total = durationText(totalMin);
   const speed = pace > 0 ? 1000 / (pace * 60) : 0;
   const stride = cad > 0 ? speed / (cad / 60) : 0;
-  $('#heroKm').textContent = km.toFixed(1);
+  $('#heroKm').textContent = kmText(km);
   $('#heroPace').textContent = _paceText(pace);
   $('#heroTime').textContent = total;
   const kcal = Math.round(km * 75.6);
@@ -381,7 +477,7 @@ function refreshParams(){
   $('#paceScaleText').textContent = _paceText(pace) + ' /km';
   const marker = $('#paceMarker');
   if(marker) marker.style.left = Math.max(0, Math.min(100, (pace - 4) / 6 * 100)) + '%';
-  $('#goalLine1').textContent = '目标 ' + km.toFixed(1) + ' km · ' + _paceText(pace);
+  $('#goalLine1').textContent = '目标 ' + kmText(km) + ' km · ' + _paceText(pace);
   $('#goalLine2').textContent = '预计 ' + total + ' · ' + kcal + ' kcal';
   $('#paceSpeedHint').textContent = '配速 ' + _paceText(pace) + ' ≈ ' +
     (speed * 3.6).toFixed(1) + ' km/h；模型会用这些值做配速/步频/步幅一致性检查。';
@@ -408,6 +504,7 @@ refreshParams();
 
 /* ---------- run panel tabs / collapse ---------- */
 function switchRunTab(name){
+  if(name !== 'params') closeDatePop();
   document.querySelectorAll('.rtab').forEach(t => {
     const on = t.dataset.rtab === name;
     t.classList.toggle('active', on);
@@ -423,6 +520,7 @@ document.querySelectorAll('.rtab').forEach(t => {
 });
 ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => {
   $('#' + id).addEventListener('input', () => {
+    if(id === 'inKm') distanceManual = true;
     refreshParams();
     if(id !== 'inAlt') redraw();
     if(modelConfigured) refreshModel();
@@ -431,8 +529,9 @@ document.querySelectorAll('.rtab').forEach(t => {
 });
 document.querySelectorAll('[data-km]').forEach(b => {
   b.addEventListener('click', () => {
+    distanceManual = true;
     $('#inKm').value = b.dataset.km;
-    refreshParams(); redraw();
+    refreshParams(); redraw(); updateRunDateLabel();
     if(modelConfigured) refreshModel();
     scheduleModelPreview();
   });
@@ -440,7 +539,7 @@ document.querySelectorAll('[data-km]').forEach(b => {
 document.querySelectorAll('[data-pace]').forEach(b => {
   b.addEventListener('click', () => {
     $('#inPace').value = b.dataset.pace;
-    refreshParams(); redraw();
+    refreshParams(); redraw(); updateRunDateLabel();
     if(modelConfigured) refreshModel();
     scheduleModelPreview();
   });
@@ -450,10 +549,11 @@ $('#randomParams').addEventListener('click', () => {
   const paces = [5.8, 6.0, 6.3, 6.6, 7.0];
   const cads = [160, 168, 172, 176, 180];
   const pick = a => a[Math.floor(Math.random() * a.length)];
+  distanceManual = true;
   $('#inKm').value = pick(kms);
   $('#inPace').value = pick(paces);
   $('#inCad').value = pick(cads);
-  refreshParams(); redraw();
+  refreshParams(); redraw(); updateRunDateLabel();
   if(modelConfigured) refreshModel();
   scheduleModelPreview();
   toast('随机档位已填入');
@@ -528,11 +628,12 @@ function setMode(mode){
   $('#stadiumGenerate').style.display = mode === 'stadium' ? 'inline-flex' : 'none';
   if(mode === 'draw'){
     if(prev === 'draw'){ setPen(true); return; }
-    route = [];
-      setCloseUI(false);
+    // Do not wipe an auto/imported/stadium route just because the operator
+    // switched tabs; 清空 is the explicit way to start over.
     setPen(true);
+    if(!route.length) setCloseUI(false);
     redraw();
-    toast('手绘：从第一个落点开始；闭合默认关');
+    toast('手绘：可继续编辑当前路线；要重画先点「清空」');
   }else if(mode === 'auto'){
     setPen(false);
     autoGenerate();
@@ -637,7 +738,7 @@ function importRouteToLibrary(){
     const name = prompt('路线名称', f.name.replace(/\.[^.]+$/, ''));
     if(!name) return;
     const item = {name: name, type: 'file', line: line, closed: false,
-                  saved_at: new Date().toISOString().slice(0, 10)};
+                  saved_at: beijingTodayKey()};
     const ok = await persistRoutes(LIVE.routes.concat([item]));
     LIVE.selectedRoute = LIVE.routes.length - 1;
     renderRouteList(); selectRoute(LIVE.selectedRoute);
@@ -723,9 +824,24 @@ document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-goto]');
   if(!el) return;
   if(el.tagName === 'A') ev.preventDefault();
+  if(el.dataset.modeTarget) setMode(el.dataset.modeTarget);
+  if(el.dataset.goto === 'run') switchRunTab('route');
   go(el.dataset.goto);
 });
-document.getElementById('newRunBtn').addEventListener('click', () => go('run'));
+document.addEventListener('keydown', ev => {
+  const el = ev.target.closest('[data-goto]');
+  if(!el) return;
+  if(ev.key === 'Enter' || ev.key === ' '){
+    ev.preventDefault();
+    if(el.dataset.modeTarget) setMode(el.dataset.modeTarget);
+    if(el.dataset.goto === 'run') switchRunTab('route');
+    go(el.dataset.goto);
+  }
+});
+document.getElementById('newRunBtn').addEventListener('click', () => {
+  go('run');
+  switchRunTab('route');
+});
 window.addEventListener('hashchange', () => {
   const p = (location.hash || '#overview').slice(1);
   if(PAGES.includes(p)) go(p);
@@ -737,7 +853,6 @@ const startPage = (location.hash || '#overview').slice(1);
    Live bridge: the UI reads session / points / records / rules
    from the local Python bridge.  No synthetic rows are generated.
    ============================================================ */
-let _pointsSeq = 0, _recordsSeq = 0;
 const LIVE = {
   session: null, checked: null, points: [], fence: [], pointsDistance: null,
   records: [], recordsLoaded: false, recordsLoading: false, recordFilter: 'all',
@@ -833,7 +948,7 @@ function prettyLoginError(raw){
   if(/bridge 不可用|Failed to fetch|NetworkError|ECONN|连接/i.test(msg)) return '连不上本地服务，请重启好想跑后再试。';
   return msg || '登录失败，请重试。';
 }
-function loginFail(msg){
+function loginFail(msg, focusSelector){
   stopLoginClock();
   setLoginBusy(false);
   setLoginStatus('登录没有完成，请检查后重试。', 'error');
@@ -842,7 +957,6 @@ function loginFail(msg){
   const pass = $('#loginPass');
   if(pass){
     pass.type = 'password';
-    pass.focus(); pass.select();
     const eye = $('#loginEye');
     if(eye){
       eye.textContent = '显示';
@@ -850,10 +964,16 @@ function loginFail(msg){
       eye.setAttribute('aria-label', '显示密码');
     }
   }
+  const target = $(focusSelector || '#loginPass') || pass;
+  if(target){
+    target.focus();
+    try{ target.select(); }catch(e){}
+  }
 }
 function showLoginGate(message, tone){
   const gate = $('#loginGate'), app = $('#appShell');
   if(!gate) return;
+  try{ closeDatePop(); }catch(e){}
   document.title = '好想跑 · 登录';
   document.body.classList.add('login-locked');
   if(app){ app.setAttribute('aria-hidden', 'true'); app.inert = true; }
@@ -936,8 +1056,8 @@ async function gateLogin(){
   if(LOGIN.busy) return;
   const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
   const pass = $('#loginPass') ? $('#loginPass').value : '';
-  if(!user){ loginFail('请输入手机号'); const u = $('#loginUser'); if(u) u.focus(); return; }
-  if(!pass){ loginFail('请输入密码'); const p = $('#loginPass'); if(p) p.focus(); return; }
+  if(!user){ loginFail('请输入手机号', '#loginUser'); return; }
+  if(!pass){ loginFail('请输入密码', '#loginPass'); return; }
   setLoginBusy(true, '正在登录… 通常 5–15 秒', 'busy');
   startLoginClock();
   liveLog('登录中', '正在验证账号', 'info');
@@ -974,6 +1094,33 @@ function esc(s){
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
   }[c]));
 }
+async function copyPlainText(text){
+  // Clipboard API first; fall back to execCommand for WebView2/HTTP contexts
+  // where navigator.clipboard is missing or permission is denied.
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  }catch(e){}
+  const prev = document.activeElement;
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try{ ok = document.execCommand('copy'); }catch(e){ ok = false; }
+  ta.remove();
+  if(prev && prev.focus){
+    try{ prev.focus({preventScroll: true}); }catch(e){}
+  }
+  return ok;
+}
 function hms(sec){
   sec = Math.max(0, Math.round(+sec || 0));
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -1008,11 +1155,45 @@ function greetingText(){
   if(h < 18) return '下午好';
   return '晚上好';
 }
+function refreshDateHeader(){
+  // The window may stay open across midnight.  Keep the greeting/date and
+  // "today" data honest without re-rendering the whole account card.
+  const bp = beijingParts();
+  const s = LIVE.session || {};
+  const logged = !!((s.token_present || s.token) && !s.disabled);
+  const name = logged ? (s.nickname || s.name || '') : '';
+  if($('#ovGreeting')) $('#ovGreeting').textContent = greetingText() + (name ? '，' + name : '');
+  if($('#ovDate')) $('#ovDate').textContent = bp.iso + ' ' + bp.weekday;
+  if($('#ovTodayEyebrow')){
+    $('#ovTodayEyebrow').textContent = '今天 · ' + bp.month + ' 月 ' + bp.day + ' 日';
+  }
+  const dayChanged = !!(_headerDay && _headerDay !== bp.iso);
+  _headerDay = bp.iso;
+  if(!dayChanged || LOGIN.visible || !hasSession()) return;
+  try{ closeDatePop(); }catch(e){}
+  LIVE.daily = null;
+  LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
+  updateRunDateLabel();
+  updateTodayNav();
+  refreshChecks();
+  loadOverview();
+  refreshDailyCount();
+}
 function nowHM(){
   // Logs are read alongside server timestamps; always show Beijing time even
   // when the desktop is set to another timezone.
   const d = beijingNowDate();
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function beijingStamp(ts){
+  if(!ts) return '—';
+  try{
+    return new Date(ts * 1000).toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai', hour12: false
+    });
+  }catch(e){
+    return new Date(ts * 1000).toLocaleString('zh-CN', {hour12: false});
+  }
 }
 function maskToken(t){
   t = String(t || '');
@@ -1057,7 +1238,10 @@ function renderLog(){
 
 function clearAccountActivity(){
   // Switching accounts must not leave the previous operator's run log,
-  // rrid, plan or model in the UI.  Local route-library files stay as-is.
+  // rrid, plan, records or model in the UI.  Local route-library files stay
+  // as-is.  Bump the request sequences first: a reply that was already in
+  // flight for the old account must not land after this point.
+  invalidateLiveRequests();
   LIVE.log = [];
   LIVE.checked = null;
   LIVE.tokenUpdatedAt = null;
@@ -1065,6 +1249,7 @@ function clearAccountActivity(){
   LIVE.plan = null;
   LIVE.daily = null;
   LIVE.model = null;
+  LIVE.records = []; LIVE.recordsLoaded = false; LIVE.recordsLoading = false;
   LIVE.weekError = null;
   LIVE.planError = null;
   LIVE.recordsError = null;
@@ -1073,6 +1258,7 @@ function clearAccountActivity(){
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   LIVE.lastDetail = null;
   renderLog();
+  renderRecords();
 }
 
 /* ---------------- session / account ---------------- */
@@ -1121,7 +1307,8 @@ function renderSession(){
   if(table){
     const head = '<div class="thead"><span>账号</span><span>uid</span><span>校区</span><span>状态</span><span></span></div>';
     const rowName = s.disabled ? '旧账号' : (name || s.username || '本地会话');
-    const row = s.uid ? `<div class="trow"><span>${esc(rowName)}</span><span class="mono">${esc(s.uid)}</span><span>${esc(s.campusName || '—')}</span><span><span class="tag ${s.disabled ? 'warn' : 'ok'}">${s.disabled ? '已禁用' : (logged ? '已加载' : '未验证')}</span></span><span></span></div>` : '';
+    const rowTag = s.disabled ? 'warn' : (logged ? 'ok' : '');
+    const row = s.uid ? `<div class="trow"><span>${esc(rowName)}</span><span class="mono">${esc(s.uid)}</span><span>${esc(s.campusName || '—')}</span><span><span class="tag ${rowTag}">${s.disabled ? '已禁用' : (logged ? '已加载' : '未验证')}</span></span><span></span></div>` : '';
     table.innerHTML = head + row;
   }
 
@@ -1210,33 +1397,42 @@ async function bootAuth(){
 }
 
 function renderEmptyData(){
-  _pointsSeq++; _recordsSeq++;
+  invalidateLiveRequests();
   renderPoints([]);
   setFence([], '跑步围栏');
   route = [];
   redraw();
   LIVE.points = [];
   LIVE.fence = [];
+  LIVE.pointsDistance = null;
   LIVE.records = [];
   LIVE.recordsLoaded = false;
   LIVE.recordsLoading = false;
   LIVE.recordsError = null;
   LIVE.weekError = null;
   LIVE.planError = null;
+  LIVE.plan = null;
   LIVE.daily = null;
+  LIVE.lastSubmit = null;
+  LIVE.receipts = []; LIVE.receiptsLoaded = false; LIVE.receiptsError = null;
+  LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   updateFenceChip();
   LIVE.model = null;
   renderModel();
   renderRecords();
+  renderReceipts();
   renderOverviewEmpty();
   refreshChecks();
 }
 
 async function liveLogin(){
+  if(LIVE.submitting){ toast('提交进行中，等结果出来后再切换账号'); return; }
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
   const btn = $('#accLogin');
   if(btn && btn.disabled) return;
   const u = $('#accUser').value.trim(), p = $('#accPass').value;
   if(!u || !p){ toast('请填写手机号和密码'); return; }
+  accountBusy = true;
   btn.disabled = true; btn.textContent = '登录中…';
   liveLog('登录中', '正在验证账号', 'info');
   try{
@@ -1258,28 +1454,42 @@ async function liveLogin(){
     liveLog('登录失败', msg, 'err');
     toast('登录失败：' + msg);
   }finally{
+    accountBusy = false;
     btn.disabled = false; btn.textContent = '登录';
   }
 }
 
 async function liveTestSession(){
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
   if(!hasSession()){ toast('没有可测试的 token'); return; }
+  const btn = $('#accTest');
+  if(btn && btn.disabled) return;
+  const sessionAtStart = LIVE.session;
+  if(btn){ btn.disabled = true; btn.textContent = '测试中…'; }
   liveLog('测试 token', 'GET user/info', 'info');
-  const j = await liveApi('real_check_session');
-  LIVE.checked = j;
-  renderSession();
-  if(liveOk(j)){
-    liveLog('token 有效', (j.data && j.data.name) ? j.data.name : '', 'ok');
-    toast('token 有效');
-  }else{
-    liveLog('token 无效', j.message || '', 'err');
-    toast('token 无效：' + (j.message || ''));
+  try{
+    const j = await liveApi('real_check_session');
+    if(LIVE.session !== sessionAtStart || !hasSession()) return;
+    LIVE.checked = j;
+    renderSession();
+    if(liveOk(j)){
+      liveLog('token 有效', (j.data && j.data.name) ? j.data.name : '', 'ok');
+      toast('token 有效');
+    }else{
+      liveLog('token 无效', j.message || '', 'err');
+      toast('token 无效：' + (j.message || ''));
+    }
+    refreshChecks();
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '测试 token'; }
   }
-  refreshChecks();
 }
 
 async function liveLogout(){
+  if(LIVE.submitting){ toast('提交进行中，等结果出来后再退出'); return; }
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
   if(!confirm('退出登录？有 token 时会验证 token 已失效；退出后回到登录页。')) return;
+  accountBusy = true;
   try{ await liveApi('real_keepalive_stop'); }catch(e){}
   // Do not wait for the server: after the click the local gate closes at
   // once, while a best-effort server logout continues in the background.
@@ -1314,11 +1524,15 @@ async function liveLogout(){
     liveLog('退出失败', j.message || '', 'err');
     toast('退出失败：' + (j.message || ''));
   }
+  accountBusy = false;
 }
 
 /* ---------------- keepalive ---------------- */
 async function loadKeepalive(){
+  const sessionAtStart = LIVE.session;
+  let expectedSession = sessionAtStart;
   const j = await liveApi('real_keepalive_status');
+  if(LIVE.session !== expectedSession) return;
   const badge = $('#kaBadge'), info = $('#kaInfo');
   if(!liveOk(j)){
     if(badge){ badge.textContent = '读取失败'; badge.className = 'tag warn'; }
@@ -1326,17 +1540,48 @@ async function loadKeepalive(){
     return;
   }
   const d = j.data || {};
-  if(d.disabled){ badge.textContent = '账号已禁用'; badge.className = 'tag warn'; info.textContent = '该会话已停用，不会探测或重登。'; return; }
-  if(!d.token_present){ badge.textContent = '无 token'; badge.className = 'tag warn'; info.textContent = '先登录，或保存 token。'; return; }
+  if(d.disabled){
+    if(LIVE.session){
+      LIVE.session = Object.assign({}, LIVE.session, {disabled: true});
+      LIVE.checked = null;
+      invalidateLiveRequests();
+      renderSession();
+      refreshChecks();
+      if(!LOGIN.visible && !LIVE.submitting && !accountBusy){
+        showLoginGate('这个本地会话已停用，请登录你的账号。');
+      }
+    }
+    badge.textContent = '账号已禁用'; badge.className = 'tag warn';
+    info.textContent = '该会话已停用，不会探测或重登。'; return;
+  }
+  if(!d.token_present){
+    if(LIVE.session){
+      LIVE.session = Object.assign({}, LIVE.session,
+        {token_present: false, token: ''});
+      LIVE.checked = null;
+      invalidateLiveRequests();
+      renderSession();
+      refreshChecks();
+      if(!LOGIN.visible && !LIVE.submitting && !accountBusy){
+        showLoginGate('登录已失效，请重新登录。');
+      }
+    }
+    badge.textContent = '无 token'; badge.className = 'tag warn';
+    info.textContent = '先登录，或保存 token。'; return;
+  }
   // Auto-relogin replaces the token on disk without the page knowing.  Pull
   // the new session and re-verify it, otherwise the account card and submit
   // gate would keep testing the old token.
   const stamp = +(d.token_updated_at || 0);
   if(stamp && LIVE.tokenUpdatedAt !== null && stamp !== LIVE.tokenUpdatedAt){
     const sj = await liveApi('real_get_session');
+    if(LIVE.session !== expectedSession) return;
     if(liveOk(sj)){
-      LIVE.session = sj.data || {};
+      const newSession = sj.data || {};
+      LIVE.session = newSession;
+      expectedSession = newSession;
       const cj = await liveApi('real_check_session');
+      if(LIVE.session !== expectedSession) return;
       LIVE.checked = cj;
       if(liveOk(cj) && cj.data){
         ['name', 'nickname', 'schoolName', 'campusName', 'unid', 'uid'].forEach(k => {
@@ -1347,6 +1592,7 @@ async function loadKeepalive(){
       refreshChecks();
     }
   }
+  if(LIVE.session !== expectedSession) return;
   LIVE.tokenUpdatedAt = stamp;
   if(d.token_expired){
     badge.textContent = 'token 失效'; badge.className = 'tag warn';
@@ -1358,8 +1604,8 @@ async function loadKeepalive(){
   else { badge.textContent = '未开启'; badge.className = 'tag'; }
   const parts = [];
   parts.push('间隔 ' + fmtKeepaliveInterval(d.interval_s));
-  parts.push('上次检查 ' + (d.last_check_at ? new Date(d.last_check_at * 1000).toLocaleString('zh-CN', {hour12: false}) : '—'));
-  parts.push('上次有效 ' + (d.last_ok_at ? new Date(d.last_ok_at * 1000).toLocaleString('zh-CN', {hour12: false}) : '—'));
+  parts.push('上次检查 ' + beijingStamp(d.last_check_at));
+  parts.push('上次有效 ' + beijingStamp(d.last_ok_at));
   if(d.fail_count) parts.push('失败 ' + d.fail_count + ' 次');
   if(d.auto_relogin) parts.push(d.can_auto_relogin ? '自动重登就绪' : '自动重登待输入密码');
   if(d.last_error) parts.push('错误: ' + d.last_error);
@@ -1371,6 +1617,7 @@ async function loadKeepalive(){
   if($('#kaAuto')) $('#kaAuto').checked = !!d.auto_relogin;
 }
 async function liveKeepaliveStart(){
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
   const auto = $('#kaAuto').checked;
   const u = $('#accUser').value.trim(), p = $('#accPass').value;
   if(auto && (!u || !p)){ toast('自动重登需要手机号和密码（只在内存）'); return; }
@@ -1383,12 +1630,21 @@ async function liveKeepaliveStart(){
   await loadKeepalive();
 }
 async function liveKeepaliveCheck(){
-  const j = await liveApi('real_keepalive_once');
-  if(liveOk(j)){ liveLog('保活检查', (j.data && j.data.action) + ' · ' + (j.data && j.data.message), 'ok'); toast('检查完成'); }
-  else { liveLog('保活检查失败', j.message || '', 'warn'); toast('检查失败：' + (j.message || '')); }
-  await loadKeepalive();
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
+  const btn = $('#kaCheck');
+  if(btn && btn.disabled) return;
+  if(btn){ btn.disabled = true; btn.textContent = '检查中…'; }
+  try{
+    const j = await liveApi('real_keepalive_once');
+    if(liveOk(j)){ liveLog('保活检查', (j.data && j.data.action) + ' · ' + (j.data && j.data.message), 'ok'); toast('检查完成'); }
+    else { liveLog('保活检查失败', j.message || '', 'warn'); toast('检查失败：' + (j.message || '')); }
+    await loadKeepalive();
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '立即检查'; }
+  }
 }
 async function liveKeepaliveStop(){
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
   const j = await liveApi('real_keepalive_stop');
   if(liveOk(j)) liveLog('保活已停止', '内存密码已清除', 'info');
   await loadKeepalive();
@@ -1400,11 +1656,16 @@ function freeRunOn(){
 }
 async function loadPoints(force){
   if(!hasSession()){ toast('先登录后再刷新点位'); return; }
+  const kmNow = +$('#inKm').value;
+  if(!isFinite(kmNow) || kmNow < RUN_LIMITS.km.min || kmNow > RUN_LIMITS.km.max){
+    toast('先填写有效的目标距离（' + RUN_LIMITS.km.min + '–' +
+      RUN_LIMITS.km.max + ' km）再刷新点位');
+    return;
+  }
   const seq = ++_pointsSeq;
   const s = LIVE.session;
   const btn = $('#fetchPoints');
   if(btn){ btn.textContent = '刷新中…'; btn.disabled = true; }
-  const kmNow = +$('#inKm').value || 2.5;
   const j = await liveApi('real_fetch_points', {
     school: s.schoolName || '', glat: +s.lat || 0, glon: +s.lon || 0,
     unid: s.unid || null, force: !!force,
@@ -1427,11 +1688,12 @@ async function loadPoints(force){
   LIVE.fence = (Array.isArray(d.polygon) ? d.polygon : [])
     .filter(p => p && isFinite(+ (p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
   LIVE.points = (Array.isArray(d.checkpoints) ? d.checkpoints : [])
-    .filter(p => p && isFinite(+p.lat) && isFinite(+p.lon));
+    .filter(p => p && isFinite(+(p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
   // Always redraw, even when the server returned an empty list: otherwise the
   // previous campus's fence/points stayed on the map after switching accounts.
-  setFence(LIVE.fence, (s.campusName || '') + '跑步围栏');
-  renderPoints(LIVE.points);
+  const hasPoints = LIVE.points.length > 0;
+  setFence(LIVE.fence, (s.campusName || '') + '跑步围栏', {fit: !hasPoints});
+  renderPoints(LIVE.points, {fit: hasPoints});
   if(Array.isArray(d.errors) && d.errors.length){
     liveLog('围栏/点位部分失败', d.errors.join('；'), 'warn');
   }
@@ -1518,13 +1780,15 @@ function recordTag(r){
 function overviewRecordRow(r){
   const tag = recordTag(r);
   const rr = r.rrid ? (String(r.rrid).slice(0, 4) + '…' + String(r.rrid).slice(-4)) : '—';
-  return `<div class="record-row" data-goto="records"><span class="rdate">${shortDate(r.start_ms)}</span><span class="rkm">${(+r.distance_km || 0).toFixed(2)} km</span><span class="rpace">${paceText(r.pace_min_per_km)}</span><span>${tag}</span><span class="rrid">${esc(rr)}</span></div>`;
+  return `<div class="record-row" data-goto="records" role="button" tabindex="0"><span class="rdate">${shortDate(r.start_ms)}</span><span class="rkm">${(+r.distance_km || 0).toFixed(2)} km</span><span class="rpace">${paceText(r.pace_min_per_km)}</span><span>${tag}</span><span class="rrid">${esc(rr)}</span></div>`;
 }
 function renderWeekTrend(weeks){
   const wrap = $('#ovWeekTrend');
   if(!wrap) return;
   if(!weeks.length){
-    wrap.innerHTML = '<div class="hint" style="align-self:center">近 4 周还没有数据。</div>';
+    wrap.innerHTML = LIVE.weekError
+      ? `<div class="hint" style="align-self:center">周汇总加载失败：${esc(LIVE.weekError)}</div>`
+      : '<div class="hint" style="align-self:center">近 4 周还没有数据。</div>';
     return;
   }
   const max = Math.max(0.1, ...weeks.map(w => +w.distance_km || 0));
@@ -1575,7 +1839,6 @@ function renderPlanGrid(){
     return;
   }
   const doneDays = new Set((LIVE.records || []).map(r => r.date).filter(Boolean));
-  const today = beijingTodayKey();
   let first = '', last = '';
   const base = parseDateKey(beijingTodayKey());
   wrap.innerHTML = slots.map((s, idx) => {
@@ -1587,14 +1850,67 @@ function renderPlanGrid(){
     first = first || s.day;
     last = s.day;
     const isDone = doneDays.has(s.day);
-    const isPast = s.day < today;
-    const disabled = isDone || isPast;
-    return `<div class="plan-row ${isDone ? 'done' : ''}"><span class="pd">${esc((s.day || '').slice(5).replace('-', '/'))} ${esc(s.weekday ? '周' + s.weekday : '')}</span><span class="pv">${esc(s.distance_km)} km · ${esc(s.pace_hhmmss || '')}${isDone ? ' · 已完成' : ''}</span><button class="pf" data-plan-day="${esc(s.day)}" ${disabled ? 'disabled' : ''}>填</button></div>`;
+    const daysAgo = dateToDaysAgo(s.day);
+    const allowed = planSlotAllowed(s.day);
+    const future = daysAgo !== null && daysAgo < 0;
+    const disabled = isDone || !allowed;
+    const button = isDone ? '已完成' : (allowed ? '填' : (future ? '未来' : '过期'));
+    const title = isDone ? '当天已有记录'
+      : (allowed ? '填入这一天的距离、配速、步频'
+        : (future ? '未来日期不能提交' : '超过 3 天，不能再补交'));
+    return `<div class="plan-row ${isDone ? 'done' : ''}"><span class="pd">${esc((s.day || '').slice(5).replace('-', '/'))} ${esc(s.weekday ? '周' + s.weekday : '')}</span><span class="pv">${esc(s.distance_km)} km · ${esc(s.pace_hhmmss || '')}${isDone ? ' · 已完成' : ''}</span><button class="pf" data-plan-day="${esc(s.day)}" title="${esc(title)}" ${disabled ? 'disabled' : ''}>${button}</button></div>`;
   }).join('');
   if($('#ovPlanRange')) $('#ovPlanRange').textContent = first ? (first.slice(5) + ' – ' + last.slice(5)) : '—';
 }
+function planSlotAllowed(day){
+  // Submissions only accept today and the previous three days.  The 14-day
+  // plan contains mostly future rows; they stay visible but cannot fill a
+  // date the backend would reject.
+  const n = dateToDaysAgo(day);
+  return n !== null && n >= 0 && n <= 3;
+}
+function nextPlanSlot(slots){
+  // The "next suggestion" should skip days that already have a record;
+  // otherwise a finished run keeps being recommended.
+  const today = beijingTodayKey();
+  const done = new Set((LIVE.records || []).map(r => r.date).filter(Boolean));
+  return (slots || []).find(s =>
+    s && s.day && s.day >= today && !done.has(s.day)) || null;
+}
+function applyPlanSlot(slot, opts){
+  opts = opts || {};
+  if(!slot) return false;
+  const day = slot.day || '';
+  const allowed = planSlotAllowed(day);
+  const km = +slot.distance_km;
+  const pace = +slot.pace_min_per_km;
+  const cadence = +slot.cadence;
+  if(isFinite(km)){ distanceManual = true; $('#inKm').value = km; }
+  if(isFinite(pace)) $('#inPace').value = pace.toFixed(2);
+  if(isFinite(cadence)) $('#inCad').value = cadence;
+  if(allowed && day){
+    LIVE.runDate = day;
+    LIVE.daily = null;
+    updateRunDateLabel();
+    refreshChecks();
+    refreshDailyCount();
+  }
+  refreshParams();
+  redraw();
+  scheduleModelPreview();
+  go('run');
+  if(opts.tab) switchRunTab(opts.tab);
+  if(allowed){
+    toast('已填入 ' + dateDisplay(day) + ' 的档位');
+  }else{
+    toast('已填入参数；未来日期不能提交，提交日期仍为 ' +
+      dateDisplay(LIVE.runDate || beijingTodayKey()));
+  }
+  return allowed;
+}
 
 async function loadOverview(){
+  const seq = ++_overviewSeq;
   if(!hasSession()){
     LIVE.records = []; LIVE.recordsLoaded = false;
     LIVE.recordsLoading = false; LIVE.recordsError = null;
@@ -1609,6 +1925,10 @@ async function loadOverview(){
     liveApi('real_plan', {days: 14}),
     liveApi('real_semester')
   ]);
+  // Logout or an account switch may have happened while these four requests
+  // were in flight.  Applying them now would show the previous account's
+  // records and semester under the new session.
+  if(seq !== _overviewSeq) return;
   const recordsOk = liveOk(rj);
   const records = recordsOk ? ((rj.data && rj.data.records) || []) : [];
   LIVE.records = records;
@@ -1691,8 +2011,7 @@ function renderOverview(records, week, weeks, semester){
   ];
   $('#ovChecklist').innerHTML = checklist.map(x => `<div class="mini-check ${x.ok ? 'done' : 'warn'}">${esc(x.text)}</div>`).join('');
 
-  const slot = LIVE.plan && (LIVE.plan.slots || [])
-    .find(s => s && s.day >= beijingTodayKey());
+  const slot = nextPlanSlot(LIVE.plan && (LIVE.plan.slots || []));
   if(slot){
     $('#ovPlan').innerHTML = `${esc(slot.day || '')}<br>${esc(slot.distance_km)} km · ${esc(slot.pace_hhmmss || '')} · ${esc(slot.route || '')}`;
   }else{
@@ -1715,6 +2034,7 @@ function renderOverview(records, week, weeks, semester){
 /* ---------------- records ---------------- */
 async function loadRecords(){
   if(!hasSession()){
+    _recordsSeq++;
     LIVE.records = []; LIVE.recordsLoaded = false; LIVE.recordsLoading = false;
     LIVE.recordsError = null;
     renderRecords(); refreshChecks(); return;
@@ -1729,12 +2049,15 @@ async function loadRecords(){
     liveLog('记录加载失败', j.message || '', 'err');
     LIVE.records = []; LIVE.recordsLoaded = false;
     LIVE.recordsError = j.message || '记录加载失败';
-    renderRecords(); refreshChecks(); return;
+    renderRecords();
+    if(LIVE.plan) renderPlanGrid();
+    refreshChecks(); return;
   }
   LIVE.records = (j.data && j.data.records) || [];
   LIVE.recordsLoaded = true;
   LIVE.recordsError = null;
   renderRecords();
+  if(LIVE.plan) renderPlanGrid();
   refreshChecks();
   const key = LIVE.runDate || beijingTodayKey();
   if(!LIVE.daily || LIVE.daily.key !== key ||
@@ -1794,13 +2117,14 @@ function renderRecordMap(detail){
   rdEnd = L.circleMarker(line[line.length - 1], {radius: 5, color: '#FBF8F0', weight: 2,
     fillColor: '#B6483C', fillOpacity: 1}).addTo(rdMap).bindTooltip('终点');
   five.forEach((p, i) => {
-    const lat = +p.glat, lng = +p.glon;
+    const lat = +(p.glat ?? p.gLat ?? p.lat);
+    const lng = +(p.glon ?? p.gLng ?? p.lng ?? p.lon);
     if(!isFinite(lat) || !isFinite(lng)) return;
-    const ok = !!p.isPass;
+    const ok = !!(p.isPass ?? p.is_pass ?? p.pass);
     L.circleMarker([lat, lng], {radius: 6, color: '#FBF8F0', weight: 2,
       fillColor: ok ? '#3F7A4B' : '#B6483C', fillOpacity: .95})
       .addTo(rdPtLayer)
-      .bindTooltip(esc(p.pointName || ('点位 ' + (i + 1))) + (ok ? ' · 已通过' : ' · 未通过'));
+      .bindTooltip(esc(p.pointName || p.name || ('点位 ' + (i + 1))) + (ok ? ' · 已通过' : ' · 未通过'));
   });
   rdMap.fitBounds(L.latLngBounds(line).pad(.18));
   setTimeout(() => { try{ rdMap.invalidateSize(); }catch(e){} }, 80);
@@ -1820,7 +2144,24 @@ function clearRecordDetail(){
   LIVE.lastDetail = null;
   clearRecordMap();
 }
+function updateTodayNav(){
+  const dot = $('#runNavDot'), count = $('#navCount');
+  const known = !!LIVE.recordsLoaded;
+  const today = beijingTodayKey();
+  const n = (LIVE.records || []).filter(r => r.date === today).length;
+  if(dot){
+    dot.hidden = !known || n > 0;
+    dot.title = !known ? '今日记录未加载'
+      : (n ? ('今天已跑 ' + n + ' 次') : '今天还没跑');
+  }
+  if(count){
+    count.hidden = !known || n <= 0;
+    count.textContent = n > 0 ? String(n) : '';
+    count.title = n > 0 ? ('今天已跑 ' + n + ' 次') : '';
+  }
+}
 function renderRecords(){
+  updateTodayNav();
   const stateOf = recordState;
   const list = LIVE.records.filter(r => {
     const s = stateOf(r);
@@ -1837,7 +2178,7 @@ function renderRecords(){
   $('#recordTable').innerHTML = head + list.map(r => {
     const idx = LIVE.records.indexOf(r);
     const rr = r.rrid ? (String(r.rrid).slice(0, 4) + '…' + String(r.rrid).slice(-4)) : '—';
-    return `<div class="trow" data-rec-index="${idx}"><span class="mono">${esc((r.date || '').slice(5).replace('-', '/'))}</span><span>${(+r.distance_km || 0).toFixed(2)} km</span><span class="mono">${paceText(r.pace_min_per_km)}</span><span>${recordTag(r)}</span><span class="mono">${esc(rr)}</span></div>`;
+    return `<div class="trow" data-rec-index="${idx}" role="button" tabindex="0"><span class="mono">${esc((r.date || '').slice(5).replace('-', '/'))}</span><span>${(+r.distance_km || 0).toFixed(2)} km</span><span class="mono">${paceText(r.pace_min_per_km)}</span><span>${recordTag(r)}</span><span class="mono">${esc(rr)}</span></div>`;
   }).join('');
   if(!list.length){
     $('#recHint').textContent = LIVE.recordsError
@@ -1854,12 +2195,14 @@ function renderRecords(){
 const RECEIPT_LABEL = {pending: '待确认', unknown: '结果未知',
                        accepted: '已受理', rejected: '已拒绝'};
 async function loadReceipts(){
+  const seq = ++_receiptsSeq;
   if(!hasSession()){
     LIVE.receipts = []; LIVE.receiptsLoaded = false;
     LIVE.receiptsError = null;
     renderReceipts(); return;
   }
   const j = await liveApi('real_receipts', {limit: 50});
+  if(seq !== _receiptsSeq) return;
   LIVE.receiptsLoaded = liveOk(j);
   LIVE.receiptsError = liveOk(j) ? null : (j.message || '回执加载失败');
   LIVE.receipts = liveOk(j) ? (((j.data && j.data.receipts) || [])) : [];
@@ -1893,6 +2236,11 @@ function renderReceipts(){
   }).join('');
 }
 async function reconcileReceipts(){
+  if(LIVE.submitting){
+    toast('提交进行中，等结果出来后再核对回执');
+    return;
+  }
+  if(accountBusy){ toast('账号操作进行中，请稍候'); return; }
   const btn = $('#receiptReconcile');
   if(btn){ btn.disabled = true; btn.textContent = '核对中…'; }
   try{
@@ -1915,10 +2263,13 @@ async function reconcileReceipts(){
   }
 }
 
-let _detailSeq = 0;
 async function selectRecord(i){
   const r = LIVE.records[i];
   if(!r) return;
+  if(!r.rrid){
+    toast('这条记录没有 rrid，无法读取详情');
+    return;
+  }
   const seq = ++_detailSeq;
   // Do not leave the previous record's numbers visible while this one loads
   // (or after it fails); that made a failed detail look like real data.
@@ -2014,8 +2365,8 @@ function routeSaveToast(ok, successText, failText){
   toast(ok ? successText
            : (failText || '路线只写入了浏览器缓存，data 写入失败；请重试'));
 }
-async function persistRoutes(next){
-  LIVE.routes = next;
+let _routeWriteChain = Promise.resolve();
+async function writeRoutesNow(next){
   try{
     const j = await liveApi('real_save_routes', {routes: next});
     if(!liveOk(j)) throw new Error(j.message || '保存失败');
@@ -2026,6 +2377,16 @@ async function persistRoutes(next){
     liveLog('路线写入 data 失败，已退回浏览器本地', String(e.message || e), 'warn');
     return false;
   }
+}
+function persistRoutes(next){
+  LIVE.routes = next;
+  // Serialise writes: two quick saves used to race in the bridge and the
+  // older snapshot could land last, silently dropping the newer route.
+  const job = _routeWriteChain.then(
+    () => writeRoutesNow(next),
+    () => writeRoutesNow(next));
+  _routeWriteChain = job.then(() => undefined, () => undefined);
+  return job;
 }
 async function loadRoutes(){
   let parsed = [];
@@ -2109,14 +2470,14 @@ function selectRoute(i){
 }
 async function saveCurrentRoute(){
   if(!route || route.length < 2){ toast('先在地图上画一条路线'); return; }
-  const name = prompt('路线名称', '手绘路线 ' + new Date().toLocaleDateString('zh-CN'));
+  const name = prompt('路线名称', '手绘路线 ' + beijingTodayKey());
   if(!name) return;
-  const line = validRouteLine(route);
+  const line = capRoutePoints(validRouteLine(route));
   if(line.length < 2){ toast('路线没有有效坐标'); return; }
   const item = {
     name: name, type: (typeof currentMode !== 'undefined' ? currentMode : 'draw'),
     line: line, closed: !!routeClosed,
-    saved_at: new Date().toISOString().slice(0, 10)
+    saved_at: beijingTodayKey()
   };
   const next = LIVE.routes.concat([item]);
   const ok = await persistRoutes(next);
@@ -2142,9 +2503,14 @@ async function saveDetailAsRoute(){
   if(track.length < 2){ toast('当前记录没有轨迹'); return; }
   const name = prompt('路线名称', '记录路线 ' + shortDate(d.detail && d.detail.start_ms));
   if(!name) return;
+  const line = capRoutePoints(validRouteLine(track.map(p => [p.lat, p.lng])));
+  if(line.length < 2){ toast('轨迹没有有效坐标'); return; }
+  if(line.length < track.length){
+    liveLog('记录轨迹已抽稀', `${track.length} → ${line.length} 点`, 'warn');
+  }
   const item = {name: name, type: 'record',
-                line: track.map(p => [p.lat, p.lng]),
-                closed: false, saved_at: new Date().toISOString().slice(0, 10)};
+                line: line,
+                closed: false, saved_at: beijingTodayKey()};
   const ok = await persistRoutes(LIVE.routes.concat([item]));
   LIVE.selectedRoute = LIVE.routes.length - 1;
   renderRouteList(); selectRoute(LIVE.selectedRoute);
@@ -2155,18 +2521,9 @@ async function copyDiagnostics(){
   const j = await liveApi('real_diagnostics', {}, 60000);
   if(!liveOk(j)){ toast('诊断包生成失败：' + (j.message || '')); return; }
   const text = (j.data && j.data.text) || '';
-  try{
-    await navigator.clipboard.writeText(text);
-    toast('诊断包已复制（已脱敏）');
-    liveLog('诊断包已复制', (j.data && j.data.at) || '', 'ok');
-  }catch(e){
-    const ta = document.createElement('textarea');
-    ta.value = text; document.body.appendChild(ta); ta.select();
-    let copied = false;
-    try{ copied = document.execCommand('copy'); }catch(_e){ copied = false; }
-    toast(copied ? '诊断包已复制' : '复制失败，请手动选择');
-    ta.remove();
-  }
+  const ok = await copyPlainText(text);
+  toast(ok ? '诊断包已复制（已脱敏）' : '复制失败，请手动选择');
+  if(ok) liveLog('诊断包已复制', (j.data && j.data.at) || '', 'ok');
 }
 /* ---------------- rules / model ---------------- */
 const RULE_FIELDS = [
@@ -2209,6 +2566,11 @@ async function loadNetworkConfig(){
     : '';
 }
 async function saveNetworkConfig(){
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
+  if(LIVE.submitting){
+    toast('提交进行中，完成后再修改网络配置');
+    return;
+  }
   const proxy = ($('#netProxy') ? $('#netProxy').value : '').trim();
   const key = ($('#netAmap') ? $('#netAmap').value : '').trim();
   const args = {proxy};
@@ -2221,6 +2583,11 @@ async function saveNetworkConfig(){
   liveLog('网络配置已应用', key ? '高德 Key 仅保存在内存' : '未修改高德 Key', 'ok');
 }
 async function clearNetworkConfig(){
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
+  if(LIVE.submitting){
+    toast('提交进行中，完成后再修改网络配置');
+    return;
+  }
   if(!confirm('清除本次运行中设置的代理和高德 Key？')) return;
   const j = await liveApi('set_network_config', {clear_proxy: true, clear_amap_key: true});
   if(!liveOk(j)){ toast('清除失败：' + (j.message || '')); return; }
@@ -2295,21 +2662,42 @@ async function persistRules(rules, opts){
 }
 async function loadRules(){
   const j = await liveApi('get_school_rules');
-  if(!liveOk(j)){ liveLog('学校要求读取失败', j.message || '', 'err'); return; }
+  if(!liveOk(j)){
+    const hasSaved = !!(LIVE.rules && LIVE.rules.configured);
+    $('#rulesStatus').textContent = '读取失败';
+    $('#rulesStatus').className = 'mini warn';
+    $('#rulesHint').textContent = hasSaved
+      ? '本次读取失败，仍沿用当前已保存的规则；可点「保存要求」重试。'
+      : (j.message || '本地学校要求读取失败；可手动填写后保存。');
+    liveLog('学校要求读取失败', j.message || '', 'err');
+    return;
+  }
   const d = j.data || {}, r = d.rules || {};
   applyRulesToForm(r);
   renderRulesStatus(d, r);
 }
 async function saveRules(){
+  if(accountBusy){ toast('正在登录，请稍候'); return; }
+  if(LIVE.submitting){ toast('提交进行中，完成后再修改学校要求'); return; }
   const rules = collectRulesForm();
   const filled = RULE_FIELDS.filter(([id]) => $('#' + id) && $('#' + id).value.trim()).length;
   if(!filled && !confirm('所有项都留空，保存后会关闭模型并停止自动读取。继续？')) return;
   // Empty save is an explicit "model off"; do not auto-fetch it back later.
   rules.auto_fetch = !!filled;
-  await persistRules(rules);
+  const btn = $('#saveRules');
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    await persistRules(rules);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '保存要求'; }
+  }
 }
 async function fetchSchoolRules(opts){
   opts = opts || {};
+  if(LIVE.submitting){
+    if(!opts.silent) toast('提交进行中，完成后再读取学校要求');
+    return false;
+  }
   if(!hasSession()){ if(!opts.silent) toast('先登录'); return false; }
   if(!opts.force && LIVE.rules && LIVE.rules.configured) return false;
   if(!opts.force && LIVE.rules && LIVE.rules.rules &&
@@ -2352,7 +2740,12 @@ async function fetchSchoolRules(opts){
     const hint = '已从服务器自动填入 ' + labels.join('、') + '；可修改后保存。' +
       (notes.length ? ' ' + notes.join('；') + '。' : '');
     const saved = await persistRules(merged, {silent: true, hint});
-    if(!saved) return false;
+    if(!saved){
+      $('#rulesHint').textContent =
+        '服务器规则已填入，但保存失败；请点「保存要求」重试。';
+      if(!opts.silent) toast('规则已填入但保存失败');
+      return false;
+    }
     liveLog('学校规则已从服务器填入',
       'runMode ' + d.run_mode + ' · ' + labels.join('、') +
       (notes.length ? ' · ' + notes.join('；') : ''), 'ok');
@@ -2524,9 +2917,11 @@ function dailyCountInfo(){
 async function refreshDailyCount(){
   if(!hasSession()){ LIVE.daily = null; refreshChecks(); return; }
   const key = LIVE.runDate || beijingTodayKey();
+  const uid = LIVE.session && (LIVE.session.uid || LIVE.session.unid);
   const j = await liveApi('real_daily_count', {date: key});
   const current = LIVE.runDate || beijingTodayKey();
-  if(key !== current) return;
+  const currentUid = LIVE.session && (LIVE.session.uid || LIVE.session.unid);
+  if(key !== current || !hasSession() || (uid && currentUid !== uid)) return;
   if(!liveOk(j)){
     LIVE.daily = {key, runs: null, source: 'unknown'};
     refreshChecks();
@@ -2606,11 +3001,19 @@ async function loadDateCounts(force){
   if(!force && LIVE.dailyCountsUid === uid &&
      Date.now() - LIVE.dailyCountsAt < 60000 &&
      Object.keys(LIVE.dailyCounts || {}).length) return;
+  const seq = ++_dateCountsSeq;
   const t = parseDateKey(beijingTodayKey());
   const dates = [0, 1, 2, 3].map(i =>
     fmtDateKey(new Date(t.getFullYear(), t.getMonth(), t.getDate() - i)));
   const j = await liveApi('real_daily_counts', {dates: dates}, 30000);
-  if(!liveOk(j)) return;
+  const currentUid = LIVE.session && (LIVE.session.uid || LIVE.session.unid);
+  if(seq !== _dateCountsSeq || !hasSession() || (uid && currentUid !== uid)) return;
+  if(!liveOk(j)){
+    LIVE.dailyCounts = {};
+    LIVE.dailyCountsAt = 0;
+    renderDatePop();
+    return;
+  }
   const map = {};
   ((j.data && j.data.dates) || []).forEach(d => { if(d && d.date) map[d.date] = d; });
   LIVE.dailyCounts = map;
@@ -2747,8 +3150,6 @@ function wireDatePicker(){
   document.addEventListener('scroll', closeDatePop, true);
 }
 
-var _modelTimer = null;
-var _modelSeq = 0;
 function scheduleModelPreview(){ clearTimeout(_modelTimer); _modelTimer = setTimeout(refreshModelPreview, 300); }
 async function refreshModelPreview(){
   const seq = ++_modelSeq;
@@ -2759,13 +3160,13 @@ async function refreshModelPreview(){
   if(!ti.ok){ LIVE.model = null; renderModel(); refreshChecks(); return; }
   if(!LIVE.rules || !LIVE.rules.configured){ LIVE.model = null; renderModel(); refreshChecks(); return; }
   const di = dailyCountInfo();
-  const km = +$('#inKm').value, pace = +$('#inPace').value;
-  const cadence = +$('#inCad').value, altitude = +$('#inAlt').value;
-  if(!(km > 0) || !(pace > 0) || !(cadence > 0) || !isFinite(altitude)){
+  const params = readRunParams();
+  if(validateRunParams(params)){
     LIVE.model = null; renderModel(); refreshChecks(); return;
   }
   const j = await liveApi('real_preview_model', {
-    km: km, pace: pace, cadence: cadence, altitude: altitude,
+    km: params.km, pace: params.pace,
+    cadence: params.cadence, altitude: params.altitude,
     waypoints: route && route.length >= 2 ? route : null,
     checkpoints: freeRunOn() ? null :
       livePoints.map(p => ({lat: p.lat, lon: p.lng, name: p.n, isMustPoint: p.must})),
@@ -2877,7 +3278,8 @@ async function runPreflight(){
     }, 30000);
     if(!liveOk(j)){
       if(city) city.textContent = '自检失败';
-      if(text) text.textContent = j.message || '网络自检失败';
+      if(grid) grid.hidden = true;
+      if(text){ text.className = 'preflight-warn'; text.textContent = j.message || '网络自检失败'; }
       liveLog('网络自检失败', j.message || '', 'warn');
       return;
     }
@@ -2993,6 +3395,7 @@ function liveDockClick(){
 /* ---------------- submit ---------------- */
 async function submitRun(){
   if(LIVE.submitting) return;
+  if(accountBusy){ toast('账号操作进行中，请稍候'); return; }
   if(!hasSession()){ toast('先登录'); switchRunTab('submit'); return; }
   if(!LIVE.checked || !liveOk(LIVE.checked)){
     toast('token 未验证或已失效；先到「账号」页测试 token');
@@ -3000,23 +3403,18 @@ async function submitRun(){
     switchRunTab('submit');
     return;
   }
+  const params = readRunParams();
+  const invalid = validateRunParams(params);
+  if(invalid){
+    toast(invalid);
+    switchRunTab('params');
+    return;
+  }
+  const {km, pace, cadence, altitude} = params;
   const ti = selectedTimeInfo();
   if(!ti.ok){ toast('开始时间无效：' + ti.note); switchRunTab('params'); return; }
   refreshChecks();
   const allReady = !!(document.querySelector('#dock') && document.querySelector('#dock').classList.contains('ready'));
-  const km = +$('#inKm').value;
-  const pace = +$('#inPace').value;
-  const cadence = +$('#inCad').value;
-  const altitude = +$('#inAlt').value;
-  const invalid = !isFinite(km) || km <= 0 ? '距离'
-    : (!isFinite(pace) || pace <= 0 ? '配速'
-    : (!isFinite(cadence) || cadence <= 0 ? '步频'
-    : (!isFinite(altitude) ? '海拔基准' : '')));
-  if(invalid){
-    toast('请填写有效的' + invalid);
-    switchRunTab('params');
-    return;
-  }
   let di = dailyCountInfo();
   if(!di.loaded){
     toast('当日次数还没核对完，正在重试…');
@@ -3027,17 +3425,22 @@ async function submitRun(){
       di = dailyCountInfo();
     }
   }
-  if(!allReady && !confirm('还有检查项未通过，仍要提交？后端还会校验。')) return;
   const dayText = dateDisplay(ti.date);
   const timeText = ti.time || '09:00–22:00 内随机';
   const dailyText = di.loaded
     ? (di.count + ' / ' + (di.cap || '—') +
        (di.ok ? '' : '（已达上限，仅提醒）'))
     : '未知（后端会再查）';
+  const missing = allReady ? [] :
+    [...document.querySelectorAll('#checks .check-row.warn .clabel')]
+      .map(x => x.textContent.trim());
+  const warnLine = missing.length
+    ? `\n未通过：${missing.join('、')}\n（后端仍会重新校验）`
+    : '';
   if(!confirm(`确认提交 ${km} km @ ${pace.toFixed(2)} min/km？
 提交日期：${dayText}
 开始时间：${timeText}
-当日次数：${dailyText}
+当日次数：${dailyText}${warnLine}
 提交后该时段会被回执锁定，不能重复提交。`)) return;
   LIVE.submitting = true;
   const btn = $('#submitRun');
@@ -3074,7 +3477,7 @@ async function submitRun(){
   if(d.readback && (d.readback.complete === false || d.readback.complete === 0)) warnings.push('回读未完成');
   if(d.readback && d.readback.isCheat) warnings.push('回读标记 isCheat=' + d.readback.isCheat);
   if(d.obs_error) warnings.push('轨迹上传失败：' + d.obs_error);
-  if(d.obs && d.obs.of && (d.obs.uploaded < d.obs.of || d.obs.verified < d.obs.of)){
+  if(d.obs && d.obs.of && ((d.obs.uploaded || 0) < d.obs.of || (d.obs.verified || 0) < d.obs.of)){
     warnings.push('轨迹上传不完整：' + (d.obs.uploaded || 0) + '/' + d.obs.of +
       ' 上传，' + (d.obs.verified || 0) + '/' + d.obs.of + ' 校验');
   }
@@ -3091,16 +3494,17 @@ async function submitRun(){
     toast('提交成功：rrid ' + (d.rrid || ''));
   }
   refreshChecks();
+  switchRunTab('log');
   await loadOverview();
   LIVE.daily = null;
   await loadRecords();
   LIVE.dailyCountsAt = 0;
   loadDateCounts(true);
   loadReceipts();
-  switchRunTab('log');
 }
 
 /* ---------------- wire live controls ---------------- */
+let snapping = false;
 function liveWire(){
   // Closing the window mid-submit can turn a known result into an unknown one.
   window.addEventListener('beforeunload', e => {
@@ -3111,6 +3515,17 @@ function liveWire(){
   const loginForm = $('#loginForm');
   if(loginForm){
     loginForm.addEventListener('submit', ev => { ev.preventDefault(); gateLogin(); });
+  }
+  const loginUser = $('#loginUser');
+  if(loginUser){
+    loginUser.addEventListener('keydown', e => {
+      // Enter in the phone field means “next”, not “submit with no password”.
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        const pass = $('#loginPass');
+        if(pass) pass.focus();
+      }
+    });
   }
   const loginEye = $('#loginEye');
   if(loginEye){
@@ -3138,22 +3553,35 @@ function liveWire(){
       }
     });
   });
-  $('#ovRefresh').addEventListener('click', () => { loadOverview(); });
+  $('#ovRefresh').addEventListener('click', async () => {
+    const btn = $('#ovRefresh');
+    if(btn.disabled) return;
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '刷新中…';
+    try{ await loadOverview(); }
+    finally{ btn.disabled = false; btn.textContent = old; }
+  });
   $('#ovPlanUse').addEventListener('click', () => {
-    const todayKey = beijingTodayKey();
-    const slot = LIVE.plan && (LIVE.plan.slots || []).find(s => s && s.day >= todayKey);
+    const slots = (LIVE.plan && LIVE.plan.slots) || [];
+    const slot = nextPlanSlot(slots);
     if(!slot){ toast('暂时没有可用计划'); return; }
-    $('#inKm').value = slot.distance_km;
-    $('#inPace').value = (+slot.pace_min_per_km).toFixed(2);
-    $('#inCad').value = slot.cadence;
-    refreshParams(); redraw(); scheduleModelPreview(); go('run');
-    toast('已填入计划档位');
+    applyPlanSlot(slot, {tab: 'params'});
   });
   $('#accLogin').addEventListener('click', liveLogin);
   ['#accUser', '#accPass'].forEach(sel => {
     const el = $(sel);
-    if(el) el.addEventListener('keydown', e => {
-      if(e.key === 'Enter'){ e.preventDefault(); liveLogin(); }
+    if(!el) return;
+    el.addEventListener('keydown', e => {
+      if(e.key !== 'Enter') return;
+      e.preventDefault();
+      if(sel === '#accUser'){
+        // Enter in the phone field moves to the password unless the browser
+        // already filled it (password managers do).
+        const pass = $('#accPass');
+        if(pass && !pass.value){ pass.focus(); return; }
+      }
+      liveLogin();
     });
   });
   $('#accTest').addEventListener('click', liveTestSession);
@@ -3164,12 +3592,20 @@ function liveWire(){
   $('#fetchPoints').addEventListener('click', () => loadPoints(true));
   $('#freeRun').addEventListener('change', () => {
     if(freeRunOn()) liveLog('已开启自由跑', '提交时不会拉取打卡点；学校要求必经点会被后端拒绝', 'warn');
-    renderPoints(livePoints);
+    renderPoints(livePoints, {fit: false});
     updateFenceChip();
     refreshChecks(); scheduleModelPreview();
   });
   $('#preflightBtn').addEventListener('click', runPreflight);
-  $('#receiptRefresh').addEventListener('click', () => loadReceipts());
+  $('#receiptRefresh').addEventListener('click', async () => {
+    const btn = $('#receiptRefresh');
+    if(btn.disabled) return;
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '刷新中…';
+    try{ await loadReceipts(); }
+    finally{ btn.disabled = false; btn.textContent = old; }
+  });
   $('#receiptReconcile').addEventListener('click', reconcileReceipts);
   $('#routeImport').addEventListener('click', importRouteToLibrary);
   $('#routeExport').addEventListener('click', () => exportRouteGpx(LIVE.routes[LIVE.selectedRoute]));
@@ -3186,34 +3622,45 @@ function liveWire(){
     const day = btn.dataset.planDay;
     const slot = ((LIVE.plan && LIVE.plan.slots) || []).find(s => s && s.day === day);
     if(!slot){ toast('这个日期没有可用档位'); return; }
-    $('#inKm').value = slot.distance_km;
-    $('#inPace').value = (+slot.pace_min_per_km).toFixed(2);
-    $('#inCad').value = slot.cadence;
-    go('run'); switchRunTab('params');
-    refreshParams(); redraw(); scheduleModelPreview();
-    toast('已填入 ' + day + ' 的档位');
+    applyPlanSlot(slot, {tab: 'params'});
   });
   $('#snapBtn').addEventListener('click', async () => {
+    if(snapping) return;
     if(!route || route.length < 2){ toast('先画至少 2 个点'); return; }
-    const j = await liveApi('real_snap_route', {points: route, key: null, max_legs: 24});
-    if(!liveOk(j)){ toast(j.message || '吸附失败'); liveLog('吸附失败', j.message || '', 'warn'); return; }
-    const d = j.data || {};
-    if(d.route && d.route.length){ route = d.route.map(p => [p[0], p[1]]); redraw(); }
-    liveLog('道路吸附完成', `${d.legs_ok || 0}/${d.legs_total || 0} 段`, 'ok');
-    toast('吸附完成');
+    const btn = $('#snapBtn'), tool = $('#snapTool');
+    const oldText = btn.textContent;
+    snapping = true;
+    btn.disabled = true; btn.textContent = '吸附中…';
+    if(tool) tool.disabled = true;
+    liveLog('道路吸附开始', route.length + ' 个控制点，请稍候', 'info');
+    try{
+      const j = await liveApi('real_snap_route', {points: route, key: null, max_legs: 24});
+      if(!liveOk(j)){ toast(j.message || '吸附失败'); liveLog('吸附失败', j.message || '', 'warn'); return; }
+      const d = j.data || {};
+      if(d.route && d.route.length){ route = d.route.map(p => [p[0], p[1]]); redraw(); }
+      const failed = (d.failed || []).length;
+      liveLog('道路吸附完成', `${d.legs_ok || 0}/${d.legs_total || 0} 段` +
+        (failed ? ` · ${failed} 段失败` : ''), failed ? 'warn' : 'ok');
+      toast(failed ? `吸附完成，${failed} 段失败` : '吸附完成');
+    }finally{
+      snapping = false;
+      btn.disabled = false; btn.textContent = oldText || '吸附';
+      if(tool) tool.disabled = false;
+    }
   });
   $('#planFill').addEventListener('click', async () => {
     const j = await liveApi('real_plan', {days: 14});
     if(!liveOk(j)){ toast(j.message || '计划生成失败'); return; }
-    const slots = (j.data && j.data.slots) || [];
-    const todayKey = beijingTodayKey();
-    const slot = slots.find(s => s && s.day >= todayKey);
+    const slot = nextPlanSlot((j.data && j.data.slots) || []);
     if(!slot){ toast('计划为空'); return; }
-    $('#inKm').value = slot.distance_km;
-    $('#inPace').value = (+slot.pace_min_per_km).toFixed(2);
-    $('#inCad').value = slot.cadence;
-    refreshParams(); redraw(); scheduleModelPreview();
-    toast('已填入计划档位');
+    applyPlanSlot(slot, {tab: 'params'});
+  });
+  $('#fillRouteDistance').addEventListener('click', () => {
+    distanceManual = false;
+    const m = route && route.length >= 2 ? pathLength(displayPath()) : 0;
+    if(!(m > 0)){ toast('先画一条路线；之后会自动按线路长度填写'); return; }
+    redraw();
+    toast('已按线路长度填写；继续画线会同步更新');
   });
   $('#runCheck').addEventListener('click', () => { refreshModelPreview(); refreshChecks(); toast('已重新检查'); });
   $('#submitRun').addEventListener('click', submitRun);
@@ -3237,40 +3684,65 @@ function liveWire(){
     redraw();
     go('run');
     switchRunTab('route');
-    toast('已设为今日路线');
+    toast('已设为当前路线');
   });
   $('#routeDelete').addEventListener('click', deleteSelectedRoute);
   document.querySelectorAll('[data-route-filter]').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('[data-route-filter]').forEach(x => x.classList.remove('active'));
     b.classList.add('active'); LIVE.routeFilter = b.dataset.routeFilter; renderRouteList();
   }));
-  $('#recRefresh').addEventListener('click', loadRecords);
+  $('#recRefresh').addEventListener('click', async () => {
+    const btn = $('#recRefresh');
+    if(btn.disabled) return;
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '刷新中…';
+    try{ await loadRecords(); }
+    finally{ btn.disabled = false; btn.textContent = old; }
+  });
   $('#recExport').addEventListener('click', exportRecordsCsv);
   $('#recordTable').addEventListener('click', ev => {
     const row = ev.target.closest('[data-rec-index]');
     if(row) selectRecord(+row.dataset.recIndex);
   });
+  $('#recordTable').addEventListener('keydown', ev => {
+    const row = ev.target.closest('[data-rec-index]');
+    if(!row) return;
+    if(ev.key === 'Enter' || ev.key === ' '){
+      ev.preventDefault();
+      selectRecord(+row.dataset.recIndex);
+    }
+  });
   document.querySelectorAll('[data-rec-filter]').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('[data-rec-filter]').forEach(x => x.classList.remove('active'));
     b.classList.add('active'); LIVE.recordFilter = b.dataset.recFilter; renderRecords();
   }));
-  $('#rdCopy').addEventListener('click', () => {
+  $('#rdCopy').addEventListener('click', async () => {
     const v = $('#rdCopy').dataset.rrid || '';
-    if(v) navigator.clipboard.writeText(String(v)).then(() => toast('已复制 rrid')).catch(() => toast('复制失败'));
+    if(!v) return;
+    const ok = await copyPlainText(String(v));
+    toast(ok ? '已复制 rrid' : '复制失败，请手动选择');
   });
   document.querySelectorAll('.log-filter').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.log-filter').forEach(x => x.classList.remove('active'));
     b.classList.add('active'); renderLog();
   }));
-  $('#logCopy').addEventListener('click', () => {
+  $('#logCopy').addEventListener('click', async () => {
+    if(!LIVE.log.length){ toast('日志为空'); return; }
     const txt = LIVE.log.map(e => `[${e.time}] ${e.level.toUpperCase()} ${e.msg} ${e.detail}`).join(String.fromCharCode(10));
-    navigator.clipboard.writeText(txt).then(() => toast('日志已复制')).catch(() => toast('复制失败'));
+    const ok = await copyPlainText(txt);
+    toast(ok ? '日志已复制' : '复制失败，请手动选择');
   });
   $('#logExport').addEventListener('click', () => {
+    if(!LIVE.log.length){ toast('日志为空'); return; }
     const txt = LIVE.log.map(e => `[${e.time}] ${e.level.toUpperCase()} ${e.msg} ${e.detail}`).join(String.fromCharCode(10));
     saveBlob(new Blob([txt], {type: 'text/plain;charset=utf-8'}), 'haoxiangpao-log.txt');
   });
-  $('#logClear').addEventListener('click', () => { LIVE.log = []; renderLog(); });
+  $('#logClear').addEventListener('click', () => {
+    if(!LIVE.log.length) return;
+    if(!confirm('清空本次运行日志？')) return;
+    LIVE.log = []; renderLog();
+  });
 }
 
 /* Boot: login gate -> local data -> real session. */
@@ -3280,10 +3752,12 @@ updateRunDateLabel();
 renderLog();
 loadRoutes();
 go(PAGES.includes(startPage) ? startPage : 'overview');
+refreshDateHeader();
 bootAuth();
 
 // Local file status only; this does not probe the real server.  It keeps the
 // account card in sync when the background keeper auto-relogins.
 setInterval(() => {
   if(document.visibilityState !== 'hidden') loadKeepalive();
+  refreshDateHeader();
 }, 60000);

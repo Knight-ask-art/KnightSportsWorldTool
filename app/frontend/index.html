@@ -96,7 +96,7 @@
       </button>
       <button class="nav-item" data-page="run">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.2c0-1.2 1-2 2.2-2H10l2.2-4 3 2 4 .8c1.6.3 2.6 1.2 2.6 2.6v1.6H4v-1z"/><path d="M4 17.2h17.8"/><path d="M7.2 14.2l1.2 1.4"/></svg>
-        <span class="label">跑步</span><span class="nav-dot" title="今天还没跑"></span>
+        <span class="label">跑步</span><span class="nav-dot" id="runNavDot" title="今天还没跑" hidden></span>
       </button>
       <button class="nav-item" data-page="routes">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19c2.5-1.2 4.4-4.1 4.4-7.2 0-2.7 1.5-4.8 4-4.8 2.1 0 3.4 1.3 3.4 3 0 2.4-2.3 3.4-4.4 3.4"/><circle cx="5" cy="19" r="1.3"/><circle cx="17.6" cy="5.8" r="1.3"/></svg>
@@ -252,8 +252,8 @@
             <section class="sec">
               <div class="sec-head"><h2>登录 / 切换</h2></div>
               <div class="form-grid">
-                <div class="field-line"><label>手机号</label><input id="accUser" placeholder="手机号" autocomplete="username"></div>
-                <div class="field-line"><label>密码</label><input id="accPass" type="password" placeholder="密码" autocomplete="current-password"></div>
+                <div class="field-line"><label for="accUser">手机号</label><input id="accUser" type="tel" inputmode="numeric" maxlength="20" placeholder="手机号" autocomplete="username"></div>
+                <div class="field-line"><label for="accPass">密码</label><input id="accPass" type="password" placeholder="密码" autocomplete="current-password"></div>
               </div>
               <div class="form-actions account-auth-actions">
                 <button class="btn primary" id="accLogin">登录</button>
@@ -283,7 +283,7 @@
             <section class="sec">
               <div class="sec-head"><h2>登录保持</h2><span class="tag" id="kaBadge">未开启</span></div>
               <div class="form-grid">
-                <div class="field-line"><label>间隔</label>
+                <div class="field-line"><label for="kaInterval">间隔</label>
                   <select id="kaInterval">
                     <option value="3600">1 小时</option>
                     <option value="21600" selected>6 小时</option>
@@ -389,7 +389,7 @@
                 <button class="btn small ghost" id="importQuick">导入</button>
               </div>
               <div class="toggle-row">
-                <span>平滑</span><button class="switch on" id="smoothToggle" aria-label="平滑曲线"></button>
+                <span>平滑</span><button class="switch on" id="smoothToggle" aria-label="平滑曲线" aria-pressed="true"></button>
                 <button class="switch on" id="closeToggle" aria-label="闭合路线（当前：开）" aria-pressed="true" title="闭合开：3 个点也会首尾相连"></button><span class="toggle-state on" id="closeState">闭合：开</span>
                 <span class="mini" id="ptCount">0 个控制点</span>
               </div>
@@ -422,10 +422,10 @@
               </div>
 
               <div class="params">
-                <div class="field"><label>距离</label><input id="inKm" type="number" inputmode="decimal" min="0.5" max="42.2" step="0.1" value="2.5"><span class="unit">km</span></div>
-                <div class="field"><label>配速</label><input id="inPace" type="number" inputmode="decimal" min="2" max="20" step="0.01" value="6.00"><span class="unit">min/km</span></div>
-                <div class="field"><label>步频</label><input id="inCad" type="number" inputmode="numeric" min="60" max="260" step="1" value="172"><span class="unit">spm</span></div>
-                <div class="field"><label>海拔基准</label><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span class="unit">m</span></div>
+                <div class="field"><label for="inKm" title="总距离；画好路线后会自动按线路长度填写，手动修改后保留你的值">目标距离</label><input id="inKm" type="number" inputmode="decimal" min="0.1" max="42.2" step="0.01" value="2.5"><span class="unit">km</span></div>
+                <div class="field"><label for="inPace">配速</label><input id="inPace" type="number" inputmode="decimal" min="2" max="20" step="0.01" value="6.00"><span class="unit">min/km</span></div>
+                <div class="field"><label for="inCad">步频</label><input id="inCad" type="number" inputmode="numeric" min="60" max="260" step="1" value="172"><span class="unit">spm</span></div>
+                <div class="field"><label for="inAlt">海拔基准</label><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span class="unit">m</span></div>
               </div>
 
               <div class="params" style="margin-top:9px">
@@ -438,7 +438,7 @@
                   </button>
                   <span class="unit">北京</span>
                 </div>
-                <div class="field"><label>开始时间</label><input id="inStart" placeholder="留空=随机"><span class="unit">HH:MM</span></div>
+                <div class="field"><label for="inStart">开始时间</label><input id="inStart" inputmode="text" maxlength="5" autocomplete="off" placeholder="留空=随机" aria-describedby="timeHint"><span class="unit">HH:MM</span></div>
               </div>
               <div class="hint" id="timeHint">选择提交日期与开始时间（09:00–22:00）；开始时间留空则在该时段随机。结束时间也要在 22:00 前。</div>
 
@@ -464,7 +464,9 @@
               <div class="form-actions">
                 <button class="btn small" id="randomParams">随机档位</button>
                 <button class="btn small ghost" id="planFill">按计划填</button>
+                <button class="btn small ghost" id="fillRouteDistance" title="用当前路线的长度重新填写目标距离">按线路填</button>
               </div>
+              <div class="hint" style="margin:-2px 0 0">画好路线后会自动按线路长度填写目标距离；手动改过之后保留你的值，点「按线路填」可恢复。闭合路线按单圈长度，绕几圈由目标距离决定。</div>
               <div class="hint" id="paceSpeedHint">填写目标后显示配速、速度与步幅一致性提示。</div>
 
               <div class="pace-card">
@@ -610,7 +612,7 @@
               <button class="btn small ghost" id="routeImport">导入路线</button>
               <button class="btn small ghost" id="routeExport">导出 GPX</button>
               <button class="btn small ghost" id="routeSaveCurrent">保存当前路线</button>
-              <button class="btn small primary" data-goto="run">新建手绘</button>
+              <button class="btn small primary" data-goto="run" data-mode-target="draw">新建手绘</button>
             </div>
           </div>
           <div class="status-row">
@@ -643,7 +645,7 @@
               </div>
               <div class="route-meta" id="routeMeta">路线保存在本机 data/routes.json。</div>
               <div class="route-actions">
-                <button class="btn small primary" id="routeUse" disabled>设为今日路线</button>
+                <button class="btn small primary" id="routeUse" disabled>设为当前路线</button>
                 <button class="btn small ghost" id="routeExportOne" disabled>导出 GPX</button>
                 <button class="btn small ghost" id="routeDelete" disabled>删除路线</button>
               </div>
@@ -750,17 +752,17 @@
           </div>
           <p class="hint" style="margin:-4px 0 9px">登录后会自动读取服务器规则；也可以手动点「从服务器读取」。<b>留空 = 学校没有这项要求</b>，服务器没返回的项不会被猜测。</p>
           <div class="form-grid rules-grid">
-            <div class="field-line"><label>最低距离（km）</label><input id="rMinKm" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>最高距离（km）</label><input id="rMaxKm" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>配速下限（min/km）</label><input id="rPaceMin" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>配速上限（min/km）</label><input id="rPaceMax" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>最短时长（min）</label><input id="rMinMin" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>最长时长（min）</label><input id="rMaxMin" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>学校允许每日次数</label><input id="rMaxDay" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>步频下限（spm）</label><input id="rStepMin" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>步频上限（spm）</label><input id="rStepMax" placeholder="留空=不要求"></div>
-            <div class="field-line"><label>有效时间窗开始</label><input id="rWinStart" placeholder="HH:MM（可留空）"></div>
-            <div class="field-line"><label>有效时间窗结束</label><input id="rWinEnd" placeholder="HH:MM（可留空）"></div>
+            <div class="field-line"><label for="rMinKm">最低距离（km）</label><input id="rMinKm" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rMaxKm">最高距离（km）</label><input id="rMaxKm" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rPaceMin">配速下限（min/km）</label><input id="rPaceMin" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rPaceMax">配速上限（min/km）</label><input id="rPaceMax" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rMinMin">最短时长（min）</label><input id="rMinMin" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rMaxMin">最长时长（min）</label><input id="rMaxMin" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rMaxDay">学校允许每日次数</label><input id="rMaxDay" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rStepMin">步频下限（spm）</label><input id="rStepMin" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rStepMax">步频上限（spm）</label><input id="rStepMax" placeholder="留空=不要求"></div>
+            <div class="field-line"><label for="rWinStart">有效时间窗开始</label><input id="rWinStart" placeholder="HH:MM（可留空）"></div>
+            <div class="field-line"><label for="rWinEnd">有效时间窗结束</label><input id="rWinEnd" placeholder="HH:MM（可留空）"></div>
           </div>
           <div class="form-actions">
             <button class="btn small primary" id="saveRules">保存要求</button>
@@ -780,11 +782,11 @@
           <p class="hint" style="margin:-4px 0 9px">代理和高德「Web 服务」Key 都可以在这里直接配置；只写入<b>本次运行的内存</b>，关闭程序后失效。</p>
           <div class="form-grid network-grid">
             <div class="field-line">
-              <label>代理（可选）</label>
+              <label for="netProxy">代理（可选）</label>
               <input id="netProxy" placeholder="http://127.0.0.1:7890" spellcheck="false" autocomplete="off">
             </div>
             <div class="field-line">
-              <label>高德 Web 服务 Key（可选）</label>
+              <label for="netAmap">高德 Web 服务 Key（可选）</label>
               <input id="netAmap" type="password" placeholder="粘贴 Key；留空=不修改" autocomplete="off" spellcheck="false">
             </div>
           </div>
