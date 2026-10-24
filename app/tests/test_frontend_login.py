@@ -136,6 +136,8 @@ def test_device_profile_is_single_source_and_visible():
     assert 'device_source' in JS
     assert 'device_name' in JS
     assert 'device_os' in JS
+    assert 'device_platform' in JS
+    assert "s.device_platform === 'ios'" in JS
     assert '设备指纹在本机生成一次' in JS
     assert 's.deviceName' not in JS
     assert 's.deviceModel' not in JS
@@ -145,10 +147,14 @@ def test_device_profile_is_single_source_and_visible():
 def test_device_rotation_is_advanced_and_double_confirmed():
     assert 'id="deviceRotateBtn"' in HTML
     assert 'id="deviceRotateConfirm"' in HTML
+    assert 'id="deviceRotatePlatform"' in HTML
+    assert '<option value="ios"' in HTML
     assert '高级：更换设备指纹' in HTML
     assert '更换后需要重新登录' in HTML
+    assert '跨平台切换' in HTML
     assert "liveApi('real_rotate_device'" in JS
     assert "input.value.trim() !== '更换'" in JS
+    assert "platform: platform" in JS
     assert '不要频繁更换' in JS
 
 

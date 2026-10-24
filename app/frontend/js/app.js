@@ -1372,8 +1372,10 @@ function renderSession(){
     session: '手动',
     error: '读取失败'
   }[s.device_source] || '已冻结';
-  const deviceLabel = [s.device_name,
-    s.device_os ? ('Android ' + s.device_os) : ''].filter(Boolean).join(' · ');
+  const osLabel = s.device_os
+    ? ((s.device_platform === 'ios' ? 'iOS ' : 'Android ') + s.device_os)
+    : '';
+  const deviceLabel = [s.device_name, osLabel].filter(Boolean).join(' · ');
   $('#accDeviceChip').textContent = logged
     ? (s.device_source === 'error' ? '设备读取失败' : '设备 · ' + deviceSource)
     : '设备未加载';
@@ -1683,21 +1685,39 @@ async function rotateDeviceProfile(){
     if(input) input.focus();
     return;
   }
-  if(!confirm('确定更换设备指纹？\n\n· 会像换了一台手机\n· 旧指纹会先备份\n· 更换后需要重新登录\n· 不要频繁更换')) return;
+  const platformSel = $('#deviceRotatePlatform');
+  const platform = platformSel ? platformSel.value : 'random';
+  const platformLabel = {random: '随机', android: 'Android', ios: 'iOS'}[platform] || '随机';
+  if(!confirm('确定更换设备指纹？\n\n· 新平台：' + platformLabel +
+              '\n· 会像换了一台手机\n· 旧指纹会先备份\n· 更换后需要重新登录\n· 不要频繁更换')) return;
   const btn = $('#deviceRotateBtn');
   if(btn){ btn.disabled = true; btn.textContent = '更换中…'; }
   try{
-    const j = await liveApi('real_rotate_device', {confirm: '更换设备指纹'}, 30000);
+    const j = await liveApi('real_rotate_device',
+      {confirm: '更换设备指纹', platform: platform}, 30000);
     if(!liveOk(j)){
       liveLog('更换设备指纹失败', j.message || '', 'err');
       toast('更换失败：' + (j.message || '未知错误'));
+      // The backend ends the local session before attempting the rotate, so
+      // even a failed rotate can leave no usable token.  Do not keep showing
+      // the old account as logged in.
+      LIVE.session = {}; LIVE.checked = null;
+      clearAccountActivity();
+      renderSession();
+      renderEmptyData();
+      await loadKeepalive();
+      showLoginGate('更换设备指纹失败，请重新登录。');
+      await restoreSavedLogin();
       return;
     }
     const d = j.data || {};
     const dev = d.device || {};
+    const osLabel = dev.device_os
+      ? ((dev.device_platform === 'ios' ? 'iOS ' : 'Android ') + dev.device_os)
+      : '';
     input.value = '';
     liveLog('设备指纹已更换',
-      [dev.device_name, dev.device_os ? ('Android ' + dev.device_os) : '',
+      [platformLabel, dev.device_name, osLabel,
        dev.device_id_masked].filter(Boolean).join(' · '), 'warn');
     if(d.backup) liveLog('旧指纹已备份', d.backup, 'info');
     // The backend already cleared the local session; never reuse the old

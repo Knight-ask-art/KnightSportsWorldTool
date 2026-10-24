@@ -133,7 +133,8 @@ def _token_from_payload(payload) -> str:
 
 
 def probe_real_session(session: dict, proxy: str | None = None,
-                       client_factory=None) -> dict:
+                       client_factory=None,
+                       store_dir: str | None = None) -> dict:
     """Default real-server probe: ``GET api/v70100/user/info``.
 
     Returns a small dict (never the raw response):
@@ -151,6 +152,7 @@ def probe_real_session(session: dict, proxy: str | None = None,
         return {'ok': False, 'auth_failed': False, 'message': '未配置 token'}
 
     from ..transport.realclient import Account, RealClient
+    from . import device_profile as DP
 
     try:
         acct = Account(
@@ -161,8 +163,13 @@ def probe_real_session(session: dict, proxy: str | None = None,
             campusName=session.get('campusName', '江门校区'),
             unid=int(session.get('unid') or 47203),
         )
-        if session.get('DeviceId'):
-            acct.DeviceId = session['DeviceId']
+        # The keeper probe is an authenticated request, so it must use the
+        # same installation fingerprint as login/submit.  Leaving Account's
+        # legacy defaults here made every keepalive look like the old synthetic
+        # phone while submissions looked like the new one.
+        store = store_dir or DP.default_store_dir()
+        profile = DP.load_or_create(store, legacy_session=session)
+        DP.apply_to_account(acct, DP.effective_device(profile, session))
         if session.get('lat') and session.get('lon'):
             acct.center_lat = float(session['lat'])
             acct.center_lng = float(session['lon'])
@@ -224,11 +231,12 @@ def probe_real_session(session: dict, proxy: str | None = None,
             'message': 'accepted', 'new_token': new_token or ''}
 
 
-def relogin_real(username: str, password: str) -> dict:
+def relogin_real(username: str, password: str,
+                 store_dir: str | None = None) -> dict:
     """Default re-login hook.  Calls the same pure-protocol login flow."""
     from . import device_profile as DP
     from .login_flow import login as do_login
-    store = DP.default_store_dir()
+    store = store_dir or DP.default_store_dir()
     session = DP.read_session(store)
     profile = DP.load_or_create(store, legacy_session=session)
     device = DP.effective_device(profile, session)

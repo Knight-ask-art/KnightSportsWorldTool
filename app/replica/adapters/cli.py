@@ -77,8 +77,10 @@ def _keepalive_cli(args):
 
     keeper = TokenKeeper(
         path,
-        probe=lambda s: probe_real_session(s, proxy=args.proxy),
-        relogin=relogin_real if auto else None,
+        probe=lambda s: probe_real_session(
+            s, proxy=args.proxy, store_dir=os.path.dirname(path)),
+        relogin=(lambda u, p: relogin_real(
+            u, p, store_dir=os.path.dirname(path))) if auto else None,
         interval_s=args.keepalive_interval,
         auto_relogin=auto,
         username=args.user,
@@ -544,9 +546,15 @@ def main(argv=None, client_factory=None):
 
     if getattr(args, 'logout', False):
         from ..transport import realclient as R
+        from ..application import device_profile as DP
         if not args.token or not args.uid:
             return _fail('--logout 需要 --token 和 --uid', 1)
         acct = R.Account(name='logout', uid=str(args.uid), token=args.token)
+        store = DP.default_store_dir()
+        session = DP.read_session(store)
+        device = DP.effective_device(
+            DP.load_or_create(store, legacy_session=session), session)
+        DP.apply_to_account(acct, device)
         try:
             res = R.RealClient().logout_and_verify(acct)
         except Exception as e:  # noqa: BLE001

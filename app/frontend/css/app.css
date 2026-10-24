@@ -715,6 +715,10 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
   width:100%;padding:5px 8px;border:1px solid var(--rule);border-radius:4px;
   background:var(--paper-2);font:11px var(--sans);
 }
+.device-advanced select{
+  width:100%;padding:5px 8px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--paper-2);font:11px var(--sans);
+}
 .device-advanced .btn{width:100%;margin-top:7px}
 
 /* ---------- run console (map-first) ---------- */

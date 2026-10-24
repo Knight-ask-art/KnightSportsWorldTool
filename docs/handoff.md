@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 140 passed`、`selfcheck 23/23`。
+> 回归基线更新为 `pytest 159 passed`、`selfcheck 23/23`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -32,7 +32,7 @@
   `unknown` 不会显示成“正常”。
 - 回归（重构后）：`pytest` 115 passed；`replica.selfcheck` 22/22；`node --check` 通过。
 - **设备指纹（2026-10-24 16:15）**：新增 `replica/application/device_profile.py`；
-  每个 `data` 目录一份随机 Android 指纹，登录/提交/OBS 共用。旧 v0.1.1 数据已显式
+  每个 `data` 目录一份随机指纹，登录/提交/OBS 共用。旧 v0.1.1 数据已显式
   rotate 一次：新 DeviceId `72a0…940d`、机型 `22081212C / Android 14`、
   `arm64-v8a`、`isRoot=0`；旧指纹 `afa5…4311` 已备份到
   `backup/v0.1.1-data-20261024-1536/data/device_profile.backup-20261024-161514.json`。
@@ -40,6 +40,20 @@
 - 回归（设备指纹后）：`pytest` 140 passed；`selfcheck` 23/23；`node --check` 通过。
 - **高级更换入口**：账号页「设备与会话」→「高级：更换设备指纹」。输入“更换”二次确认；
   后端再校验确认文字，先退本机登录、备份旧指纹，再生成新指纹并返回 `relogin_required`。
+- **iOS 正式进入随机池（2026-10-24）**：新安装按 `JHP_IOS_CHANCE`（默认 30）抽
+  Android 或 iOS；iOS 机型/系统/物理/逻辑像素/`arm64e`/IDFA 按同一张表生成，
+  登录和提交都走 iOS 头，保证“同一台设备”。**iOS 提交链尚未真实跑通验证**；
+  求稳可设 `JHP_IOS_CHANCE=0`。高级更换入口新增平台选择（随机 / Android / iOS）。
+- **指纹自洽审查**：Android 逻辑像素改为 dp（不再与物理像素相同），机型/系统/像素
+  成对生成；iOS 不再使用参考模拟器的 `x86_64 / 1080x1920`；请求补平台 UA。
+  新增 `device_profile --audit`。2000 次抽样 0 条自洽告警，iOS 占比约 29%。
+  同时修复保活探测（`tokenkeeper.probe_real_session`）和 CLI `--logout` 未应用
+  安装指纹的问题——现在登录、保活、提交、注销、读取共用同一份。
+  旧 profile `72a0…940d` 仍是 `1080x2400 / 1080x2400`，`--audit` 会提示
+  `22081212C` 应为 `1220x2712 / 444x986`；**未自动修改**。确认后可运行
+  `device_profile --data-dir <data> --repair-pixels`（保留 DeviceId，先备份旧文件），
+  或在未真实使用前直接 rotate 到 Android。
+- 回归（iOS 后）：`pytest` 159 passed；`selfcheck` 23/23；`node --check` 通过。
 - 本轮 bug 修复：`build.ps1` 改为版本化输出且保留同版本 `data/`；学期空响应
   不再显示空白成功；样本库采集改为增量合并；OBS/回读增加 uuid 回退；
   日志时间统一北京时间；下载 blob 延迟释放。
@@ -84,7 +98,7 @@ UI 点位按校区固定范围拉取（提交按目标距离补点） ✅ 离线
 
 ```
 python -m replica.selfcheck                     23/23 模块 PASS（含 tokenkeeper / device_profile）
-python -m pytest tests -q                       140 passed
+python -m pytest tests -q                       159 passed
 python tests/legacy/legacy_bridge_suite.py      38 passed
 python tests/legacy/legacy_http_suite.py        23 passed
 python -m pytest ../private/research/tests -q    3 passed

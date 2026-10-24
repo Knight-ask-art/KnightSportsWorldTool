@@ -289,7 +289,14 @@
               <div class="detail-row"><span>unid</span><span id="accUnid">—</span></div>
               <details class="device-advanced">
                 <summary>高级：更换设备指纹</summary>
-                <p>会像换了一台手机，旧指纹先备份；更换后需要重新登录。不要频繁更换。</p>
+                <p>会像换了一台手机，旧指纹先备份；更换后需要重新登录。不要频繁更换。
+                  已有账号跨平台切换（Android ↔ iOS）比同平台换机型更显眼，非必要不要选。</p>
+                <label for="deviceRotatePlatform">新设备平台</label>
+                <select id="deviceRotatePlatform">
+                  <option value="random" selected>随机（按本机策略，含 iOS）</option>
+                  <option value="android">Android</option>
+                  <option value="ios">iOS（提交链未实测）</option>
+                </select>
                 <label for="deviceRotateConfirm">输入“更换”确认</label>
                 <input id="deviceRotateConfirm" type="text" maxlength="8"
                        autocomplete="off" spellcheck="false" placeholder="更换">

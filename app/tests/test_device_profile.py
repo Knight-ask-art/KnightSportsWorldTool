@@ -22,7 +22,8 @@ def _session(tmp_path, **extra):
     return data
 
 
-def test_generated_profile_is_stable(tmp_path):
+def test_generated_profile_is_stable(tmp_path, monkeypatch):
+    monkeypatch.setenv('JHP_IOS_CHANCE', '0')
     first = DP.load_or_create(str(tmp_path))
     second = DP.load_or_create(str(tmp_path))
     assert first == second
@@ -39,16 +40,48 @@ def test_two_installs_get_different_ids(tmp_path):
     assert a['DeviceId'] != b['DeviceId']
 
 
-def test_generated_profile_fields_are_coherent(tmp_path):
-    profile = DP.generate_profile(now_ms=1_792_800_000_000)
-    assert profile['deviceName'] in {m for m, _ in DP.ANDROID_MODELS}
-    allowed = dict(DP.ANDROID_MODELS)[profile['deviceName']]
-    assert profile['osVersion'] in allowed
+def test_android_profile_is_coherent():
+    profile = DP.generate_profile(now_ms=1_792_800_000_000,
+                                  platform='android')
+    row = next(r for r in DP.ANDROID_MODELS
+               if r[0] == profile['deviceName'])
+    _, versions, physic, logic = row
+    assert profile['osVersion'] in versions
+    assert profile['physicPixel'] == physic
+    assert profile['logicPixel'] == logic
+    assert profile['physicPixel'] != profile['logicPixel']
     assert profile['isRoot'] == '0'
-    assert re.fullmatch(r'\d{3,5}x\d{3,5}', profile['physicPixel'])
-    assert re.fullmatch(r'\d{3,5}x\d{3,5}', profile['logicPixel'])
-    assert int(profile['appInstallTime']) <= int(profile['appUpdateTime'])
-    assert int(profile['appUpdateTime']) <= 1_792_800_000_000
+    assert profile['cpuModel'] == 'arm64-v8a'
+    assert not DP.audit_profile(profile)
+
+
+def test_ios_profile_is_coherent():
+    profile = DP.generate_profile(now_ms=1_792_800_000_000, platform='ios')
+    row = next(r for r in DP.IOS_MODELS if r[0] == profile['deviceName'])
+    _, versions, physic, logic = row
+    assert profile['osVersion'] in versions
+    assert profile['physicPixel'] == physic
+    assert profile['logicPixel'] == logic
+    assert profile['cpuModel'] == 'arm64e'
+    assert profile['isRoot'] == '0'
+    assert re.fullmatch(
+        r'[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}',
+        profile['DeviceId'])
+    assert re.fullmatch(
+        r'(?:[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})',
+        profile['idfa'])
+    assert not DP.audit_profile(profile)
+
+
+def test_ios_pool_can_be_disabled_and_forced(monkeypatch):
+    monkeypatch.setenv('JHP_IOS_CHANCE', '0')
+    assert all(DP.generate_profile()['platform'] == 'android'
+               for _ in range(50))
+    monkeypatch.setenv('JHP_IOS_CHANCE', '100')
+    assert all(DP.generate_profile()['platform'] == 'ios'
+               for _ in range(50))
+    monkeypatch.setenv('JHP_IOS_CHANCE', 'not-a-number')
+    assert DP.generate_profile()['platform'] in ('android', 'ios')
 
 
 def test_legacy_session_freezes_current_submission_fingerprint(tmp_path):
@@ -133,7 +166,8 @@ def test_invalid_profile_field_fails_closed(tmp_path):
 
 
 def test_login_and_submit_headers_share_the_same_device(tmp_path):
-    profile = DP.load_or_create(str(tmp_path))
+    profile = DP.generate_profile(platform='android')
+    DP.save_profile(str(tmp_path), profile)
     login_account = Account(name=ACCOUNT, uid='-1', token='',
                             DeviceId='', deviceName='', osVersion='',
                             cpuModel='', physicPixel='', logicPixel='',
@@ -150,6 +184,30 @@ def test_login_and_submit_headers_share_the_same_device(tmp_path):
                 'physicPixel', 'logicPixel', 'isRoot', 'appInstallTime',
                 'appUpdateTime'):
         assert login_headers[key] == submit_headers[key], key
+    assert login_headers['osType'] == submit_headers['osType'] == '0'
+
+
+def test_ios_login_and_submit_headers_share_the_same_device():
+    profile = DP.generate_profile(platform='ios')
+    login_account = Account(name=ACCOUNT, uid='-1', token='',
+                            DeviceId='', deviceName='', osVersion='',
+                            cpuModel='', physicPixel='', logicPixel='',
+                            appInstallTime='', appUpdateTime='')
+    submit_account = Account(name=ACCOUNT, uid='15663170', token='tok-test',
+                             DeviceId='', deviceName='', osVersion='',
+                             cpuModel='', physicPixel='', logicPixel='',
+                             appInstallTime='', appUpdateTime='')
+    DP.apply_to_account(login_account, profile)
+    DP.apply_to_account(submit_account, profile)
+    login_headers = build_headers(login_account, '1792828000000', 'nonce')
+    submit_headers = build_headers(submit_account, '1792828000000', 'nonce')
+    for key in ('osType', 'DeviceId', 'deviceName', 'CustomDeviceId',
+                'osVersion', 'IDFA', 'logicPixel', 'physicPixel',
+                'cpuModel', 'appVersion', 'isRoot', 'appInstallTime'):
+        assert login_headers[key] == submit_headers[key], key
+    assert login_headers['osType'] == submit_headers['osType'] == '1'
+    assert 'uid' not in login_headers
+    assert submit_headers['uid'] == 15663170
 
 
 def test_public_view_never_returns_raw_device_id(tmp_path):
@@ -169,6 +227,7 @@ def test_bridge_public_session_uses_install_profile(tmp_path):
     data = api.real_get_session()['data']
     assert data['device_id_present'] is True
     assert data['device_source'] == 'legacy-default'
+    assert data['device_platform'] == 'android'
     assert data['device_name'] == 'Xiaomi 2304FPN6DG'
     assert data['device_os'] == '9'
     assert 'DeviceId' not in data
@@ -189,9 +248,12 @@ def test_bridge_uses_rotated_profile_for_account(tmp_path):
                      str(tmp_path))
     data = api.real_get_session()['data']
     assert data['device_source'] == 'rotated'
+    assert data['device_platform'] == new['platform']
     assert data['device_name'] == new['deviceName']
     assert data['device_os'] == new['osVersion']
     acct = api._real_account()
+    assert acct.platform == new['platform']
+    assert acct.idfa == new.get('idfa', '')
     for key in ('DeviceId', 'deviceName', 'osVersion', 'cpuModel',
                 'physicPixel', 'logicPixel', 'isRoot', 'appInstallTime',
                 'appUpdateTime'):
@@ -311,3 +373,103 @@ def test_rotate_device_endpoint_rotates_and_clears_session(tmp_path,
     new = DP.read_profile(str(tmp_path))
     assert new['DeviceId'] != old
     assert new['source'] == 'rotated'
+
+def test_apply_to_account_switches_platform_and_idfa():
+    android = DP.generate_profile(platform='android')
+    ios = DP.generate_profile(platform='ios')
+    acct = Account(name=ACCOUNT, uid='1', token='tok')
+    DP.apply_to_account(acct, ios)
+    assert acct.platform == 'ios'
+    assert acct.idfa == ios['idfa']
+    assert acct.cpuModel == 'arm64e'
+    DP.apply_to_account(acct, android)
+    assert acct.platform == 'android'
+    assert acct.idfa == ''
+    assert acct.cpuModel == 'arm64-v8a'
+
+
+def test_rotate_can_force_ios_or_android(tmp_path):
+    DP.load_or_create(str(tmp_path))
+    ios, _ = DP.rotate(str(tmp_path), force=True, platform='ios')
+    assert ios['platform'] == 'ios'
+    assert ios['cpuModel'] == 'arm64e'
+    android, _ = DP.rotate(str(tmp_path), force=True, platform='android')
+    assert android['platform'] == 'android'
+    assert android['cpuModel'] == 'arm64-v8a'
+
+
+def test_rotate_device_endpoint_accepts_platform(tmp_path, monkeypatch):
+    from replica.adapters.bridge_api import ReplicaApi
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    api.real_set_session(uid='1', token='tok', DeviceId='dev-1')
+    monkeypatch.setattr(api, '_remote_logout_background', lambda acct: None)
+    out = api.real_rotate_device('更换设备指纹', 'ios')
+    assert out['code'] == 200, out
+    assert out['data']['device']['device_platform'] == 'ios'
+    assert DP.read_profile(str(tmp_path))['platform'] == 'ios'
+    bad = api.real_rotate_device('更换设备指纹', 'windows')
+    assert bad['code'] != 200
+
+
+def test_audit_flags_legacy_profile_but_not_new_ones():
+    legacy = dict(DP.LEGACY_DEVICE)
+    legacy['version'] = DP.PROFILE_VERSION
+    legacy['created_at'] = 1_792_800_000_000
+    legacy['source'] = 'legacy-default'
+    issues = DP.audit_profile(legacy)
+    assert any('unknown Android model' in i or 'isRoot' in i for i in issues)
+    assert not DP.audit_profile(DP.generate_profile(platform='android'))
+    assert not DP.audit_profile(DP.generate_profile(platform='ios'))
+
+
+def test_public_view_reports_platform():
+    ios = DP.generate_profile(platform='ios')
+    view = DP.public_view(ios)
+    assert view['device_platform'] == 'ios'
+    assert view['device_name'] == ios['deviceName']
+
+
+def test_repair_pixels_keeps_device_id_and_backs_up(tmp_path):
+    profile = DP.generate_profile(platform='android')
+    profile['physicPixel'] = '1080x2400'
+    profile['logicPixel'] = '1080x2400'
+    DP.save_profile(str(tmp_path), profile)
+    fixed, backup, changes = DP.repair_pixels(str(tmp_path))
+    assert fixed['DeviceId'] == profile['DeviceId']
+    row = next(r for r in DP.ANDROID_MODELS
+               if r[0] == fixed['deviceName'])
+    assert fixed['physicPixel'] == row[2]
+    assert fixed['logicPixel'] == row[3]
+    assert not DP.audit_profile(fixed)
+    assert backup and os.path.exists(backup)
+    with open(backup, encoding='utf-8') as f:
+        saved = json.load(f)
+    assert saved['logicPixel'] == '1080x2400'
+    assert changes
+    _, backup2, changes2 = DP.repair_pixels(str(tmp_path))
+    assert not changes2 and backup2 is None
+
+
+def test_keepalive_probe_uses_install_profile(tmp_path):
+    from replica.application import tokenkeeper as TK
+    profile = DP.generate_profile(platform='android')
+    DP.save_profile(str(tmp_path), profile)
+    captured = {}
+
+    class FakeClient:
+        def request(self, acct, path, method='GET', retries=1):
+            captured['acct'] = acct
+            return {'status': 200, 'raw_len': 1, 'error': None,
+                    'json': {'error': 10000, 'data': {}}}
+
+    out = TK.probe_real_session(
+        {'uid': '1', 'token': 'tok', 'name': 'x', 'unid': 47203},
+        client_factory=lambda *a, **k: FakeClient(),
+        store_dir=str(tmp_path))
+    assert out['ok'] is True
+    acct = captured['acct']
+    assert acct.DeviceId == profile['DeviceId']
+    assert acct.platform == profile['platform']
+    assert acct.cpuModel == profile['cpuModel']
+    assert acct.logicPixel == profile['logicPixel']

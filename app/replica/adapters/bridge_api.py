@@ -40,8 +40,8 @@ APP_VERSION = '0.1.1'
 CAMPUS_POINTS_DISTANCE_M = 2500
 AMAP_KEY = os.environ.get('JHP_AMAP_KEY', '')
 APPLE_DB = {
-    'models': ['iPhone 15', 'iPhone 14', 'iPhone 13', 'iPhone 12'],
-    'ios': ['17.2', '16.4.1', '16.0', '15.7'],
+    'models': [row[0] for row in DP.IOS_MODELS],
+    'ios': sorted({v for row in DP.IOS_MODELS for v in row[1]}),
 }
 
 
@@ -809,8 +809,8 @@ class ReplicaApi:
         """
         d = d if isinstance(d, dict) else {}
         raw_device = ('DeviceId', 'deviceName', 'osVersion', 'cpuModel',
-                      'physicPixel', 'logicPixel', 'isRoot',
-                      'appInstallTime', 'appUpdateTime')
+                      'physicPixel', 'logicPixel', 'isRoot', 'idfa',
+                      'platform', 'appInstallTime', 'appUpdateTime')
         out = {k: v for k, v in d.items()
                if k not in ('token',) + raw_device}
         out['token_present'] = bool(d.get('token'))
@@ -837,7 +837,8 @@ class ReplicaApi:
                          DeviceId=None, name=None, nickname=None,
                          deviceName=None, osVersion=None, cpuModel=None,
                          physicPixel=None, logicPixel=None, isRoot=None,
-                         appInstallTime=None, appUpdateTime=None):
+                         appInstallTime=None, appUpdateTime=None,
+                         platform=None, idfa=None):
         if token:
             # A new session must not inherit the previous account's keeper
             # thread or in-memory password.
@@ -858,6 +859,7 @@ class ReplicaApi:
                      ('deviceName', deviceName), ('osVersion', osVersion),
                      ('cpuModel', cpuModel), ('physicPixel', physicPixel),
                      ('logicPixel', logicPixel), ('isRoot', isRoot),
+                     ('platform', platform), ('idfa', idfa),
                      ('appInstallTime', appInstallTime),
                      ('appUpdateTime', appUpdateTime)):
             if v not in (None, ''):
@@ -882,21 +884,29 @@ class ReplicaApi:
         self._invalidate_device()
         return _ok(self._public_session(d))
 
-    def real_rotate_device(self, confirm=''):
+    def real_rotate_device(self, confirm='', platform=None):
         """Advanced one-time device rotation.
 
         The caller must send the literal confirmation string.  The local
         session is ended first so the old token is never reused with the new
         device; ``device_profile.rotate`` backs up the old fingerprint.  The
         operator must log in again after this call.
+
+        ``platform`` is ``None``/``random`` (use the weighted pool),
+        ``android`` or ``ios``.
         """
         if confirm != '更换设备指纹':
             return _fail('确认文字不正确')
         if not self._read_session().get('token'):
             return _fail('先登录再更换设备指纹')
+        platform = str(platform or 'random').strip().lower()
+        if platform not in ('random', 'android', 'ios'):
+            return _fail('platform 必须是 random、android 或 ios')
+        wanted = None if platform == 'random' else platform
         self.real_logout(local_only=True)
         try:
-            new, backup = DP.rotate(self.store_dir, force=True)
+            new, backup = DP.rotate(self.store_dir, force=True,
+                                    platform=wanted)
         except Exception as e:  # noqa: BLE001
             return _fail(f'更换设备指纹失败: {e}')
         self._invalidate_device()
@@ -1122,7 +1132,11 @@ class ReplicaApi:
                 self._keeper = None
 
     def _keeper_instance(self):
-        from ..application.tokenkeeper import DEFAULT_INTERVAL_S, TokenKeeper, probe_real_session, relogin_real
+        from functools import partial
+
+        from ..application.tokenkeeper import (DEFAULT_INTERVAL_S, TokenKeeper,
+                                               probe_real_session,
+                                               relogin_real)
         with self._keeper_lock:
             if self._keeper is None:
                 d = self._read_session()
@@ -1131,8 +1145,9 @@ class ReplicaApi:
                     state = {}
                 self._keeper = TokenKeeper(
                     self._session_path(),
-                    probe=probe_real_session,
-                    relogin=relogin_real,
+                    probe=partial(probe_real_session,
+                                  store_dir=self.store_dir),
+                    relogin=partial(relogin_real, store_dir=self.store_dir),
                     interval_s=state.get('interval_s') or DEFAULT_INTERVAL_S,
                     auto_relogin=bool(state.get('auto_relogin')),
                 )
@@ -1229,6 +1244,7 @@ class ReplicaApi:
             extra['DeviceId'] = device['DeviceId']
             for key in ('deviceName', 'osVersion', 'cpuModel',
                         'physicPixel', 'logicPixel', 'isRoot',
+                        'platform', 'idfa',
                         'appInstallTime', 'appUpdateTime'):
                 if raw_session.get(key) not in (None, ''):
                     extra[key] = raw_session[key]

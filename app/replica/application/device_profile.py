@@ -15,6 +15,10 @@ Existing data directories are not rotated on upgrade.  If a session predates
 this module, the profile freezes the fingerprint that was already used for
 submission.  ``rotate()`` is the one-time, operator-approved exception.
 
+New installations draw from a coherent Android/iOS pool (``JHP_IOS_CHANCE``,
+default 30).  Once written, the profile is stable regardless of platform: the
+same DeviceId and device fields are used for login, submission and readback.
+
 Reference points (checked 2026-10-24)
 -------------------------------------
 * NekoSportsWorldTool ``src/crypto/header.rs``: appInstallTime is read from a
@@ -37,6 +41,7 @@ import secrets
 import shutil
 import tempfile
 import time
+import uuid
 
 from .guard import _file_lock
 
@@ -61,20 +66,60 @@ LEGACY_DEVICE = {
 }
 
 #: Real Android models with the OS versions that shipped on them.  Keeping
-#: model and OS together avoids impossible pairs such as Pixel 8 + Android 12.
-#: Pixel/CPU fields stay at the Android values the reference client uses.
+#: model, OS and both resolutions in one row avoids impossible pairs such as
+#: Pixel 8 + Android 12, or a 1440p panel with a 1080p physical resolution.
+#:
+#: ``physicPixel`` is the panel resolution; ``logicPixel`` is the dp size the
+#: app reads from DisplayMetrics (not the same number!).  Older builds used
+#: 1080x2400 for both, which is an easy synthetic signal.
 ANDROID_MODELS = (
-    ('22081212C', ('13', '14', '15')),
-    ('OPPO PGBM10', ('13', '14')),
-    ('Redmi K60', ('13', '14')),
-    ('HUAWEI Mate 40', ('12', '13')),
-    ('vivo V2309A', ('13', '14')),
-    ('Pixel 8', ('14', '15')),
-    ('SM-S9210', ('14', '15')),
-    ('OnePlus ACE3', ('14', '15')),
+    # Redmi K50 Ultra: 6.67" 1220x2712, MIUI 13 -> HyperOS
+    ('22081212C', ('13', '14'), '1220x2712', '444x986'),
+    # Xiaomi 13: 6.36" 1080x2400, Android 13 -> 15
+    ('2211133C', ('13', '14', '15'), '1080x2400', '393x873'),
+    # Xiaomi 14: 6.36" 1200x2670, Android 14 -> 15
+    ('23127PN0CC', ('14', '15'), '1200x2670', '400x890'),
+    # OnePlus Ace 3: 6.78" 1240x2772, Android 14 -> 15
+    ('PJE110', ('14', '15'), '1240x2772', '441x986'),
+    # Galaxy S24 (China): 6.2" 1080x2340, Android 14 -> 15
+    ('SM-S9210', ('14', '15'), '1080x2340', '384x832'),
+    # Pixel 8: 6.2" 1080x2400, Android 14 -> 15
+    ('Pixel 8', ('14', '15'), '1080x2400', '411x914'),
+    # vivo X100 Pro: 6.78" 1260x2800, Android 14 -> 15
+    ('V2309A', ('14', '15'), '1260x2800', '420x933'),
+    # Redmi K60: 6.67" 1220x2712, Android 13 -> 14
+    ('23013RK75C', ('13', '14'), '1220x2712', '444x986'),
 )
 
+#: iOS profiles used when the random pool picks Apple.  Model, OS, physical
+#: pixels and logical pixels stay in one row so the fingerprint cannot pair an
+#: iPhone 15 with an iPhone 8 resolution.  ``cpuModel`` uses arm64e rather than
+#: the reference simulator's x86_64: an iPhone running iOS 18 with x86_64 is an
+#: obvious emulator signal.  The submit path for iOS is still unverified;
+#: ``JHP_IOS_CHANCE`` keeps the exposure controllable (default 30%).
+IOS_MODELS = (
+    ('iPhone 13', ('16.7.10', '17.7.2', '18.1'), '1170x2532', '390x844'),
+    ('iPhone 14', ('16.7.10', '17.7.2', '18.1'), '1170x2532', '390x844'),
+    ('iPhone 15', ('17.5.1', '18.0.1', '18.1', '18.2', '26.5.2'),
+     '1179x2556', '393x852'),
+    ('iPhone 15 Pro', ('17.5.1', '18.0.1', '18.1', '18.2', '26.5.2'),
+     '1179x2556', '393x852'),
+    ('iPhone 15 Pro Max', ('17.5.1', '18.0.1', '18.1', '18.2', '26.5.2'),
+     '1290x2796', '430x932'),
+    ('iPhone 16', ('18.0.1', '18.1', '18.2', '26.5.2'),
+     '1179x2556', '393x852'),
+    ('iPhone 16 Pro', ('18.0.1', '18.1', '18.2', '26.5.2'),
+     '1206x2622', '402x874'),
+    ('iPhone 16 Pro Max', ('18.0.1', '18.1', '18.2', '26.5.2'),
+     '1320x2868', '440x956'),
+)
+IOS_CPU_MODEL = 'arm64e'
+IOS_CHANCE_DEFAULT = 30
+#: Most real iPhones deny App Tracking Transparency, so IDFA is all zeros.
+_IDFA_ZERO = '00000000-0000-0000-0000-000000000000'
+
 _DEVICE_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$')
+_IDFA_RE = re.compile(r'^[A-Za-z0-9-]{8,64}$')
 _PIXEL_RE = re.compile(r'^\d{3,5}x\d{3,5}$')
 _DIGITS_RE = re.compile(r'^\d{10,16}$')
 
@@ -181,10 +226,8 @@ def validate_profile(profile) -> dict:
             f'设备指纹版本 {version} 高于当前程序支持的 {PROFILE_VERSION}')
 
     platform = str(profile.get('platform') or 'android').strip().lower()
-    if platform != 'android':
-        # The submit path in the reference client is Android-shaped.  Keeping
-        # this explicit avoids a half-iOS profile being used by accident.
-        raise DeviceProfileError('当前提交链只支持 android 设备指纹')
+    if platform not in ('android', 'ios'):
+        raise DeviceProfileError('设备指纹平台必须是 android 或 ios')
 
     device_id = str(profile.get('DeviceId') or '').strip()
     if not _DEVICE_ID_RE.match(device_id):
@@ -211,6 +254,10 @@ def validate_profile(profile) -> dict:
                   else '0').strip()
     if is_root not in ('0', '1'):
         raise DeviceProfileError('isRoot 必须是 0 或 1')
+
+    idfa = str(profile.get('idfa') or '').strip()
+    if idfa and not _IDFA_RE.match(idfa):
+        raise DeviceProfileError('idfa 格式无效')
 
     install = _as_digits(profile.get('appInstallTime'), 'appInstallTime')
     update = _as_digits(profile.get('appUpdateTime'), 'appUpdateTime')
@@ -241,6 +288,8 @@ def validate_profile(profile) -> dict:
         'appInstallTime': install,
         'appUpdateTime': update,
     }
+    if idfa:
+        out['idfa'] = idfa
     if profile.get('rotated_at'):
         try:
             out['rotated_at'] = int(profile['rotated_at'])
@@ -251,16 +300,40 @@ def validate_profile(profile) -> dict:
     return out
 
 
-def generate_profile(*, now_ms: int | None = None,
-                     source: str = 'generated') -> dict:
+def _ios_chance() -> int:
+    """iOS share for new random profiles (0-100, default 30).
+
+    iOS submit is not yet verified end-to-end; the default keeps the exposure
+    bounded.  Set ``JHP_IOS_CHANCE=50`` for an even mix, ``0`` to disable, or
+    ``100`` to force iOS on new installs.
+    """
+    raw = os.environ.get('JHP_IOS_CHANCE')
+    if raw is None or str(raw).strip() == '':
+        return IOS_CHANCE_DEFAULT
+    try:
+        return max(0, min(100, int(str(raw).strip())))
+    except (TypeError, ValueError):
+        return IOS_CHANCE_DEFAULT
+
+
+def generate_android_profile(*, now_ms: int | None = None,
+                             source: str = 'generated') -> dict:
     """Create one coherent Android profile.  Never called per request."""
     now = int(now_ms if now_ms is not None else _now_ms())
-    model, os_choices = secrets.choice(ANDROID_MODELS)
+    model, os_choices, physic, logic = secrets.choice(ANDROID_MODELS)
     os_version = secrets.choice(os_choices)
-    # A real installation is older than the first run.  30-150 days keeps
-    # install/update plausible without making every copy share one offset.
-    install_days = 30 + secrets.randbelow(121)
-    install = now - install_days * 86_400_000
+    # A real installation is older than the first run.  30-400 days keeps
+    # install history plausible without every copy sharing one offset.  The
+    # app is current (7.3.11), so appUpdateTime is recent and later than the
+    # install; an install from last year with update == install would imply
+    # the app was never updated since 7.3.11 shipped.
+    install = now - (30 + secrets.randbelow(371)) * 86_400_000
+    update = now - (1 + secrets.randbelow(21)) * 86_400_000
+    if update <= install:
+        update = install + 86_400_000
+        if update > now:
+            update = now
+            install = now - 86_400_000
     return {
         'version': PROFILE_VERSION,
         'platform': 'android',
@@ -270,12 +343,61 @@ def generate_profile(*, now_ms: int | None = None,
         'deviceName': model,
         'osVersion': os_version,
         'cpuModel': 'arm64-v8a',
-        'physicPixel': '1080x2400',
-        'logicPixel': '1080x2400',
+        'physicPixel': physic,
+        'logicPixel': logic,
         'isRoot': '0',
+        'appInstallTime': str(install),
+        'appUpdateTime': str(update),
+    }
+
+
+def generate_ios_profile(*, now_ms: int | None = None,
+                         source: str = 'generated') -> dict:
+    """Create one coherent iOS profile.  Never called per request."""
+    now = int(now_ms if now_ms is not None else _now_ms())
+    model, os_choices, physic, logic = secrets.choice(IOS_MODELS)
+    os_version = secrets.choice(os_choices)
+    # Fresh installs are common on iOS; keep install/update equal because the
+    # reference iOS header has no appUpdateTime and a fresh install has no
+    # update history yet.
+    install = now - (2 + secrets.randbelow(60)) * 86_400_000
+    idfa = (_IDFA_ZERO if secrets.randbelow(100) < 80
+            else str(uuid.uuid4()).upper())
+    return {
+        'version': PROFILE_VERSION,
+        'platform': 'ios',
+        'source': source if source in _SOURCES else 'generated',
+        'created_at': now,
+        'DeviceId': str(uuid.uuid4()).upper(),
+        'deviceName': model,
+        'osVersion': os_version,
+        'cpuModel': IOS_CPU_MODEL,
+        'physicPixel': physic,
+        'logicPixel': logic,
+        'isRoot': '0',
+        'idfa': idfa,
         'appInstallTime': str(install),
         'appUpdateTime': str(install),
     }
+
+
+def generate_profile(*, now_ms: int | None = None,
+                     source: str = 'generated',
+                     platform: str | None = None) -> dict:
+    """Create a random Android or iOS profile.
+
+    ``platform`` forces one platform (used by rotate / tests).  When omitted,
+    ``JHP_IOS_CHANCE`` controls the iOS share (default 30).
+    """
+    if platform is None:
+        platform = ('ios' if secrets.randbelow(100) < _ios_chance()
+                    else 'android')
+    platform = str(platform).strip().lower()
+    if platform == 'ios':
+        return generate_ios_profile(now_ms=now_ms, source=source)
+    if platform == 'android':
+        return generate_android_profile(now_ms=now_ms, source=source)
+    raise ValueError("platform must be 'android' or 'ios'")
 
 
 def profile_from_session(session: dict | None) -> dict | None:
@@ -288,19 +410,26 @@ def profile_from_session(session: dict | None) -> dict | None:
         return None
     if not (session.get('token') or session.get('uid')):
         return None
-    profile = dict(LEGACY_DEVICE)
-    profile['version'] = PROFILE_VERSION
-    profile['source'] = 'legacy-default'
-    profile['created_at'] = _now_ms()
+    platform = str(session.get('platform') or 'android').strip().lower()
+    if platform == 'ios':
+        profile = generate_ios_profile(source='legacy-session')
+        profile['created_at'] = _now_ms()
+    else:
+        profile = dict(LEGACY_DEVICE)
+        profile['version'] = PROFILE_VERSION
+        profile['source'] = 'legacy-default'
+        profile['created_at'] = _now_ms()
     if session.get('DeviceId'):
         profile['DeviceId'] = str(session['DeviceId'])
         profile['source'] = 'legacy-session'
-    for src, dst in (('deviceName', 'deviceName'),
+    for src, dst in (('platform', 'platform'),
+                     ('deviceName', 'deviceName'),
                      ('osVersion', 'osVersion'),
                      ('cpuModel', 'cpuModel'),
                      ('physicPixel', 'physicPixel'),
                      ('logicPixel', 'logicPixel'),
                      ('isRoot', 'isRoot'),
+                     ('idfa', 'idfa'),
                      ('appInstallTime', 'appInstallTime'),
                      ('appUpdateTime', 'appUpdateTime')):
         if session.get(src) not in (None, ''):
@@ -356,7 +485,8 @@ def _backup_path(store_dir: str, now: int) -> str:
 
 
 def rotate(store_dir: str, legacy_session: dict | None = None,
-           *, force: bool = False) -> tuple[dict, str | None]:
+           *, force: bool = False,
+           platform: str | None = None) -> tuple[dict, str | None]:
     """Explicitly replace this installation's fingerprint.
 
     Returns ``(new_profile, backup_path)``.  The old profile (or the legacy
@@ -394,7 +524,7 @@ def rotate(store_dir: str, legacy_session: dict | None = None,
             if backup is None:
                 backup = legacy_backup
 
-        new = generate_profile(source='rotated')
+        new = generate_profile(source='rotated', platform=platform)
         new['rotated_at'] = _now_ms()
         new['rotated_from'] = (old or {}).get('source', 'none')
         return save_profile(store_dir, new), backup
@@ -414,8 +544,9 @@ def effective_device(profile: dict, session: dict | None = None) -> dict:
         return device
     device['DeviceId'] = str(session['DeviceId'])
     device['source'] = 'session'
-    for key in ('deviceName', 'osVersion', 'cpuModel', 'physicPixel',
-                'logicPixel', 'isRoot', 'appInstallTime', 'appUpdateTime'):
+    for key in ('platform', 'deviceName', 'osVersion', 'cpuModel',
+                'physicPixel', 'logicPixel', 'isRoot', 'idfa',
+                'appInstallTime', 'appUpdateTime'):
         if session.get(key) not in (None, ''):
             device[key] = str(session[key])
     return validate_profile(device)
@@ -424,6 +555,7 @@ def effective_device(profile: dict, session: dict | None = None) -> dict:
 def apply_to_account(acct, device: dict) -> None:
     """Copy every device field onto a realclient.Account."""
     device = validate_profile(device)
+    acct.platform = device['platform']
     acct.DeviceId = device['DeviceId']
     acct.deviceName = device['deviceName']
     acct.osVersion = device['osVersion']
@@ -433,6 +565,7 @@ def apply_to_account(acct, device: dict) -> None:
     acct.appInstallTime = device['appInstallTime']
     acct.appUpdateTime = device['appUpdateTime']
     acct.isRoot = device['isRoot']
+    acct.idfa = device.get('idfa', '')
 
 
 def mask_device_id(value: str) -> str:
@@ -447,11 +580,109 @@ def public_view(profile: dict, session: dict | None = None) -> dict:
     return {
         'device_id_present': True,
         'device_id_masked': mask_device_id(device['DeviceId']),
+        'device_platform': device['platform'],
         'device_name': device['deviceName'],
         'device_os': device['osVersion'],
         'device_source': device['source'],
         'device_rotated_at': device.get('rotated_at'),
     }
+
+
+def repair_pixels(store_dir: str) -> tuple[dict, str | None, list[str]]:
+    """Correct only the two pixel fields for a known model.
+
+    This does **not** rotate the DeviceId.  It exists for profiles created by
+    the early generator, which wrote the physical resolution into
+    ``logicPixel``.  The old profile is backed up first.  Any other mismatch
+    (OS, CPU, root) is left for an explicit rotate, because changing those is
+    a larger fingerprint change.
+    """
+    store_dir = os.path.abspath(store_dir)
+    os.makedirs(store_dir, exist_ok=True)
+    with _file_lock(_lock_path(store_dir)):
+        profile = read_profile(store_dir)
+        if profile is None:
+            raise DeviceProfileError('没有设备指纹文件')
+        table = (ANDROID_MODELS if profile['platform'] == 'android'
+                 else IOS_MODELS)
+        row = next((r for r in table if r[0] == profile['deviceName']), None)
+        if row is None:
+            raise DeviceProfileError(
+                f'未知机型 {profile["deviceName"]}，不能自动修正像素')
+        _, _, physic, logic = row
+        old = dict(profile)
+        changes = []
+        if profile['physicPixel'] != physic:
+            changes.append(f'physicPixel {profile["physicPixel"]} -> {physic}')
+            profile['physicPixel'] = physic
+        if profile['logicPixel'] != logic:
+            changes.append(f'logicPixel {profile["logicPixel"]} -> {logic}')
+            profile['logicPixel'] = logic
+        if not changes:
+            return profile, None, []
+        backup = _backup_path(store_dir, _now_ms())
+        _write_json_atomic(backup, old)
+        return save_profile(store_dir, profile), backup, changes
+
+
+def audit_profile(profile: dict) -> list[str]:
+    """Return human-readable coherence problems for a profile.
+
+    This is deliberately advisory: legacy fingerprints are frozen on purpose,
+    so an old install can legitimately fail the modern model table.  New
+    profiles must pass with an empty list.
+    """
+    p = validate_profile(profile)
+    issues: list[str] = []
+    if p['platform'] == 'android':
+        row = next((r for r in ANDROID_MODELS if r[0] == p['deviceName']), None)
+        if row is None:
+            issues.append(f'unknown Android model {p["deviceName"]!r}')
+        else:
+            _, versions, physic, logic = row
+            if p['osVersion'] not in versions:
+                issues.append(
+                    f'{p["deviceName"]} cannot run Android {p["osVersion"]}')
+            if p['physicPixel'] != physic:
+                issues.append(
+                    f'{p["deviceName"]} physical pixels are {physic}, '
+                    f'not {p["physicPixel"]}')
+            if p['logicPixel'] != logic:
+                issues.append(
+                    f'{p["deviceName"]} logical pixels are {logic}, '
+                    f'not {p["logicPixel"]}')
+        if p['cpuModel'] != 'arm64-v8a':
+            issues.append(f'Android cpuModel is {p["cpuModel"]!r}')
+        if p.get('idfa'):
+            issues.append('Android profile carries an IDFA')
+    elif p['platform'] == 'ios':
+        row = next((r for r in IOS_MODELS if r[0] == p['deviceName']), None)
+        if row is None:
+            issues.append(f'unknown iOS model {p["deviceName"]!r}')
+        else:
+            _, versions, physic, logic = row
+            if p['osVersion'] not in versions:
+                issues.append(
+                    f'{p["deviceName"]} cannot run iOS {p["osVersion"]}')
+            if p['physicPixel'] != physic:
+                issues.append(
+                    f'{p["deviceName"]} physical pixels are {physic}, '
+                    f'not {p["physicPixel"]}')
+            if p['logicPixel'] != logic:
+                issues.append(
+                    f'{p["deviceName"]} logical pixels are {logic}, '
+                    f'not {p["logicPixel"]}')
+        if p['cpuModel'] != IOS_CPU_MODEL:
+            issues.append(f'iOS cpuModel is {p["cpuModel"]!r}')
+        if not p.get('idfa'):
+            issues.append('iOS profile has no IDFA')
+    if p['isRoot'] != '0':
+        issues.append('isRoot is not 0')
+    if int(p['appUpdateTime']) < int(p['appInstallTime']):
+        issues.append('appInstallTime is later than appUpdateTime')
+    if p['DeviceId'] != p['DeviceId'].strip():
+        issues.append('DeviceId has surrounding whitespace')
+    return issues
 
 
 def _cli(argv=None) -> int:
@@ -461,23 +692,58 @@ def _cli(argv=None) -> int:
                     help='directory containing accounts_emu.json')
     ap.add_argument('--rotate', action='store_true',
                     help='back up the old profile and generate a new one')
+    ap.add_argument('--platform', choices=('android', 'ios', 'random'),
+                    default='random',
+                    help='platform for --rotate (default: random)')
     ap.add_argument('--show', action='store_true',
                     help='print the effective profile (masked)')
+    ap.add_argument('--audit', action='store_true',
+                    help='print coherence warnings for the current profile')
+    ap.add_argument('--repair-pixels', action='store_true',
+                    help='fix only physical/logical pixels for a known model; '
+                         'backs up the old profile and keeps DeviceId')
     args = ap.parse_args(argv)
 
     store_dir = os.path.abspath(os.path.expanduser(args.data_dir))
     session = read_session(store_dir)
 
+    if args.repair_pixels:
+        try:
+            profile, backup, changes = repair_pixels(store_dir)
+        except DeviceProfileError as e:
+            print(f'ERROR {e}')
+            return 1
+        if not changes:
+            print('OK    pixels already match the model table')
+        else:
+            for change in changes:
+                print(f'FIXED {change}')
+            if backup:
+                print(f'backup: {backup}')
+        print(json.dumps(public_view(profile, session), ensure_ascii=False,
+                         indent=1))
+        return 0
+
     if args.rotate:
-        new, backup = rotate(store_dir, legacy_session=session, force=True)
+        platform = None if args.platform == 'random' else args.platform
+        new, backup = rotate(store_dir, legacy_session=session, force=True,
+                             platform=platform)
+        label = 'iOS' if new['platform'] == 'ios' else 'Android'
         print(f'rotated: {mask_device_id(new["DeviceId"])}  '
-              f'source={new["source"]}')
-        print(f'device : {new["deviceName"]} / Android {new["osVersion"]}')
+              f'source={new["source"]}  platform={new["platform"]}')
+        print(f'device : {new["deviceName"]} / {label} {new["osVersion"]}')
         if backup:
             print(f'backup : {backup}')
         return 0
 
     profile = load_or_create(store_dir, legacy_session=session)
+    if args.audit:
+        issues = audit_profile(profile)
+        if issues:
+            for issue in issues:
+                print(f'WARN  {issue}')
+        else:
+            print('OK    profile is coherent')
     print(json.dumps(public_view(profile, session), ensure_ascii=False,
                      indent=1))
     return 0
@@ -493,17 +759,34 @@ def self_test() -> list[tuple[str, bool, str]]:
     try:
         a = load_or_create(os.path.join(root, 'a'))
         b = load_or_create(os.path.join(root, 'b'))
-        out.append(('random id is 32 hex',
-                    bool(re.fullmatch(r'[0-9a-f]{32}', a['DeviceId'])),
+        out.append(('device id has a stable shape',
+                    bool(re.fullmatch(r'[0-9A-Fa-f-]{16,64}', a['DeviceId'])),
                     a['DeviceId'][:8] + '…'))
         out.append(('two installs differ', a['DeviceId'] != b['DeviceId'],
                     'different'))
         out.append(('profile is stable',
                     load_or_create(os.path.join(root, 'a')) == a, 'reloaded'))
-        out.append(('generated is android',
-                    a['platform'] == 'android' and a['isRoot'] == '0'
-                    and a['cpuModel'] == 'arm64-v8a',
-                    f'{a["deviceName"]} / {a["osVersion"]}'))
+
+        android = generate_profile(platform='android')
+        out.append(('android profile is coherent',
+                    not audit_profile(android)
+                    and android['isRoot'] == '0'
+                    and android['cpuModel'] == 'arm64-v8a',
+                    f'{android["deviceName"]} / {android["osVersion"]}'))
+
+        ios = generate_profile(platform='ios')
+        out.append(('ios profile is coherent',
+                    not audit_profile(ios)
+                    and ios['cpuModel'] == IOS_CPU_MODEL
+                    and bool(re.fullmatch(
+                        r'[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-'
+                        r'[0-9A-F]{4}-[0-9A-F]{12}', ios['DeviceId'])),
+                    f'{ios["deviceName"]} / iOS {ios["osVersion"]}'))
+
+        broken = dict(ios)
+        broken['physicPixel'] = '1080x1920'
+        out.append(('audit catches impossible pixels',
+                    bool(audit_profile(broken)), 'warned'))
 
         legacy_dir = os.path.join(root, 'legacy')
         os.makedirs(legacy_dir)

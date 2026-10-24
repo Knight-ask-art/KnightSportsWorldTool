@@ -177,7 +177,8 @@ if __name__ == '__main__':
     print('  unid  =', sess['unid'])
     print('  name  =', sess['profile'].get('name'))
     print('  campus=', sess['profile'].get('campusName'))
-    print('  device=', device['deviceName'], '/ Android',
+    print('  device=', device['deviceName'], '/',
+          ('iOS' if device.get('platform') == 'ios' else 'Android'),
           device['osVersion'], '/', DP.mask_device_id(device['DeviceId']))
     if a.out:
         with open(a.out, 'w', encoding='utf-8') as f:

@@ -80,9 +80,12 @@ python run.py --port 65520
 `data/saved_login.json`，不勾选不保存，取消勾选立即删除。
 
 设备指纹每个 `data` 目录首次运行生成一次，保存在 `data/device_profile.json`；
-登录和提交共用同一份。旧数据升级会冻结原来的提交指纹；更换需显式运行
-`python -m replica.application.device_profile --data-dir <data> --rotate`，
-旧指纹会先备份到 `device_profile.backup-*.json`。`data/` 不参与打包。
+登录和提交共用同一份。新安装从 Android / iOS 随机池抽取（`JHP_IOS_CHANCE`
+默认 30，`0` 关闭；iOS 提交链尚未真实验证）。旧数据升级会冻结原来的提交指纹；
+更换需显式运行
+`python -m replica.application.device_profile --data-dir <data> --rotate`
+（可选 `--platform android|ios|random`），旧指纹会先备份到
+`device_profile.backup-*.json`。`data/` 不参与打包。
 
 ## 测试
 

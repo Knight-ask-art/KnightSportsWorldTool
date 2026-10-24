@@ -44,6 +44,7 @@ class Account:
     unid: int = 47203
     runMode: int = 1
     # device fingerprint (must stay consistent per account once submitted)
+    platform: str = 'android'
     DeviceId: str = 'afa505ae1e60377972564c220fb24311'
     deviceName: str = 'Xiaomi 2304FPN6DG'
     osVersion: str = '9'
@@ -53,6 +54,7 @@ class Account:
     appInstallTime: str = '1785436971435'
     appUpdateTime: str = '1788581965711'
     isRoot: str = '1'
+    idfa: str = ''
     # The server enforces a minimum client version: api/v70103/runModePolicy
     # answers `11019 ERROR:版本过低，请更新至7.3.10版本` for anything older, and
     # the official CDN ships sw_7.3.11.apk as the current build.
@@ -110,6 +112,14 @@ def java_hashmap_json(d: dict) -> str:
 
 
 def build_headers(acct: Account, ts: str, nonce: str) -> dict:
+    """Build the signed header set for this account's platform.
+
+    Android keeps the byte-for-byte proven 23-field set.  iOS follows the
+    native app's field set/order and types (see ``ios_headers``).
+    """
+    if str(getattr(acct, 'platform', 'android') or 'android').lower() == 'ios':
+        from .ios_headers import build_ios_headers
+        return build_ios_headers(acct, ts, nonce)
     h = {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
@@ -139,6 +149,36 @@ def build_headers(acct: Account, ts: str, nonce: str) -> dict:
     # User-Agent (captured headerSign plaintext has neither), and adding them
     # changes the signed JSON -> server answers 10003 "验证失败".
     return h
+
+
+def user_agent(acct: Account | None = None,
+               platform: str | None = None,
+               os_version: str = '') -> str:
+    """A wire-only User-Agent for this platform.
+
+    This is deliberately not part of the signed header set: Android's
+    headerSign has no UA, and the server accepts unsigned extras (runes/runef
+    prove that).  Without it urllib advertises ``Python-urllib/x.y``, which is
+    a louder signal than any device field.
+
+    iOS's Darwin major must match the advertised iOS major; an iOS 16 profile
+    sending an iOS 18 Darwin string is another synthetic pair.
+    """
+    name = platform or getattr(acct, 'platform', 'android') or 'android'
+    if str(name).lower() == 'ios':
+        version = os_version or getattr(acct, 'osVersion', '') or '18.1'
+        try:
+            major = int(str(version).split('.')[0])
+        except (TypeError, ValueError):
+            major = 18
+        cfnetwork, darwin = {
+            16: ('1408.0.4', '22.5.0'),
+            17: ('1474', '23.0.0'),
+            18: ('1498.700.2', '24.1.0'),
+            26: ('3826.400.72', '25.0.0'),
+        }.get(major, ('1498.700.2', '24.1.0'))
+        return f'CFNetwork/{cfnetwork} Darwin/{darwin}'
+    return 'okhttp/4.12.0'
 
 
 def classify(status: int, body: bytes) -> tuple[str, str]:
@@ -203,13 +243,20 @@ class RealClient:
 
     # ---- request crypto ----
 
-    def header_sign(self, headers: dict) -> str:
-        # The app does: HashMap map = new HashMap(); put every request header;
-        # new Gson().toJson(map); encryptString(json); addHeader("headerSign",...)
-        # -> the JSON key order is Java HashMap bucket order (String.hashCode),
-        # NOT insertion order. Serialize it that way, then wrap it in an
-        # envelope whose outer keys follow the "observed" order [k,p,d,h,t].
-        hjson = java_hashmap_json(headers)
+    def header_sign(self, headers: dict, platform: str = 'android') -> str:
+        # The Android app does: HashMap map = new HashMap(); put every request
+        # header; new Gson().toJson(map); encryptString(json); addHeader
+        # ("headerSign",...).  The JSON key order is Java HashMap bucket order
+        # (String.hashCode), NOT insertion order.
+        #
+        # The iOS app builds a typed JSON object in field order instead.  Using
+        # the Android serializer there would stringify uid/isRoot and change
+        # the bytes, so the two platforms must not share this step.
+        if str(platform or 'android').lower() == 'ios':
+            from .ios_headers import ios_header_json
+            hjson = ios_header_json(headers)
+        else:
+            hjson = java_hashmap_json(headers)
         if self._ns is not None:
             from . import netsec
             return netsec.build_envelope(self._ns, hjson, 'observed')['json']
@@ -247,9 +294,19 @@ class RealClient:
 
     # ---- real requests ----
 
-    def _post(self, url: str, headers: dict, body: str, timeout: float = 30.0):
+    def _post(self, url: str, headers: dict, body: str,
+              timeout: float = 30.0, platform: str = 'android',
+              extra_headers: dict | None = None):
         hdrs = dict(headers)
-        hdrs['headerSign'] = self.header_sign(headers)
+        hdrs['headerSign'] = self.header_sign(headers, platform)
+        # Wire-only defaults.  iOS's signed set does not include these; the
+        # HTTP client still needs them, and they must not enter headerSign.
+        hdrs.setdefault('Accept', 'application/json')
+        hdrs.setdefault('Content-Type', 'application/json')
+        hdrs.setdefault('User-Agent', user_agent(
+            platform=platform, os_version=str(headers.get('osVersion') or '')))
+        if extra_headers:
+            hdrs.update(extra_headers)
         req = urllib.request.Request(url, data=body.encode('utf-8'),
                                      headers=hdrs, method='POST')
         try:
@@ -320,9 +377,16 @@ class RealClient:
         """
         ts = str(int(time.time() * 1000))
         nonce = str(uuid.uuid4())
+        platform = str(getattr(acct, 'platform', 'android') or 'android').lower()
         headers = build_headers(acct, ts, nonce)
-        signature = self.header_sign(headers)
+        signature = self.header_sign(headers, platform)
         wire = dict(headers)
+        # Wire-only fields: never signed.  Objective-C/iOS and okhttp both add
+        # a real UA and Content-Type; Python's defaults are a detection signal.
+        wire.setdefault('Accept', 'application/json')
+        if method.upper() != 'GET':
+            wire.setdefault('Content-Type', 'application/json')
+        wire.setdefault('User-Agent', user_agent(acct))
         if extra_headers:
             wire.update(extra_headers)
         wire['headerSign'] = signature
@@ -410,12 +474,15 @@ class RealClient:
         response decryption is solved. Provided for completeness/testing."""
         ts = str(int(time.time() * 1000))
         nonce = str(uuid.uuid4())
+        platform = str(getattr(acct, 'platform', 'android') or 'android').lower()
         headers = build_headers(acct, ts, nonce)
-        # Not logged in yet: the app sends uid "-1" and an EMPTY tokenSign
-        # (see the captured headerSign plaintext), not a computed MD5.
-        headers['uid'] = '-1'
-        headers['token'] = ''
-        headers['tokenSign'] = ''
+        if platform != 'ios':
+            # Not logged in yet: the Android app sends uid "-1" and an EMPTY
+            # tokenSign (see the captured headerSign plaintext), not a
+            # computed MD5.  iOS simply omits uid/token/tokenSign.
+            headers['uid'] = '-1'
+            headers['token'] = ''
+            headers['tokenSign'] = ''
         body_obj = {
             'loginType': 1,
             'device_model': acct.deviceName,
@@ -424,11 +491,12 @@ class RealClient:
         }
         if smscode:
             body_obj['smscode'] = smscode
-        headers['Authorization'] = 'Basic ' + base64.b64encode(
+        auth = 'Basic ' + base64.b64encode(
             f'{username}:{password}'.encode()).decode()
         plain = json.dumps(body_obj, separators=(',', ':'))
         body = self.encrypt_body(plain)
-        status, data = self._post(LOGIN_URL, headers, body)
+        status, data = self._post(LOGIN_URL, headers, body, platform=platform,
+                                  extra_headers={'Authorization': auth})
         verdict, detail = classify(status, data)
         out = {'verdict': verdict, 'detail': detail, 'status': status,
                'resp_len': len(data), 'resp_head': data[:80].decode('utf-8', 'replace')}
@@ -449,13 +517,23 @@ class RealClient:
         """Release the session on the server so we don't leave a live login."""
         ts = str(int(time.time() * 1000))
         nonce = str(uuid.uuid4())
+        platform = str(getattr(acct, 'platform', 'android') or 'android').lower()
         headers = build_headers(acct, ts, nonce)
-        headers['uid'] = acct.uid or ''
-        headers['token'] = token or ''
-        headers['tokenSign'] = token_sign(ts, headers['token'], headers['uid'])
+        if platform == 'ios':
+            uid = int(acct.uid or -1)
+            headers['uid'] = uid
+            headers['studentId'] = uid
+            headers['token'] = token or ''
+            headers['tokenSign'] = token_sign(ts, headers['token'], uid)
+        else:
+            headers['uid'] = acct.uid or ''
+            headers['token'] = token or ''
+            headers['tokenSign'] = token_sign(ts, headers['token'],
+                                              headers['uid'])
         body = self.encrypt_body(json.dumps({}, separators=(',', ':')))
         try:
-            status, data = self._post(LOGOUT_URL, headers, body)
+            status, data = self._post(LOGOUT_URL, headers, body,
+                                      platform=platform)
         except Exception as e:
             return {'ok': False, 'error': repr(e)}
         out = {'ok': True, 'status': status, 'resp_len': len(data)}
