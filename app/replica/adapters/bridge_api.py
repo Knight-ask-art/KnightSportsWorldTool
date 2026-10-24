@@ -160,12 +160,18 @@ def semester_view(summary, personal):
         # Count goal.  goalMethod=2 uses semesterGoal/semesterValid directly
         # (the official app shows them with the unit "次"); goalMethod=1 uses
         # semesterGoalCount/validTotalCount, with the same fields as fallback.
-        goal_count = raw_goal_count
-        if goal_count is None or goal_count <= 0:
-            goal_count = raw_goal_distance
-        valid_count = raw_valid_count
-        if valid_count is None:
-            valid_count = raw_done_distance
+        if goal_method == 2 and p.get('semesterGoal') is not None:
+            goal_count = p.get('semesterGoal')
+            valid_count = p.get('semesterValid')
+            if valid_count is None:
+                valid_count = raw_valid_count
+        else:
+            goal_count = raw_goal_count
+            if goal_count is None or goal_count <= 0:
+                goal_count = raw_goal_distance
+            valid_count = raw_valid_count
+            if valid_count is None:
+                valid_count = raw_done_distance
         goal_km = None
         done_km = None
         goal_unit = 'count'

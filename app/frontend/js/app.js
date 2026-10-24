@@ -2224,7 +2224,7 @@ function renderProfile(){
       : ((p.name || p.nickname || s.name || s.nickname) ? '本地会话' : '—');
 
   const withUnit = (v, unit) => {
-    if(v == null || v === '') return '';
+    if(v == null || v === '' || +v === 0) return '';
     const text = String(v).trim();
     return /^-?\d+(\.\d+)?$/.test(text) ? (text + ' ' + unit) : text;
   };
