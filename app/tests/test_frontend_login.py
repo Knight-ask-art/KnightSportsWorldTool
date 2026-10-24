@@ -197,18 +197,27 @@ def test_overview_state_is_reactive():
 
 def test_semester_indoor_goal_is_rendered_separately():
     # goalMethod=2 is the indoor-exercise counter, not the semester goal.
-    assert "v.goal_kind === 'indoor'" in JS
+    assert "const hasIndoor = v.indoor_goal != null" in JS
     assert "室内锻炼 ' + (v.indoor_valid || 0)" in JS
     assert "户外未设目标" in JS
     # the remaining indoor count must land in the 还差 cell, not only in text
-    assert "v.indoor_remaining != null ? (v.indoor_remaining + '<small> 次</small>')" in JS
-    assert "doneLabel.textContent = indoorMode ? '户外里程' : '已完成'" in JS
-    assert "leftLabel.textContent = indoorMode ? '室内还差' : '还差'" in JS
+    assert "hasIndoor && v.indoor_remaining != null" in JS
+    assert "leftLabel.textContent = (distanceMode || countMode)" in JS
+
+
+def test_semester_local_goal_is_configurable_in_the_ui():
+    # A local target fills in an outdoor goal the server never sent.
+    assert 'id="rSemesterKm"' in HTML
+    assert 'id="ovSemesterGoalLink"' in HTML
+    assert "liveApi('get_semester_goal'" in JS
+    assert "liveApi('save_semester_goal'" in JS
+    assert "v.goal_source === 'local'" in JS
+    assert "学期汇总 · 本机目标" in JS
 
 
 def test_semester_count_goal_is_rendered_in_runs():
-    # goalMethod=1 still renders a real count goal in 次.
-    assert "v.goal_unit === 'count'" in JS
+    # A real count goal still renders in 次.
+    assert "const countMode = v.goal_km == null && v.goal_count != null" in JS
     assert "got + '<small> 次</small>'" in JS
     assert "v.remaining_count + '<small> 次</small>'" in JS
 

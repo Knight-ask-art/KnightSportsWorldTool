@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 from replica.adapters import bridge_api as RA
-from replica.application import points, policy, readonly
+from replica.application import points, policy, readonly, semester_goal
 from replica.domain import safety
 
 
@@ -139,6 +139,80 @@ class SemesterViewTest(unittest.TestCase):
         client = Client()
         readonly.semester_summary(client, object())
         self.assertEqual(client.payload, {})
+
+
+class SemesterGoalTest(unittest.TestCase):
+    def test_local_target_fills_a_missing_outdoor_goal(self):
+        view = RA.semester_view(
+            {'semesterDis': 10667, 'semesterValidDis': 10240},
+            {'sname': '体能训练', 'semesterGoal': 1, 'semesterValid': 0,
+             'goalMethod': 2})
+        RA.apply_semester_goal(view, 60)
+        self.assertEqual(view['goal_km'], 60.0)
+        self.assertEqual(view['goal_kind'], 'distance')
+        self.assertEqual(view['done_km'], 10.24)
+        self.assertEqual(view['remaining_km'], 49.76)
+        self.assertEqual(view['goal_source'], 'local')
+        # the indoor counter stays available for the note
+        self.assertEqual(view['indoor_goal'], 1)
+
+    def test_server_goal_beats_the_local_target(self):
+        view = RA.semester_view({}, {'semesterGoal': 30000,
+                                     'curValidDis': 12000,
+                                     'goalMethod': 0})
+        RA.apply_semester_goal(view, 60)
+        self.assertEqual(view['goal_km'], 30.0)
+        self.assertEqual(view['goal_source'], 'server')
+
+    def test_no_target_and_no_goal_stays_unset(self):
+        view = RA.semester_view({}, {'goalMethod': 2, 'semesterGoal': 1,
+                                     'semesterValid': 0})
+        RA.apply_semester_goal(view, None)
+        self.assertIsNone(view['goal_km'])
+        self.assertIsNone(view['goal_source'])
+
+    def test_store_roundtrip_and_clear(self):
+        with tempfile.TemporaryDirectory() as d:
+            semester_goal.save(d, '60.5', sid=9382)
+            got = semester_goal.load(d)
+            self.assertEqual(got['target_km'], 60.5)
+            self.assertEqual(got['sid'], 9382)
+            semester_goal.save(d, '')
+            self.assertIsNone(semester_goal.load(d)['target_km'])
+
+    def test_target_from_another_semester_is_ignored(self):
+        view = RA.semester_view(
+            {'semesterValidDis': 10240},
+            {'sid': 9382, 'semesterGoal': 1, 'semesterValid': 0,
+             'goalMethod': 2})
+        RA.apply_semester_goal(view, 60, target_sid=1111)
+        self.assertIsNone(view['goal_km'])
+        self.assertIsNone(view['goal_source'])
+
+    def test_target_for_the_same_semester_applies(self):
+        view = RA.semester_view(
+            {'semesterValidDis': 10240},
+            {'sid': 9382, 'semesterGoal': 1, 'semesterValid': 0,
+             'goalMethod': 2})
+        RA.apply_semester_goal(view, 60, target_sid='9382')
+        self.assertEqual(view['goal_km'], 60.0)
+        self.assertEqual(view['goal_source'], 'local')
+
+    def test_store_rejects_nonsense(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                semester_goal.save(d, 'abc')
+            with self.assertRaises(ValueError):
+                semester_goal.save(d, 0)
+            with self.assertRaises(ValueError):
+                semester_goal.save(d, 99999)
+
+    def test_corrupt_file_means_no_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'semester_goal.json'), 'w',
+                      encoding='utf-8') as f:
+                f.write('{not json')
+            self.assertIsNone(semester_goal.load(d)['target_km'])
 
     def test_count_goal_method_one_uses_goal_count_fields(self):
         view = RA.semester_view({}, {'semesterGoalCount': 30,

@@ -192,6 +192,7 @@
                   <div><span>剩余天数</span><b id="ovSemesterDays">—</b></div>
                 </div>
                 <div class="semester-note" id="ovSemesterNote" hidden></div>
+                <div class="semester-goal-link" id="ovSemesterGoalLink" hidden><a href="#" class="mini" data-goto="settings">设置户外目标</a></div>
               </div>
             </section>
 
@@ -801,6 +802,7 @@
                   <div><span>剩余天数</span><b id="profSemesterDays">—</b></div>
                 </div>
                 <div class="semester-note" id="profSemesterNote" hidden></div>
+                <div class="semester-goal-link" id="profSemesterGoalLink" hidden><a href="#" class="mini" data-goto="settings">设置户外目标</a></div>
               </div>
             </section>
 
@@ -878,6 +880,21 @@
           <div class="form-actions">
             <button class="btn small primary" id="saveRules">保存要求</button>
             <span class="hint" id="rulesHint" style="margin:0">任意填写一项即可启用模型；留空项不检查。</span>
+          </div>
+        </section>
+
+        <section class="sec" id="semesterGoalSection">
+          <div class="sec-head">
+            <h2>本学期目标</h2>
+            <span class="mini" id="semesterGoalStatus">未设置</span>
+          </div>
+          <p class="hint" style="margin:-4px 0 9px">服务器没返回户外目标时（例如本学期只配了室内锻炼），用这里的公里数计算学期进度。<b>只保存在本机</b>，不会上传；服务器有目标时以服务器为准。</p>
+          <div class="form-grid rules-grid">
+            <div class="field-line"><label for="rSemesterKm">户外目标（km）</label><input id="rSemesterKm" inputmode="decimal" placeholder="留空=不设置"></div>
+          </div>
+          <div class="form-actions">
+            <button class="btn small primary" id="saveSemesterGoal">保存目标</button>
+            <span class="hint" id="semesterGoalHint" style="margin:0">保存后概览和「我的」会按这个目标计算还差多少。</span>
           </div>
         </section>
 

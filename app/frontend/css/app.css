@@ -1269,6 +1269,9 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .semester-stats b{display:block;font:400 14px/1.2 var(--hand);color:var(--ink)}
 .semester-note{margin-top:7px;padding-top:6px;border-top:1px dashed var(--rule);font:9.5px/1.45 var(--mono);color:var(--pencil)}
 .semester-note[hidden]{display:none}
+.semester-goal-link{margin-top:6px;text-align:right}
+.semester-goal-link a{color:var(--ink-blue);text-decoration:none}
+.semester-goal-link[hidden]{display:none}
 
 .week-trend{display:flex;align-items:flex-end;gap:6px;height:56px;margin-top:8px}
 .week-trend .wb{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:3px;height:100%}

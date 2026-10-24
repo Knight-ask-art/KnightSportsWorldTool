@@ -258,6 +258,7 @@ def semester_view(summary, personal):
             days_left = None
     return {
         'sname': sname,
+        'sid': p.get('sid') or s.get('sid'),
         'goal_method': goal_method,
         'goal_kind': goal_kind,
         'goal_unit': goal_unit,
@@ -280,6 +281,47 @@ def semester_view(summary, personal):
         'rank': rank if rank not in (None, 0, '') else None,
         'source': 'personal' if p else ('summary' if s else None),
     }
+
+
+def apply_semester_goal(view, target_km, target_sid=None):
+    """Fill an outdoor target the server did not provide.
+
+    Only used when neither a distance nor a count goal came back — the normal
+    shape of an indoor-only semester.  A server goal always wins, and
+    ``goal_source`` records where the target came from so the UI never
+    presents a self-set goal as the school's.
+
+    ``target_sid`` binds the local value to one semester: a target saved for
+    last term must not be applied to the current one.
+    """
+    if view.get('goal_km') is not None or view.get('goal_count') is not None:
+        view['goal_source'] = 'server'
+        return view
+    current_sid = view.get('sid')
+    if (target_sid not in (None, '') and current_sid not in (None, '')
+            and str(target_sid) != str(current_sid)):
+        view['goal_source'] = None
+        return view
+    if target_km in (None, ''):
+        view['goal_source'] = None
+        return view
+    try:
+        target = round(float(target_km), 2)
+    except (TypeError, ValueError):
+        view['goal_source'] = None
+        return view
+    done = view.get('outdoor_km')
+    view['goal_km'] = target
+    view['goal_kind'] = 'distance'
+    view['goal_unit'] = 'km'
+    view['done_km'] = done
+    view['goal_count'] = None
+    view['valid_count'] = None
+    view['remaining_count'] = None
+    view['remaining_km'] = (round(max(0.0, target - done), 2)
+                            if done is not None else None)
+    view['goal_source'] = 'local'
+    return view
 
 
 def _receipt_match(receipt, records):
@@ -1482,6 +1524,29 @@ class ReplicaApi:
         rules = Q.load_rules()
         return _ok({'rules': rules, 'configured': Q.is_configured(rules)})
 
+    def get_semester_goal(self, sid=None):
+        """Local outdoor semester target (never sent to the server)."""
+        from ..application import semester_goal as SG
+        data = SG.load(self.store_dir)
+        target = data.get('target_km')
+        stored_sid = data.get('sid')
+        if (target is not None and sid not in (None, '')
+                and stored_sid not in (None, '')
+                and str(stored_sid) != str(sid)):
+            target = None            # saved for another semester
+        return _ok({'target_km': target, 'sid': stored_sid,
+                    'set': target is not None})
+
+    def save_semester_goal(self, target_km=None, sid=None):
+        from ..application import semester_goal as SG
+        try:
+            data = SG.save(self.store_dir, target_km, sid=sid)
+        except ValueError as e:
+            return _fail('学期目标格式有误: %s' % e)
+        return _ok({'target_km': data.get('target_km'),
+                    'sid': data.get('sid'),
+                    'set': data.get('target_km') is not None})
+
     def save_school_rules(self, rules=None, **kw):
         from ..application import qualification as Q
         payload = dict(rules or {})
@@ -1882,6 +1947,9 @@ class ReplicaApi:
             return _fail('学期数据读取失败: %s' % ('; '.join(errors) or '返回为空'),
                          data={'errors': errors})
         view = semester_view(summary, personal)
+        from ..application import semester_goal as SG
+        goal = SG.load(self.store_dir)
+        apply_semester_goal(view, goal.get('target_km'), goal.get('sid'))
         return _ok({'view': view, 'summary_raw': summary,
                     'personal_raw': personal, 'errors': errors})
 
@@ -1953,7 +2021,11 @@ class ReplicaApi:
         semester = None
         if (_semester_payload_nonempty(summary)
                 or _semester_payload_nonempty(personal)):
-            semester = {'view': semester_view(summary, personal)}
+            from ..application import semester_goal as SG
+            view = semester_view(summary, personal)
+            goal = SG.load(self.store_dir)
+            apply_semester_goal(view, goal.get('target_km'), goal.get('sid'))
+            semester = {'view': view}
         elif not semester_error:
             semester_error = '学期数据为空'
         if semester_error:

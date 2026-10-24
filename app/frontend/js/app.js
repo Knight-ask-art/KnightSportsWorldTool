@@ -2035,6 +2035,7 @@ function renderSemesterInto(prefix, semester, error){
   const done = el('SemesterDone'), left = el('SemesterLeft'), days = el('SemesterDays');
   const doneLabel = el('SemesterDoneLabel'), leftLabel = el('SemesterLeftLabel');
   const bar = el('SemesterBar'), source = el('SemesterSource'), note = el('SemesterNote');
+  const goalLink = el('SemesterGoalLink');
   if(!v){
     if(title) title.textContent = error ? '学期数据读取失败' : '登录后读取';
     if(pct) pct.textContent = '—';
@@ -2049,56 +2050,62 @@ function renderSemesterInto(prefix, semester, error){
     }
     if(source) source.textContent = error ? '失败' : '—';
     if(note){ note.hidden = true; note.textContent = ''; }
+    if(goalLink) goalLink.hidden = true;
     return;
   }
   // goalMethod=2 is the indoor-exercise counter, not the semester goal: the
   // official app renders it as its own ring segment ("次") and keeps the
-  // outdoor distance separate.  Treating it as the main goal is what showed
-  // "0.0% · 0/1 次" while 10 km of valid distance existed.
-  const indoorMode = v.goal_kind === 'indoor';
-  const countMode = !indoorMode && (v.goal_unit === 'count' ||
-    (v.goal_km == null && v.goal_count != null));
+  // outdoor distance separate.  A local target (设置 → 本学期目标) can fill
+  // in the outdoor goal when the server has none.
+  const hasIndoor = v.indoor_goal != null;
+  const countMode = v.goal_km == null && v.goal_count != null;
+  const distanceMode = v.goal_km != null;
   const goal = countMode ? v.goal_count : v.goal_km;
   const got = countMode ? v.valid_count : v.done_km;
   const percent = v.completed_pct != null ? +v.completed_pct
     : (goal && got != null ? Math.min(100, got / goal * 100) : 0);
   if(title) title.textContent = v.sname || '本学期';
   if(pct){
-    if(indoorMode){
+    if(distanceMode || countMode){
+      pct.textContent = (percent != null ? percent.toFixed(1) + '%' : '—') +
+        (v.goal_count != null ? (' · ' + (v.valid_count || 0) + '/' + v.goal_count + ' 次') : '');
+    }else{
       pct.textContent = v.completed_pct != null
         ? (+v.completed_pct).toFixed(1) + '%'
         : (v.outdoor_km != null ? '户外未设目标' : '未设目标');
-    }else{
-      pct.textContent = (percent != null ? percent.toFixed(1) + '%' : '—') +
-        (v.goal_count != null ? (' · ' + (v.valid_count || 0) + '/' + v.goal_count + ' 次') : '');
     }
   }
   if(done) done.innerHTML = got != null
     ? (countMode ? (got + '<small> 次</small>') : (got.toFixed(1) + '<small> km</small>'))
     : '—';
-  if(left) left.innerHTML = indoorMode
-    ? (v.indoor_remaining != null ? (v.indoor_remaining + '<small> 次</small>') : '—')
+  if(left) left.innerHTML = distanceMode
+    ? (v.remaining_km != null ? (v.remaining_km.toFixed(1) + '<small> km</small>') : '—')
     : (countMode
       ? (v.remaining_count != null ? (v.remaining_count + '<small> 次</small>') : '—')
-      : (v.remaining_km != null ? (v.remaining_km.toFixed(1) + '<small> km</small>') : '—'));
-  if(doneLabel) doneLabel.textContent = indoorMode ? '户外里程' : '已完成';
-  if(leftLabel) leftLabel.textContent = indoorMode ? '室内还差' : '还差';
+      : (hasIndoor && v.indoor_remaining != null
+        ? (v.indoor_remaining + '<small> 次</small>') : '—'));
+  if(doneLabel) doneLabel.textContent = (distanceMode || countMode) ? '已完成' : '户外里程';
+  if(leftLabel) leftLabel.textContent = (distanceMode || countMode)
+    ? '还差' : (hasIndoor ? '室内还差' : '还差');
   if(days) days.textContent = v.days_left != null
     ? (v.days_left <= 0 ? '已结束' : (v.days_left + ' 天')) : '—';
   // A 0% bar with no goal behind it reads as "nothing recorded"; hide the
   // track instead of drawing a progress bar that can never fill.
-  const showBar = v.completed_pct != null || (!indoorMode && goal);
+  const showBar = v.completed_pct != null || distanceMode || countMode;
   if(bar){
     bar.style.width = Math.max(0, Math.min(100, percent)).toFixed(1) + '%';
     if(bar.parentElement) bar.parentElement.hidden = !showBar;
   }
-  if(source) source.textContent = v.source === 'personal' ? '个人完成度' : (v.source === 'summary' ? '学期汇总' : '—');
+  if(source) source.textContent = v.goal_source === 'local'
+    ? '学期汇总 · 本机目标'
+    : (v.source === 'personal' ? '个人完成度' : (v.source === 'summary' ? '学期汇总' : '—'));
+  if(goalLink) goalLink.hidden = distanceMode || countMode;
   if(note){
-    if(indoorMode && v.indoor_goal != null){
+    if(hasIndoor){
       note.hidden = false;
       note.textContent = '室内锻炼 ' + (v.indoor_valid || 0) + '/' + v.indoor_goal
         + ' 次（本学期目标）· 户外跑不计入';
-    }else if(v.outdoor_km != null && v.goal_kind === 'count'){
+    }else if(v.outdoor_km != null && countMode){
       note.hidden = false;
       note.textContent = '本学期有效里程 ' + v.outdoor_km.toFixed(2) + ' km';
     }else{
@@ -2507,6 +2514,7 @@ async function loadOverview(){
   LIVE.semester = liveOk(sj) ? (sj.data || null) : null;
   LIVE.semesterError = liveOk(sj) ? null : (sj.message || '学期数据加载失败');
   renderOverview(records, week, weeks, LIVE.semester);
+  loadSemesterGoal();          // the sid only becomes known with the semester
   if(!recordsOk) liveLog('记录加载失败', LIVE.recordsError, 'err');
   if(!weekOk) liveLog('周汇总加载失败', LIVE.weekError, 'warn');
   if(!liveOk(pj)) liveLog('计划生成失败', LIVE.planError, 'warn');
@@ -3263,7 +3271,58 @@ async function persistRules(rules, opts){
   }
   return d;
 }
+async function loadSemesterGoal(){
+  const input = $('#rSemesterKm'), status = $('#semesterGoalStatus');
+  try{
+    const sid = LIVE.semester && LIVE.semester.view ? LIVE.semester.view.sid : null;
+    const j = await liveApi('get_semester_goal', sid ? {sid: sid} : {});
+    if(!liveOk(j) || !input) return;
+    const t = (j.data || {}).target_km;
+    input.value = t == null ? '' : String(t);
+    if(status){
+      status.textContent = t == null ? '未设置' : ('目标 ' + t + ' km');
+      status.className = 'mini' + (t == null ? '' : ' ok');
+    }
+  }catch(e){ /* the target is optional */ }
+}
+async function saveSemesterGoal(){
+  const input = $('#rSemesterKm'), btn = $('#saveSemesterGoal');
+  const hint = $('#semesterGoalHint'), status = $('#semesterGoalStatus');
+  const raw = input ? String(input.value || '').trim() : '';
+  const sid = LIVE.semester && LIVE.semester.view ? LIVE.semester.view.sid : null;
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    const j = await liveApi('save_semester_goal',
+      sid ? {target_km: raw, sid: sid} : {target_km: raw});
+    if(!liveOk(j)){
+      toast('保存失败：' + (j.message || ''));
+      if(hint) hint.textContent = j.message || '保存失败';
+      return;
+    }
+    const t = (j.data || {}).target_km;
+    if(status){
+      status.textContent = t == null ? '未设置' : ('目标 ' + t + ' km');
+      status.className = 'mini' + (t == null ? '' : ' ok');
+    }
+    if(hint){
+      hint.textContent = t == null
+        ? '已清除；学期卡会显示“户外未设目标”。'
+        : ('已保存：按 ' + t + ' km 计算学期还差。');
+    }
+    toast(t == null ? '已清除户外目标' : '户外目标已保存');
+    liveLog('本学期目标已保存', t == null ? '已清除' : (t + ' km'), 'ok');
+    // Both cards are built from real_semester, so refresh them right away.
+    if(hasSession()){
+      await Promise.allSettled([loadOverview(), loadProfile({silent: true})]);
+    }
+  }catch(e){
+    toast('保存失败：' + (e && e.message ? e.message : e));
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '保存目标'; }
+  }
+}
 async function loadRules(){
+  await loadSemesterGoal();
   const j = await liveApi('get_school_rules');
   if(!liveOk(j)){
     const hasSaved = !!(LIVE.rules && LIVE.rules.configured);
@@ -4301,6 +4360,10 @@ function liveWire(){
   $('#runCheck').addEventListener('click', () => { refreshModelPreview(); refreshChecks(); toast('已重新检查'); });
   $('#submitRun').addEventListener('click', submitRun);
   $('#saveRules').addEventListener('click', saveRules);
+  $('#saveSemesterGoal').addEventListener('click', saveSemesterGoal);
+  ['rSemesterKm'].forEach(id => $('#' + id).addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); saveSemesterGoal(); }
+  }));
   $('#rulesFetch').addEventListener('click', () => fetchSchoolRules({force: true}));
   $('#netSave').addEventListener('click', saveNetworkConfig);
   $('#netClear').addEventListener('click', clearNetworkConfig);
