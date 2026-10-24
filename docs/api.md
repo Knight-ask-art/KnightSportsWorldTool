@@ -272,6 +272,7 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_receipts` | `limit` | 列出写前回执（pending/accepted/rejected/unknown） |
 | `real_reconcile_receipts` | `uuid`、`limit` | **只读**核对未决回执与服务器记录；匹配到才回写 accepted，绝不重发 |
 | `real_semester` | — | 学期汇总 + 个人完成度，返回归一化 `view` 与原始数据。服务器没有户外目标时，回落本机设置的目标（`goal_source=local`） |
+| `real_plan` | `days`、`seed`、`km_min`、`km_max` | 未来跑步计划（离线生成）；`days` 限制在 1–60。UI 传学期剩余天数（最多 14），不会排到学期结束之后 |
 | `get_semester_goal` | `sid`（可选） | 读取本机户外学期目标；换了学期（sid 不同）会返回未设置 |
 | `save_semester_goal` | `target_km`、`sid`（可选） | 保存/清除本机户外学期目标；只写本机，不上传 |
 | `real_profile` | — | 合并 `user/info` 资料与学期进度；`user/info` 失败时回落本地会话并返回 `errors` |
