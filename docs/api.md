@@ -232,7 +232,7 @@ data.segment_json       → JSON 字符串
 | 方法 | 返回要点 |
 |---|---|
 | `readonly.recent_records(limit)` | 列表归一化：公里、配速、日期（北京时间）、complete/status |
-| `readonly.record_detail(rrid, uuid)` | 轨迹 + 步频 + 海拔 + 爬升 + 分段 + `fields` |
+| `readonly.record_detail(rrid, uuid)` | 轨迹 + 步频 + 海拔 + 爬升 + 分段 + `fields`；`detail` 另含风险字段（见下） |
 | `readonly.weekly_summary(weeks)` | 按周（周一~周日）聚合，空周补 0，`truncated` 标明页数用尽 |
 | `readonly.check_violations()` | `none_found` / `violations` / `unknown` / `failed` 四态，失败不伪装成“干净” |
 | `readonly.semester_summary(client, acct, sid)` | 学期汇总；不带 `sid` 只会拿到空记录 |
@@ -241,6 +241,15 @@ data.segment_json       → JSON 字符串
 
 > 周汇总**没有服务器端点**，是从记录列表本地聚合的。依据见
 > [decisions.md](decisions.md)。
+
+`record_detail` 的 `detail` 原样暴露服务器的反作弊字段，便于在提交后自查：
+
+| 字段 | 含义 |
+|---|---|
+| `is_cheat` / `policy` / `step_freq_status` | 服务器判定标记；任一为 1 都会在详情页标红 |
+| `pace_fast` / `pace_slow` | `speedTop` / `speedBottom`，单位是 min/km，不是 m/s |
+| `step_min` / `step_max` | `stepBottom` / `stepTop`，每分钟步频边界 |
+| `appeal_status` / `appeal_info` | 申诉状态与说明；无申诉时 `appeal_info` 为空 |
 
 ---
 

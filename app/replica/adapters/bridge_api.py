@@ -25,7 +25,7 @@ import requests
 from ..application import credentials as CRED
 from ..application import device_profile as DP
 from ..domain import crypto as C
-from ..domain.rundata import generate_run_data
+from ..domain.rundata import generate_run_data, new_run_uuid
 from ..transport.realclient import as_dict
 
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
@@ -2199,7 +2199,9 @@ class ReplicaApi:
                 checkpoints=cps or None,
                 altitude_base=float(altitude),
                 start_ms=start_ms,
-                closed=bool(closed))
+                closed=bool(closed),
+                run_uuid=new_run_uuid(
+                    self._effective_device(d).get('platform')))
             if daily_runs is None:
                 # The caller explicitly says it does not know the server count.
                 # Do not silently substitute this tool's local lower bound:
@@ -2391,7 +2393,9 @@ class ReplicaApi:
                                     checkpoints=cps or None,
                                     altitude_base=float(altitude),
                                     start_ms=start_ms,
-                                    closed=bool(closed))
+                                    closed=bool(closed),
+                                    run_uuid=new_run_uuid(
+                                        getattr(acct, 'platform', None)))
         except Exception as e:  # noqa: BLE001
             return _fail(f'路线生成失败: {e}')
 

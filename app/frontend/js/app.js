@@ -2922,17 +2922,35 @@ async function selectRecord(i){
   LIVE.lastDetail = d;
   const km = (+x.distance_m || 0) / 1000;
   const state = x.state || recordState(x);
-  const tagText = state === 'issue' ? '有问题' : state === 'ok' ? '已通过' : '待核对';
+  const risky = !!(+x.is_cheat || +x.policy);
+  const tagText = risky || state === 'issue' ? '有问题'
+    : state === 'ok' ? '已通过' : '待核对';
   $('#rdTag').textContent = tagText;
-  $('#rdTag').className = 'tag ' + (state === 'issue' ? 'red' : state === 'ok' ? 'ok' : 'warn');
+  $('#rdTag').className = 'tag ' +
+    ((risky || state === 'issue') ? 'red' : state === 'ok' ? 'ok' : 'warn');
   $('#rdTitle').textContent = `${shortDate(x.start_ms)} · ${km.toFixed(2)} km`;
   $('#rdPace').textContent = paceText(paceFromSec(x.duration_s, km));
   $('#rdTime').textContent = hms(x.duration_s);
   $('#rdCadence').textContent = x.avg_step_freq ? (x.avg_step_freq + ' spm') : '—';
   $('#rdSteps').textContent = x.total_steps ? String(x.total_steps) : '—';
-  $('#rdTrack').textContent = (s.points || 0) + ' 点' + (s.has_altitude ? ` · 海拔 ${s.alt_min}–${s.alt_max} m` : '');
-  $('#rdCheat').textContent = x.normal_run == null ? '—' : String(x.normal_run);
-  $('#rdPolicy').textContent = (s.segments || 0) + ' 段';
+  $('#rdTrack').textContent = (s.points || 0) + ' 点' +
+    (s.has_altitude ? ` · 海拔 ${s.alt_min}–${s.alt_max} m` : '') +
+    (s.segments ? ` · ${s.segments} 段` : '');
+  // The server's own anti-cheat fields, not normalRun (which it never sends).
+  const risk = [];
+  if(+x.is_cheat) risk.push('isCheat=1');
+  if(+x.policy) risk.push('policy=1');
+  if(+x.step_freq_status) risk.push('步频异常');
+  $('#rdCheat').textContent = risk.length ? risk.join(' · ') : '正常';
+  $('#rdCheat').className = risk.length ? 'risk-bad' : 'risk-ok';
+  const curPace = paceFromSec(x.duration_s, km);
+  $('#rdPolicy').textContent = (x.pace_fast != null && x.pace_slow != null)
+    ? (paceText(x.pace_fast) + '–' + paceText(x.pace_slow) +
+       (curPace ? ' · 本次 ' + paceText(curPace) : ''))
+    : (curPace ? paceText(curPace) : '—');
+  const appealRow = $('#rdAppealRow');
+  if(appealRow) appealRow.hidden = !x.appeal_info;
+  if($('#rdAppeal')) $('#rdAppeal').textContent = x.appeal_info || '—';
   $('#rdRrid').textContent = x.rrid || r.rrid || '—';
   const reasons = x.reasons || [];
   const badReasons = reasons.filter(y => !y.complete);

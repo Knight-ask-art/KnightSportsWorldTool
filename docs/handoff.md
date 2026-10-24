@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 182 passed`、`selfcheck 23/23`。
+> 回归基线更新为 `pytest 190 passed`、`selfcheck 23/23`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -84,6 +84,14 @@
 - 设置页新增可视化代理 / 高德 Web 服务 Key 输入；只写入本次进程内存，不落盘，关闭程序失效。
 - 页面上的开发说明已清理（极验实现细节、纯 Python/NetSecKit、`get_one_record` 回读、环境变量/CLI 提示等）。
 - 账号已按用户要求退出：服务端 `api/v6/user/logout` 返回 200，`user/info` 返回 401，`stage=verified`；本机 token/uid 已清除。`dist/好想跑/data/` 不包含账号文件，zip 也排除了 `data/`。真实提交仍未由助手执行。
+- **轨迹真实性加固（2026-10-24）**：配速不再恒定——每 10 秒桶叠加起步、疲劳、双正弦和噪声，采样点按同一曲线落位；
+  采样间隔改为 4–6 s（不再固定 5 s）；闭合路线每次从“最大点位空隙前 20–50 m”起步，使目标距离窗口仍覆盖所有
+  必经点，避免 `_snap_to_waypoints` 补点绕路把几何撑过 4% 容差；每点 `speed/avgSpeed` 由相邻点实际位移/时间
+  计算（限制在均速 0.6–1.6 倍），修掉第 3 点固定 21.6 km/h 的假值；`steps` 按每段时长累积。
+- `sportunid` 按平台生成：Android 小写带横线、iOS 大写带横线（对应 `UUID.randomUUID()` / `UUID().uuidString`），
+  不再使用 32 位裸 hex。
+- 记录详情新增「风险标记 / 配速区间 / 申诉」，直接展示服务器 `isCheat`、`policy`、`stepFreqStatus`、
+  `speedTop`/`speedBottom`（min/km）、`stepBottom`/`stepTop`、`appealStatus`。
 
 ---
 

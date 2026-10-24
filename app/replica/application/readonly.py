@@ -749,6 +749,17 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
         'status_code': obj.get('status'),
         'complete': bool(obj.get('complete')),
         'normal_run': obj.get('normalRun'),
+        'is_cheat': int(_num(obj.get('isCheat'))),
+        'policy': int(_num(obj.get('policy'))),
+        'step_freq_status': int(_num(obj.get('stepFreqStatus'))),
+        # speedTop/speedBottom are pace bounds in min/km (not m/s):
+        # 2.17 = 2'10", 10.0 = 10'00".
+        'pace_fast': opt_num('speedTop'),
+        'pace_slow': opt_num('speedBottom'),
+        'step_min': opt_num('stepBottom'),
+        'step_max': opt_num('stepTop'),
+        'appeal_status': int(_num(obj.get('appealStatus'))),
+        'appeal_info': obj.get('appealStatusInfo') or '',
         'state': _record_state(bool(obj.get('complete')), obj.get('normalRun'),
                                obj.get('statusInfo') or '', reasons,
                                obj.get('status')),

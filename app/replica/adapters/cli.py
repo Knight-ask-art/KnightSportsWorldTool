@@ -25,7 +25,8 @@ import time
 from ..domain import health, safety
 from ..application.guard import AlreadySubmitted, GuardError, ReceiptStore, UnknownPending
 from ..transport.realclient import Account, RealClient, as_dict
-from ..domain.rundata import build_upload_entity, generate_run_data, sign_upload_entity, validate_run_data
+from ..domain.rundata import (build_upload_entity, generate_run_data,
+                              new_run_uuid, sign_upload_entity, validate_run_data)
 
 
 def log(msg):
@@ -297,7 +298,8 @@ def do_forge(acct, cps, wps, args, start_ms=None):
             waypoints=wps or None, checkpoints=cps or None,
             weight_kg=args.weight,
             altitude_base=getattr(args, 'altitude', 25.0),
-            start_ms=start_ms)
+            start_ms=start_ms,
+            run_uuid=new_run_uuid(getattr(acct, 'platform', None)))
     except ValueError as e:
         raise SystemExit(_fail('造数参数无效: %s' % e, 1))
     issues = validate_run_data(run)

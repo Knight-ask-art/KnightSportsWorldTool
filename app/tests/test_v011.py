@@ -234,6 +234,31 @@ class SemesterGoalTest(unittest.TestCase):
         self.assertEqual(view['remaining_count'], 18)
 
 
+class RecordDetailFlagsTest(unittest.TestCase):
+    def test_anti_cheat_flags_are_exposed(self):
+        obj = {
+            'rrid': 1, 'totalDis': 4000, 'totalTime': 1440, 'status': 0,
+            'statusInfo': 'ok', 'complete': True, 'isCheat': 1, 'policy': 0,
+            'stepFreqStatus': 1, 'speedTop': 2.17, 'speedBottom': 10.0,
+            'stepBottom': 60, 'stepTop': 300, 'appealStatus': 4,
+            'appealStatusInfo': '申诉未通过', 'reasonList': [],
+        }
+
+        class Client:
+            def request(self, acct, path, payload=None, retries=2):
+                return {'json': {'error': 10000, 'data': obj}}
+
+        detail = readonly.record_detail(Client(), object(), 1)['detail']
+        self.assertEqual(detail['is_cheat'], 1)
+        self.assertEqual(detail['policy'], 0)
+        self.assertEqual(detail['step_freq_status'], 1)
+        self.assertEqual(detail['pace_fast'], 2.17)
+        self.assertEqual(detail['pace_slow'], 10.0)
+        self.assertEqual(detail['step_min'], 60)
+        self.assertEqual(detail['step_max'], 300)
+        self.assertEqual(detail['appeal_info'], '申诉未通过')
+
+
 class PlanHorizonTest(unittest.TestCase):
     def test_plan_days_are_clamped(self):
         self.assertEqual(

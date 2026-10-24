@@ -32,6 +32,19 @@ MAX_LAPS = 30
 FIVE_EVERY = 6
 
 
+def new_run_uuid(platform: str | None = None) -> str:
+    """A run id shaped like the real client's.
+
+    Android ``UUID.randomUUID().toString()`` is lower-case with dashes; iOS
+    ``UUID().uuidString`` is upper-case with dashes.  A bare 32-hex string is
+    neither, and it is visible on every record.
+    """
+    value = str(uuid.uuid4())
+    if str(platform or '').strip().lower() == 'ios':
+        return value.upper()
+    return value
+
+
 def _adjacent_ok(locs: list[dict], limit_m: float = 95.0) -> bool:
     for a, b in zip(locs, locs[1:]):
         dx = (b['lng'] - a['lng']) * 111320 * math.cos(math.radians(a['lat']))
@@ -45,6 +58,93 @@ def _polyline_len(poly: list) -> float:
     return sum(math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
                           (b[0] - a[0]) * 110540)
                for a, b in zip(poly, poly[1:]))
+
+
+def _trim_polyline(poly: list, target_m: float) -> list:
+    """Cut the path at exactly `target_m` (the last segment is interpolated).
+
+    `build_loop` returns whole laps, which is usually a few metres longer than
+    the target.  Sampling only the first `target_m` of that path used to leave
+    a tail unvisited; if a checkpoint sat there, `_snap_to_waypoints` inserted
+    a detour and the final geometry overshot by ~5%.  Trimming first makes the
+    sampled window cover the whole path.
+    """
+    if not poly or target_m <= 0:
+        return poly
+    out = [poly[0]]
+    walked = 0.0
+    for a, b in zip(poly, poly[1:]):
+        seg = math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
+                         (b[0] - a[0]) * 110540)
+        if walked + seg >= target_m:
+            f = (target_m - walked) / seg if seg > 0 else 0.0
+            out.append((a[0] + (b[0] - a[0]) * f,
+                        a[1] + (b[1] - a[1]) * f))
+            return out
+        out.append(b)
+        walked += seg
+    return out
+
+
+def _rotate_polyline(poly: list, start_m: float) -> list:
+    """Start the closed path at `start_m`, keeping it continuous.
+
+    `_point_at` with `% total` jumps from the trimmed end back to the original
+    start, which `validate_run_data` sees as a teleport.  Rotating the point
+    list is seamless: the cut point is appended on both sides.
+    """
+    if not poly or start_m <= 0:
+        return poly
+    walked = 0.0
+    for k, (a, b) in enumerate(zip(poly, poly[1:])):
+        seg = math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
+                         (b[0] - a[0]) * 110540)
+        if walked + seg >= start_m:
+            f = (start_m - walked) / seg if seg > 0 else 0.0
+            cut = (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+            return [cut] + poly[k + 1:] + poly[1:k + 1] + [cut]
+        walked += seg
+    return poly
+
+
+def _loop_start_for_waypoints(loop: list, target_m: float, rng,
+                              preferred_m: float = 0.0) -> float | None:
+    """Pick a start on a closed loop that keeps every waypoint in the window.
+
+    The old code always started at the first waypoint (plus 20-50 m), so a
+    target window could cut off a checkpoint that sat on the far side of the
+    loop.  `_snap_to_waypoints` then re-inserted it, adding a detour and
+    inflating the measured geometry past the 4% server tolerance.
+
+    Start just *before* the first waypoint after the longest gap: the window
+    then runs across the shortest span that still contains every waypoint.
+    Returns None when even that span is longer than the target (no feasible
+    window; the caller keeps the legacy snap behaviour).
+    """
+    if not loop or len(loop) < 3 or target_m <= 0:
+        return None
+    pos = [0.0]
+    for a, b in zip(loop, loop[1:]):
+        pos.append(pos[-1] + math.hypot(
+            (b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
+            (b[0] - a[0]) * 110540))
+    lap = pos[-1]
+    n = len(loop) - 1                      # the last vertex repeats the first
+    if lap <= 0 or n < 2:
+        return None
+    gaps = []
+    for i in range(n):
+        nxt = pos[i + 1] if i + 1 < n else lap
+        gaps.append(nxt - pos[i])
+    cut = max(range(n), key=lambda i: gaps[i])
+    span = lap - gaps[cut]
+    slack = target_m - span
+    if slack <= 1.0:
+        return None
+    base = pos[cut + 1] if cut + 1 < n else 0.0
+    want = preferred_m if preferred_m > 0 else rng.uniform(20.0, 50.0)
+    off = min(want, slack)
+    return (base - off) % lap
 
 
 def _point_at(poly: list, seg_lens: list, target_m: float) -> tuple:
@@ -119,7 +219,7 @@ def build_open(waypoints: list, target_m: float) -> list:
 
 
 def _sample_loop(poly: list, n_points: int, target_m: float | None,
-                 rng) -> list[tuple]:
+                 rng, dist_fractions: list[float] | None = None) -> list[tuple]:
     seg_lens = [math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
                            (b[0] - a[0]) * 110540)
                 for a, b in zip(poly, poly[1:])]
@@ -127,8 +227,10 @@ def _sample_loop(poly: list, n_points: int, target_m: float | None,
     if total <= 0:
         return []
     span = min(target_m, total) if target_m else total
-    return [_point_at(poly, seg_lens, span * i / max(1, n_points - 1))
-            for i in range(n_points)]
+    if not dist_fractions:
+        dist_fractions = [i / max(1, n_points - 1) for i in range(n_points)]
+    return [_point_at(poly, seg_lens, span * f)
+            for f in dist_fractions[:n_points]]
 
 
 def _passes_near(pts: list[dict], lat: float, lng: float,
@@ -251,7 +353,9 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
                    n_points: int | None = None,
                    target_m: float | None = None,
                    alt_base: float = 25.0,
-                   closed: bool = True) -> list[dict]:
+                   closed: bool = True,
+                   dist_fractions: list[float] | None = None,
+                   start_offset_m: float = 0.0) -> list[dict]:
     """Track points.
 
     ``waypoints`` routes the track through the checkpoints.  ``closed`` keeps
@@ -259,6 +363,11 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
     polyline open (it is stretched to the target distance, never joined back
     to the first point).  Every waypoint is snapped so it is passed within
     ~35 m (the server's isPass threshold is 40 m).
+
+    ``dist_fractions`` places each sample at that fraction of the distance
+    (instead of even spacing), so a run can speed up and slow down.
+    ``start_offset_m`` moves the start along a closed loop by 20-50 m so every
+    run does not begin at the exact same coordinate.
     """
     rng = rng or random
     n_points = int(n_points or N_POINTS)
@@ -268,11 +377,24 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
         if waypoints and len(waypoints) >= 2:
             poly = (build_loop(waypoints, target_m or 0) if closed
                     else build_open(waypoints, target_m or 0))
-            sampled = _sample_loop(poly, n_points, target_m, rng)
+            if closed:
+                one_lap = build_loop(waypoints, 0)
+                start = _loop_start_for_waypoints(
+                    one_lap, float(target_m or 0), rng,
+                    preferred_m=start_offset_m)
+                if start is None:
+                    start = start_offset_m
+                if start and start > 0:
+                    poly = _rotate_polyline(poly, start)
+            poly = _trim_polyline(poly, float(target_m or 0))
+            sampled = _sample_loop(poly, n_points, target_m, rng,
+                                   dist_fractions=dist_fractions)
             if not sampled:
                 return generate_route(center_lat, center_lng, radius_deg, rng,
                                       n_points=n_points, target_m=target_m,
-                                      alt_base=alt_base, closed=closed)
+                                      alt_base=alt_base, closed=closed,
+                                      dist_fractions=dist_fractions,
+                                      start_offset_m=start_offset_m)
             for i, (lat, lng) in enumerate(sampled):
                 pts.append({
                     'lat': lat,
@@ -295,11 +417,17 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
                              center_lng + r_m * math.cos(a) / (111320.0 * coslat)))
             target = float(target_m or 0) or (2 * math.pi * r_m)
             poly = build_loop(base, target)
-            sampled = _sample_loop(poly, n_points, target, rng)
+            if closed and start_offset_m > 0:
+                poly = _rotate_polyline(poly, start_offset_m)
+            poly = _trim_polyline(poly, target)
+            sampled = _sample_loop(poly, n_points, target, rng,
+                                   dist_fractions=dist_fractions)
             if not sampled:
                 return generate_route(center_lat, center_lng, radius_deg, rng,
                                       n_points=n_points, target_m=target_m,
-                                      alt_base=alt_base, closed=closed)
+                                      alt_base=alt_base, closed=closed,
+                                      dist_fractions=dist_fractions,
+                                      start_offset_m=start_offset_m)
             for i, (lat, lng) in enumerate(sampled):
                 pts.append({
                     'lat': lat,
@@ -337,7 +465,8 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       weight_kg: float = health.DEFAULT_WEIGHT_KG,
                       altitude_base: float = 25.0,
                       start_ms: int | None = None,
-                      closed: bool = True) -> dict:
+                      closed: bool = True,
+                      run_uuid: str | None = None) -> dict:
     """Full forged record. 2.5km default mirrors the verified mock sample.
 
     waypoints=[(lat,lng),...] routes through those checkpoints; ``closed``
@@ -369,10 +498,95 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         n_points = max(N_POINTS, int(round(total_seconds / max(0.5, sample_seconds))))
     n_points = int(n_points)
 
-    locs = generate_route(center_lat, center_lng, rng=rng, waypoints=waypoints,
-                          n_points=n_points, target_m=total_meters,
-                          alt_base=altitude_base, closed=closed)
+    # ---- pace profile (10 s buckets) --------------------------------------
+    # Built BEFORE the track: the sampled points must follow the same
+    # acceleration / fatigue curve.  The old order produced a perfectly
+    # constant per-point speed (6.5941 km/h for all 444 points), which is a
+    # stronger synthetic signal than any single header field.
+    n_buckets = max(1, int(math.ceil(total_seconds / float(SEG_SECONDS))))
+    avg_mps = total_meters / max(1, total_seconds)
+    ph1, ph2 = rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi)
+    raw_d = []
+    for i in range(n_buckets):
+        t = i / max(1, n_buckets - 1)
+        ramp = 0.86 + 0.14 * min(1.0, t / 0.06)
+        fatigue = 1.0 - 0.06 * t
+        wave = (1.0 + 0.025 * math.sin(2 * math.pi * 3 * t + ph1)
+                + 0.015 * math.sin(2 * math.pi * 7 * t + ph2))
+        noise = rng.uniform(0.995, 1.005)
+        raw_d.append(avg_mps * SEG_SECONDS * ramp * fatigue * wave * noise)
+    d_scale = total_meters / max(0.001, sum(raw_d))
+    bucket_m = [x * d_scale for x in raw_d]
+    cum_before = [0.0]
+    for x in bucket_m:
+        cum_before.append(cum_before[-1] + x)
+
+    def dist_at(sec):
+        if sec <= 0:
+            return 0.0
+        if sec >= total_seconds:
+            return cum_before[-1]
+        pos = sec / SEG_SECONDS
+        i = min(int(pos), n_buckets - 1)
+        return cum_before[i] + bucket_m[i] * (pos - i)
+
+    def frac_at(sec):
+        return dist_at(sec) / max(0.001, cum_before[-1])
+
+    # ---- sample times: 4-6 s apart, normalised to the run duration --------
+    intervals = [rng.uniform(4.0, 6.0) for _ in range(max(0, n_points - 1))]
+    if intervals:
+        k = total_seconds / max(1e-6, sum(intervals))
+        times = [0.0]
+        for w in intervals:
+            times.append(times[-1] + w * k)
+        times[-1] = float(total_seconds)
+    else:
+        times = [0.0]
+    fracs = [frac_at(t) for t in times]
+    fracs[0], fracs[-1] = 0.0, 1.0
+
+    locs = generate_route(
+        center_lat, center_lng, rng=rng, waypoints=waypoints,
+        n_points=n_points, target_m=total_meters,
+        alt_base=altitude_base, closed=closed,
+        dist_fractions=fracs,
+        start_offset_m=(rng.uniform(20.0, 50.0) if closed else 0.0))
     n_locs = len(locs)
+
+    # geometry -> cumulative distance -> time; this survives checkpoint
+    # snapping inserting an extra point and keeps distance/time consistent.
+    geo = [0.0]
+    for a, b in zip(locs, locs[1:]):
+        geo.append(geo[-1] + math.hypot(
+            (b['lat'] - a['lat']) * 110540.0,
+            (b['lng'] - a['lng']) * 111320.0
+            * math.cos(math.radians(a['lat']))))
+    total_geo = max(0.001, geo[-1])
+    grid = [i * 0.5 for i in range(int(total_seconds / 0.5) + 1)]
+    grid_d = [dist_at(t) for t in grid]
+
+    def time_at_frac(f):
+        target = max(0.0, min(1.0, f)) * total_meters
+        lo, hi = 0, len(grid) - 1
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if grid_d[mid] < target:
+                lo = mid + 1
+            else:
+                hi = mid
+        if lo <= 0:
+            return 0.0
+        d0, d1 = grid_d[lo - 1], grid_d[lo]
+        t0g, t1g = grid[lo - 1], grid[lo]
+        if d1 <= d0:
+            return t1g
+        return t0g + (t1g - t0g) * (target - d0) / (d1 - d0)
+
+    fracs_geo = [g / total_geo for g in geo]
+    fracs_geo[-1] = 1.0
+    point_times = [time_at_frac(f) for f in fracs_geo]
+
     # retime points across the run duration; last point lands EXACTLY on
     # t0 + total_ms so that stopTime == last ten-second bucket's endTime.
     #
@@ -389,32 +603,21 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             raise ValueError('start_ms must be a positive epoch (got %r)'
                              % (start_ms,))
     for i, p in enumerate(locs):
-        p['ts'] = t0 + round(total_ms_run * i / max(1, n_locs - 1))
+        p['ts'] = t0 + int(round(point_times[i] * 1000))
+    for i in range(1, n_locs):
+        if locs[i]['ts'] <= locs[i - 1]['ts']:
+            locs[i]['ts'] = locs[i - 1]['ts'] + 1000
+        elif i < n_locs - 1 and locs[i]['ts'] - locs[i - 1]['ts'] < 2000:
+            # A snapped checkpoint can land less than a second after its
+            # neighbour; real samples are 4-6 s apart, so keep a 2 s floor.
+            locs[i]['ts'] = locs[i - 1]['ts'] + 2000
+    locs[-1]['ts'] = t0 + total_ms_run
 
     # SpeedPerTenSec: {beginTime,distance,endTime,flag,id,queueNum,state}
     speed_json = []
     # StepsPerTenSec: {stepsNum,beginTime,endTime,flag,id,maxDiff,minDiff,avgDiff,state,queueNum}
     step_freq_json = []
     per_seg_steps = round(cadence * SEG_SECONDS / 60)
-    # Bucket count MUST cover the whole duration: flooring leaves the tail
-    # uncovered whenever the duration is not a multiple of 10 s, so the last
-    # bucket's endTime stops short of stopTime (and the server sees a gap).
-    n_buckets = max(1, int(math.ceil(total_seconds / float(SEG_SECONDS))))
-    avg_mps = total_meters / max(1, total_seconds)
-    # Real runs are not metronomic: a short ramp-up, a slow fatigue drift and
-    # two low-amplitude waves.  Normalised below so the distance still sums to
-    # totalDis exactly.
-    ph1, ph2 = rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi)
-    raw_d = []
-    for i in range(n_buckets):
-        t = i / max(1, n_buckets - 1)
-        ramp = 0.86 + 0.14 * min(1.0, t / 0.06)
-        fatigue = 1.0 - 0.06 * t
-        wave = (1.0 + 0.025 * math.sin(2 * math.pi * 3 * t + ph1)
-                + 0.015 * math.sin(2 * math.pi * 7 * t + ph2))
-        noise = rng.uniform(0.995, 1.005)
-        raw_d.append(avg_mps * SEG_SECONDS * ramp * fatigue * wave * noise)
-    d_scale = total_meters / max(0.001, sum(raw_d))
     raw_s = [per_seg_steps + rng.randint(-2, 2) for _ in range(n_buckets)]
     s_scale = total_steps / max(1, sum(raw_s))
     stop_ms = t0 + total_seconds * 1000
@@ -535,21 +738,41 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     # Two things that used to be wrong here:
     #   * totalTime / validTime are SECONDS (GenPoint.totalTime = t_acc), not ms
     #   * lat/lng are BD-09 while gLat/gLng are GCJ-02 (they differ by ~950 m)
-    n = max(1, len(locs) - 1)
-    v = total_meters / max(1, total_seconds)
+    deltas_m, deltas_s = [], []
+    for i in range(1, len(locs)):
+        deltas_m.append(max(0.0, geo[i] - geo[i - 1]))
+        deltas_s.append(max(0.5, (locs[i]['ts'] - locs[i - 1]['ts']) / 1000.0))
+    raw_steps = [max(0.0, cadence / 60.0 * dt + rng.gauss(0.0, 0.35))
+                 for dt in deltas_s]
+    st_scale = total_steps / max(1e-6, sum(raw_steps))
+    cum_steps = [0.0]
+    for x in raw_steps:
+        cum_steps.append(cum_steps[-1] + x * st_scale)
+
     loc_points = []
     for i, p in enumerate(locs):
-        frac = i / n
+        frac = fracs_geo[i]
         dis = round(total_meters * frac, 3)
-        tsec = int(round(total_seconds * frac))
-        steps = int(round(total_steps * frac))
+        tsec = int(round(point_times[i]))
+        steps = int(round(cum_steps[i]))
+        if i == len(locs) - 1:
+            dis, tsec, steps = total_meters, total_seconds, total_steps
+        if i > 0:
+            mps = deltas_m[i - 1] / deltas_s[i - 1]
+        elif deltas_m:
+            mps = deltas_m[0] / deltas_s[0]
+        else:
+            mps = avg_mps
+        # A snapped checkpoint can insert a point a few metres after the
+        # previous one; without this clamp that looks like 90 km/h.
+        mps = min(max(mps, avg_mps * 0.6), avg_mps * 1.6)
         bd_lat, bd_lng = coords.gcj02_to_bd09(p['lat'], p['lng'])
         loc_points.append({
-            'avgSpeed': round(v, 4),
+            'avgSpeed': round(mps, 4),
             'bdA': round(float(p.get('alt', 0.0)), 2),
             'bdD': 0.0,
             'bdG': 0,
-            'bdS': round(v, 4),
+            'bdS': round(mps, 4),
             'coorType': 'gcj02',
             'count': rng.randint(20, 88),
             'dtr': 0.0,
@@ -564,7 +787,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             'locationId': '',
             'queueNum': i,
             'radius': round(rng.uniform(1.4, 2.4), 2),
-            'speed': round(v * 3.6, 4),
+            'speed': round(mps * 3.6, 4),
             'state': rng.choices([1, 2, 3], weights=[145, 45, 164])[0],
             'steps': steps,
             'stepDistance': 0.0,
@@ -609,10 +832,12 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                 loc_points[i]['type'] = rng.choice([1, 1, 2, 8])
                 loc_points[i]['locType'] = 1
 
-        # index 2: first real point, avgSpeed recomputed without the sentinel
+        # index 2: first real point; keep its own speed, only bound it.
+        # (The old `totalDis / 1.0` treated metres as km/s => every record
+        # reported 21.6 km/h on this one point.)
         if len(loc_points) > 3:
             p2 = loc_points[2]
-            p2['avgSpeed'] = round(max(1.8, min(6.0, p2['totalDis'] / 1.0)), 4)
+            p2['avgSpeed'] = round(min(6.0, max(1.8, p2['avgSpeed'])), 4)
             p2['speed'] = round(p2['avgSpeed'] * 3.6, 4)
 
     # The record's allLocJson column is itself Gson(LocJsonEntity):
@@ -641,7 +866,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         'km': distance_km,
         'sportTime': total_seconds,
         'sporttime': total_seconds,
-        'sportunid': uuid.uuid4().hex,
+        'sportunid': run_uuid or new_run_uuid(),
         'total_steps': total_steps,
         # official formulas instead of distance * 0.06 and hard zeros
         'calorie': health.calorie(weight_kg, total_seconds, total_meters),
