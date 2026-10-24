@@ -1,5 +1,8 @@
 """v0.1.2: version drift and the soft plausibility band."""
+import hashlib
+import random
 import re
+import types
 from pathlib import Path
 
 import pytest
@@ -9,6 +12,7 @@ from replica.adapters.bridge_api import (APP_VERSION, PLAUSIBLE_CADENCE_MAX,
                                         PLAUSIBLE_PACE_MAX, PLAUSIBLE_PACE_MIN,
                                         plausibility_warnings)
 from replica.domain.rundata import generate_run_data
+from replica.transport import obs
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,3 +56,48 @@ def test_open_route_longer_than_target_is_rejected():
     wps = [(22.4046, 112.9342), (22.4060, 112.9342), (22.4070, 112.9342)]
     with pytest.raises(ValueError, match='超过目标距离'):
         generate_run_data(0.1, 6.0, 172, waypoints=wps, closed=False)
+
+
+def _fake_obs(monkeypatch, corrupt=False):
+    run = generate_run_data(2.5, 6.0, 172, rng=random.Random(1))
+    acct = types.SimpleNamespace(uid='42')
+    seen = {}
+
+    monkeypatch.setattr(obs, 'sign_url',
+                        lambda client, acct, key, method='Put': 'http://signed/' + key)
+
+    def put(url, payload, timeout=60):
+        seen['payload'] = payload
+        return 200
+
+    def get(url, timeout=60):
+        payload = seen['payload']
+        if corrupt:
+            return 200, b'x' * len(payload)   # same length, wrong bytes
+        return 200, payload
+
+    monkeypatch.setattr(obs, 'put_object', put)
+    monkeypatch.setattr(obs, 'get_object_bytes', get)
+    monkeypatch.setattr(obs.time, 'sleep', lambda *_: None)
+    return obs.upload_obs(object(), acct, run, 123, 'UUID', verify=True), seen
+
+
+def test_obs_upload_verifies_sha256(monkeypatch):
+    res, seen = _fake_obs(monkeypatch)
+    assert res['uploaded'] == 2 and res['verified'] == 2
+    assert res['sha256'] == hashlib.sha256(seen['payload']).hexdigest()
+
+
+def test_obs_same_length_corruption_is_rejected(monkeypatch):
+    res, _ = _fake_obs(monkeypatch, corrupt=True)
+    assert res['uploaded'] == 2
+    assert res['verified'] == 0, 'length-only verification would have passed'
+    assert len(res['errors']) == 2
+    assert all('sha256' in e or '回读不一致' in e for e in res['errors'])
+
+
+def test_record_detail_exposes_the_obs_source():
+    html = (ROOT / 'frontend' / 'index.html').read_text(encoding='utf-8')
+    js = (ROOT / 'frontend' / 'js' / 'app.js').read_text(encoding='utf-8')
+    assert 'id="rdSource"' in html
+    assert 'json_from_obs' in js and 'OBS 读取失败' in js

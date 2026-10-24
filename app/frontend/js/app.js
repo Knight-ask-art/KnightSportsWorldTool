@@ -2939,6 +2939,13 @@ async function selectRecord(i){
   $('#rdTrack').textContent = (s.points || 0) + ' 点' +
     (s.has_altitude ? ` · 海拔 ${s.alt_min}–${s.alt_max} m` : '') +
     (s.segments ? ` · ${s.segments} 段` : '');
+  const fromObs = (s.json_from_obs != null ? s.json_from_obs : x.json_from_obs);
+  const obsErr = x.obs_error || '';
+  $('#rdSource').textContent = obsErr ? 'OBS 读取失败'
+    : ((fromObs ? 'OBS' : '记录内联') +
+       ((s.points || 0) ? ` · ${s.points} 点` : ''));
+  $('#rdSource').className = obsErr ? 'risk-bad' : '';
+  $('#rdSource').title = obsErr;
   // The server's own anti-cheat fields, not normalRun (which it never sends).
   const risk = [];
   if(+x.is_cheat) risk.push('isCheat=1');
@@ -4245,8 +4252,12 @@ async function submitRun(){
   if(d.missed_points && d.missed_points.length) warnings.push('仍有点位未经过');
   if(d.daily && d.daily.source === 'unknown') warnings.push('当日次数未知');
   (d.param_warnings || []).forEach(w => warnings.push(w));
+  const obsText = (d.obs && d.obs.of)
+    ? ' · OBS ' + (d.obs.uploaded || 0) + '/' + d.obs.of + ' 上传，' +
+      (d.obs.verified || 0) + '/' + d.obs.of + ' 校验'
+    : '';
   const summary = 'rrid=' + (d.rrid || '') + ' · ' + (d.km || km) + ' km' +
-    (d.start ? ' · ' + d.start.text : '');
+    (d.start ? ' · ' + d.start.text : '') + obsText;
   if(warnings.length){
     liveLog('提交已受理（有提醒）', summary + ' · ' + warnings.join('；'), 'warn');
     toast('已提交，但有提醒：' + warnings[0]);

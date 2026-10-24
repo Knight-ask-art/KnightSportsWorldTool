@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import gzip
+import hashlib
 import json
 import math
 import os
@@ -389,6 +390,7 @@ def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
     obj = build_obs_object(run, rrid, uuid, acct.uid, five_point_json)
     payload = json.dumps(obj, ensure_ascii=False,
                          separators=(',', ':')).encode()
+    payload_sha = hashlib.sha256(payload).hexdigest()
     keys = obs_keys(run, rrid, uuid)
 
     ok = 0
@@ -404,26 +406,31 @@ def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
                 return st
 
             status = _retry(_put)
-            log('[obs] PUT %s -> %s (%d B)' % (key, status, len(payload)))
+            ok += 1
+            log('[obs] PUT %s -> %s (%d B sha256=%s)'
+                % (key, status, len(payload), payload_sha[:12]))
 
             if verify:
                 def _get(_key=key):
                     u = sign_url(client, acct, _key, 'Get')
-                    st, ln = get_object(u)
-                    if not (200 <= st < 300) or ln != len(payload):
-                        raise RuntimeError('回读不一致 status=%s len=%d (want %d)'
-                                           % (st, ln, len(payload)))
-                    return st, ln
+                    st, body = get_object_bytes(u)
+                    got_sha = hashlib.sha256(body).hexdigest()
+                    if (not (200 <= st < 300) or len(body) != len(payload)
+                            or got_sha != payload_sha):
+                        raise RuntimeError(
+                            '回读不一致 status=%s len=%d sha256=%s (want %s)'
+                            % (st, len(body), got_sha[:12], payload_sha[:12]))
+                    return st, len(body)
 
                 gstatus, glen = _retry(_get)
                 verified += 1
-                log('[obs] GET %s -> %s (%d B) ✓' % (key, gstatus, glen))
-            ok += 1
+                log('[obs] GET %s -> %s (%d B sha256 ✓)' % (key, gstatus, glen))
         except Exception as e:  # noqa: BLE001
             log('[obs] %s 失败: %s' % (key, e))
             errors.append('%s: %s' % (key, e))
     return {'uploaded': ok, 'verified': verified, 'of': len(keys),
-            'keys': keys, 'bytes': len(payload), 'errors': errors}
+            'keys': keys, 'bytes': len(payload), 'sha256': payload_sha,
+            'errors': errors}
 
 
 # --------------------------------------------------------------------------

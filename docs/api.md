@@ -186,7 +186,8 @@ speed_json, step_freq_json, laps_json, runFaceCheck
 ```
 
 - Bucket：`iydsj-hbase-hot`，前缀 `run_data/`
-- 上传后**回读校验**（解压后比对点数/首尾），失败会报出来
+- 上传后**回读校验**：重新签 GET，比对长度 + **SHA-256**；不一致重试 3 次并报错；
+  提交结果里 `uploaded` 是 PUT 成功数、`verified` 是哈希一致数
 - `run_data` 内部：`{"allLocJson": "<数组字符串>", "useZip": false}`
 - `fivePointJson[].position` 是真机数组下标 `0,1,2,…`（上游 PR #106），
   不是服务端点位字段，也不能用 `999` 占位。
@@ -250,6 +251,10 @@ data.segment_json       → JSON 字符串
 | `pace_fast` / `pace_slow` | `speedTop` / `speedBottom`，单位是 min/km，不是 m/s |
 | `step_min` / `step_max` | `stepBottom` / `stepTop`，每分钟步频边界 |
 | `appeal_status` / `appeal_info` | 申诉状态与说明；无申诉时 `appeal_info` 为空 |
+| `json_from_obs` / `obs_error` | 轨迹是否来自 OBS；OBS 读取失败时 `obs_error` 非空 |
+
+> `stats.has_obs_track` 与 `detail.json_from_obs` 一起用于详情页的「轨迹来源」；
+> v0.1.2 起显示 `OBS · N 点` / `记录内联 · N 点`，OBS 读取失败会标红。
 
 ---
 
