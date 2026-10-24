@@ -417,8 +417,8 @@ def do_submit(client, acct, run, ent, store, policy_ts=None):
         o = OBS.upload_obs(client, acct, run, res['rrid'], res['uuid'], fpj, log=log)
         log('      OBS %d/%d 个对象，回读校验 %d 个，%d 字节'
             % (o['uploaded'], o['of'], o['verified'], o['bytes']))
-        if o['uploaded'] < o['of']:
-            log('      ! OBS 未全部成功: %s' % (o.get('errors') or []))
+        if o['uploaded'] < o['of'] or o['verified'] < o['of']:
+            log('      ! OBS 未全部成功或校验不一致: %s' % (o.get('errors') or []))
         res['obs'] = o
         time.sleep(2.0)                      # reference: sleeps 2 s before verify
     except Exception as e:  # noqa: BLE001
