@@ -59,6 +59,11 @@
                   aria-label="显示密码" aria-pressed="false">显示</button>
         </div>
       </div>
+      <label class="login-remember">
+        <input type="checkbox" id="loginRemember">
+        <span>记住密码</span>
+        <em>仅保存在本机，使用系统加密</em>
+      </label>
       <div class="login-error" id="loginError" role="alert" hidden></div>
       <div class="login-status" id="loginStatus" role="status" aria-live="polite">正在读取本地会话…</div>
       <button class="login-submit" id="loginBtn" type="submit" disabled>
@@ -105,6 +110,10 @@
       <button class="nav-item" data-page="records">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4.5h12v15H6z"/><path d="M9 8.5h6M9 12h6M9 15.5h4"/></svg>
         <span class="label">记录</span>
+      </button>
+      <button class="nav-item" data-page="profile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.6-3.8 3.2-5.8 6.5-5.8s5.9 2 6.5 5.8"/><path d="M4.5 5.5h3M5.2 4.8v1.4"/></svg>
+        <span class="label">我的</span>
       </button>
 
       <div class="nav-label" style="margin-top:10px">系统</div>
@@ -411,7 +420,7 @@
                 <span id="goalLine2">预计 —</span>
               </div>
 
-              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。第一个落点为起点；闭合开时首尾相连。<br>点位与围栏来自登录后的服务器接口；没有 token 时不会生成假点位。</div>
+              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。第一个落点为起点；闭合开时首尾相连。<br>点位与围栏来自登录后的服务器接口；点位按校区固定范围加载，不随目标距离变化；没有 token 时不会生成假点位。</div>
             </section>
 
             <section class="rsec" id="rsec-params">
@@ -726,6 +735,89 @@
             <div class="form-actions detail-actions">
               <button class="btn ghost" id="rdCopy" disabled>复制 rrid</button>
             </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 我的 ========== -->
+    <section class="page" id="page-profile">
+      <div class="sheet">
+        <header class="page-head">
+          <div class="crumb">工作台 <span style="color:var(--faint)">/</span> <b>我的</b></div>
+          <div class="head-row">
+            <h1>我的<span class="date" id="profUpdated">—</span></h1>
+            <div class="head-actions">
+              <button class="btn small ghost" id="profRefresh">刷新资料</button>
+              <button class="btn small ghost" data-goto="accounts">账号与设备</button>
+            </div>
+          </div>
+          <div class="status-row">
+            <span class="chip" id="profVerifiedChip">未验证</span>
+            <span class="chip" id="profSemesterChip">学期未加载</span>
+          </div>
+        </header>
+
+        <div class="account-hero profile-hero">
+          <div class="avatar big" id="profAvatar">?</div>
+          <div>
+            <h2 id="profName">未登录</h2>
+            <div class="meta" id="profMeta">登录后显示学校 / 校区</div>
+          </div>
+          <div class="chips">
+            <span class="chip" id="profUidChip">uid —</span>
+            <span class="chip" id="profUnidChip">unid —</span>
+          </div>
+        </div>
+
+        <div class="cols">
+          <div class="col main">
+            <section class="sec">
+              <div class="sec-head"><h2>本学期</h2><span class="mini" id="profSemesterSource">—</span></div>
+              <div class="semester-card">
+                <div class="semester-top"><b id="profSemesterTitle">登录后读取</b><span class="mini" id="profSemesterPct">—</span></div>
+                <div class="semester-bar"><i id="profSemesterBar" style="width:0%"></i></div>
+                <div class="semester-stats">
+                  <div><span>已完成</span><b id="profSemesterDone">—</b></div>
+                  <div><span>还差</span><b id="profSemesterLeft">—</b></div>
+                  <div><span>剩余天数</span><b id="profSemesterDays">—</b></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="sec">
+              <div class="sec-head">
+                <h2>违规自查</h2>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <span class="tag" id="violState">未查询</span>
+                  <button class="btn small ghost" id="violCheck">查询违规</button>
+                </div>
+              </div>
+              <p class="hint" style="margin:-4px 0 8px">只读查询；<b>结果未知不会当成正常</b>。平台最终判定以官方 App 为准。</p>
+              <div class="violation-list" id="violList"><div class="violation-empty">登录后点「查询违规」。</div></div>
+            </section>
+          </div>
+
+          <aside class="col side">
+            <section class="sec">
+              <div class="sec-head"><h2>个人资料</h2><span class="mini" id="profSource">—</span></div>
+              <div class="detail-row"><span>姓名</span><span id="profRealName">—</span></div>
+              <div class="detail-row"><span>昵称</span><span id="profNickname">—</span></div>
+              <div class="detail-row"><span>年级班级</span><span id="profGradeClass">—</span></div>
+              <div class="detail-row"><span>学校</span><span id="profSchool">—</span></div>
+              <div class="detail-row"><span>校区</span><span id="profCampus">—</span></div>
+              <div class="detail-row"><span>身高 / 体重</span><span id="profBody">—</span></div>
+              <div class="detail-row"><span>uid</span><span class="mono" id="profUid">—</span></div>
+              <div class="detail-row"><span>unid</span><span id="profUnid">—</span></div>
+            </section>
+
+            <section class="sec">
+              <div class="sec-head"><h2>账号</h2></div>
+              <div class="detail-row"><span>登录状态</span><span id="profLoginState">—</span></div>
+              <div class="detail-row"><span>设备</span><span id="profDevice">—</span></div>
+              <div class="detail-row"><span>本地会话</span><span id="profSession">—</span></div>
+              <button class="btn small ghost" data-goto="accounts" style="margin-top:8px">去账号页</button>
+            </section>
           </aside>
         </div>
       </div>

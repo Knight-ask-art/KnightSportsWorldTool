@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from ..application import credentials as CRED
 from ..domain import crypto as C
 from ..domain.rundata import generate_run_data
 from ..transport.realclient import as_dict
@@ -30,6 +31,12 @@ from ..transport.realclient import as_dict
 #: open-source build; AMap binds keys to a domain/app and a leaked one is a
 #: billing and quota risk.
 APP_VERSION = '0.1.1'
+# Fixed checkpoint-query distance for the UI.  Campus checkpoints belong to the
+# school, not to the distance the operator plans to run today; the requested
+# target must not cause a re-fetch or invalidate the points already displayed.
+# Submission still asks the server for the target-specific set and snaps the
+# route through any extra required point.
+CAMPUS_POINTS_DISTANCE_M = 2500
 AMAP_KEY = os.environ.get('JHP_AMAP_KEY', '')
 APPLE_DB = {
     'models': ['iPhone 15', 'iPhone 14', 'iPhone 13', 'iPhone 12'],
@@ -263,6 +270,12 @@ class ReplicaApi:
         self.rsa_pub = rsa_pub
         self.store_dir = os.path.abspath(store_dir)
         os.makedirs(self.store_dir, exist_ok=True)
+        # Old builds wrote account/password to account.json in clear text.
+        # Convert it before any UI reads the new DPAPI store.
+        try:
+            CRED.migrate_legacy(self.store_dir)
+        except Exception:  # noqa: BLE001
+            pass
         # Keep rules/limits/receipts/points-cache on the same data root as the
         # session.  Without this the frozen app read rules from the package
         # directory while the session lived next to the exe.
@@ -589,14 +602,64 @@ class ReplicaApi:
         return _ok({'base_dir': self.store_dir})
 
     def get_account_and_password(self):
-        p = os.path.join(self.store_dir, 'account.json')
-        d = _read_json(p)
-        return _ok(d) if d is not None else _fail('not set')
+        """Legacy settings-panel read; now backed by the DPAPI store.
+
+        An existing plaintext ``account.json`` from an older build is migrated
+        once, then removed.
+        """
+        d = CRED.load(self.store_dir)
+        if d is None:
+            legacy_path = os.path.join(self.store_dir, CRED.LEGACY_FILENAME)
+            legacy = _read_json(legacy_path)
+            if (isinstance(legacy, dict) and legacy.get('account')
+                    and legacy.get('password')):
+                try:
+                    CRED.save(self.store_dir, legacy['account'],
+                              legacy['password'])
+                except Exception:  # noqa: BLE001
+                    pass
+                d = {'account': str(legacy['account']),
+                     'password': str(legacy['password'])}
+        return _ok(d) if d else _fail('not set')
 
     def set_account_and_password(self, account, password):
-        p = os.path.join(self.store_dir, 'account.json')
-        _write_json(p, {'account': account, 'password': password})
+        try:
+            CRED.save(self.store_dir, account, password)
+        except Exception as e:  # noqa: BLE001
+            return _fail('本地加密保存失败: %s' % e)
         return _ok(True)
+
+    def get_saved_login(self):
+        """Return the DPAPI-protected login for the login page.
+
+        The bridge is loopback-only and origin-checked; the password is needed
+        only to prefill the password field after the operator opted in.
+        """
+        d = CRED.load(self.store_dir)
+        if not d:
+            return _ok({'saved': False, 'account': '', 'password': ''})
+        return _ok({'saved': True, 'account': d['account'],
+                    'password': d['password']})
+
+    def save_login(self, account, password, remember=True):
+        if not remember:
+            try:
+                CRED.clear(self.store_dir)
+            except Exception as e:  # noqa: BLE001
+                return _fail('清除本地保存失败: %s' % e)
+            return _ok({'saved': False})
+        try:
+            CRED.save(self.store_dir, account, password)
+        except Exception as e:  # noqa: BLE001
+            return _fail('本地加密保存失败: %s' % e)
+        return _ok({'saved': True})
+
+    def clear_saved_login(self):
+        try:
+            CRED.clear(self.store_dir)
+        except Exception as e:  # noqa: BLE001
+            return _fail('清除本地保存失败: %s' % e)
+        return _ok({'saved': False})
 
     def get_user_proxy(self):
         return _ok({'ip': '', 'port': 0})
@@ -845,6 +908,7 @@ class ReplicaApi:
             'uid': d.get('uid'),
             'name': d.get('name'),
             'nickname': d.get('nickname'),
+            'schoolName': d.get('schoolName'),
             'campusName': d.get('campusName'),
             'gradeClass': d.get('gradeClass'),
             'unid': d.get('unid'),
@@ -1087,7 +1151,7 @@ class ReplicaApi:
         return _ok(data)
 
     def real_fetch_points(self, school='', glat=0.0, glon=0.0, unid=None,
-                          force=False, distance_m=2500.0):
+                          force=False, distance_m=CAMPUS_POINTS_DISTANCE_M):
         """Fetch the campus geofence + campus list from the real server.
 
         Both replies are real NetSecKit envelopes, decoded via the native w1228
@@ -1107,7 +1171,7 @@ class ReplicaApi:
         try:
             dist_m = max(1, int(round(float(distance_m))))
         except (TypeError, ValueError):
-            dist_m = 2500
+            dist_m = CAMPUS_POINTS_DISTANCE_M
         out = {'unid': acct.unid, 'fence': None, 'campuses': None,
                'polygon': None, 'center': None, 'errors': [],
                'distance_m': dist_m}
@@ -1590,6 +1654,123 @@ class ReplicaApi:
         return _ok({'view': view, 'summary_raw': summary,
                     'personal_raw': personal, 'errors': errors})
 
+    def real_profile(self):
+        """Profile + semester for the "我的" page.
+
+        ``user/info`` is the authoritative source.  If it fails, the local
+        session still supplies name/campus so a network error does not blank
+        the page; ``profile.verified`` and ``errors`` say what is missing.
+        """
+        acct = self._real_account()
+        if acct is None:
+            return _fail('未配置 token（先在"账号"面板保存）')
+        from ..transport import realclient as R
+        from ..application import readonly as RO
+
+        errors = []
+        try:
+            checks = self.real_check_session()
+        except Exception as e:  # noqa: BLE001
+            checks = _fail('user/info 异常: %s' % e)
+        session = self._read_session()
+        profile = {
+            'uid': session.get('uid') or acct.uid,
+            'unid': session.get('unid') or acct.unid,
+            'name': session.get('name'),
+            'nickname': session.get('nickname'),
+            'schoolName': session.get('schoolName'),
+            'campusName': session.get('campusName'),
+            'gradeClass': None,
+            'height': None,
+            'weight': None,
+            'verified': False,
+        }
+        if checks.get('code') == 200:
+            d = checks.get('data') or {}
+            if isinstance(d, dict) and d:
+                for key in ('uid', 'name', 'nickname', 'schoolName',
+                            'campusName', 'gradeClass', 'unid', 'height',
+                            'weight'):
+                    if d.get(key) not in (None, ''):
+                        profile[key] = d[key]
+                profile['verified'] = True
+            else:
+                errors.append('资料: user/info 返回为空')
+        else:
+            errors.append('资料: %s'
+                          % (checks.get('message') or 'user/info 失败'))
+
+        # Some campuses only return the combined "学校 校区" name.  Keep the
+        # school row useful instead of showing "—" for every such account.
+        campus = str(profile.get('campusName') or '').strip()
+        if not profile.get('schoolName') and ' ' in campus:
+            head = campus.rsplit(' ', 1)[0].strip()
+            if head:
+                profile['schoolName'] = head
+
+        summary = personal = None
+        semester_error = ''
+        try:
+            rc = R.RealClient()
+            r = RO.semester_summary(rc, acct)
+            if r.get('ok'):
+                summary = r.get('data')
+            else:
+                semester_error = r.get('error') or 'summary 读取失败'
+            r = RO.semester_personal(rc, acct, run_mode=1)
+            if r.get('ok'):
+                personal = r.get('data')
+            else:
+                semester_error = semester_error or (r.get('error')
+                                                    or 'personal 读取失败')
+        except Exception as e:  # noqa: BLE001
+            semester_error = str(e)
+
+        semester = None
+        if (_semester_payload_nonempty(summary)
+                or _semester_payload_nonempty(personal)):
+            semester = {'view': semester_view(summary, personal)}
+        elif not semester_error:
+            semester_error = '学期数据为空'
+        if semester_error:
+            errors.append('学期: %s' % semester_error)
+
+        return _ok({'profile': profile, 'semester': semester,
+                    'semester_error': semester_error, 'errors': errors,
+                    'checked_at': int(time.time() * 1000)})
+
+    def real_violations(self, page=1, page_size=20):
+        """Read-only violation self-check.
+
+        ``unknown`` / ``failed`` are returned as data, never disguised as
+        "clean".  The UI is responsible for showing that distinction, and this
+        method never retries, re-submits or writes anything.
+        """
+        acct = self._real_account()
+        if acct is None:
+            return _fail('未配置 token（先在"账号"面板保存）')
+        from ..transport import realclient as R
+        from ..application import readonly as RO
+        try:
+            rc = R.RealClient()
+        except Exception as e:  # noqa: BLE001
+            return _fail('sidecar/加密层启动失败: %s' % e)
+        try:
+            p = max(1, int(page))
+        except (TypeError, ValueError):
+            p = 1
+        try:
+            size = max(1, min(50, int(page_size)))
+        except (TypeError, ValueError):
+            size = 20
+        result = RO.check_violations(rc, acct, page=p, page_size=size)
+        if 'count' not in result:
+            result['count'] = len(result.get('records') or [])
+        result['stale'] = RO.is_stale(result)
+        result['page'] = p
+        result['page_size'] = size
+        return _ok(result)
+
     def real_fetch_school_rules(self, run_mode=1):
         """Read the server's ``runModePolicy.runRuleModel`` as form values.
 
@@ -1617,26 +1798,39 @@ class ReplicaApi:
                 modes.append(mode)
 
         errors = []
+        # `operateType=1` (semester) is the request that returns runRuleModel
+        # on current builds; `operateType=0` (start a run) returns only
+        # `policy` and leaves the rule model null.  Try the semester request
+        # first, then the start request for older servers.
         for mode in modes:
-            try:
-                data = POL.fetch_policy(rc, acct, run_mode=mode)
-                mapped = POL.rules_from_policy(data)
-                if mapped.get('rules'):
-                    return _ok({
-                        'rules': mapped['rules'],
-                        'meta': mapped.get('meta') or {},
-                        'raw': mapped.get('raw') or {},
-                        'mapped': mapped.get('mapped') or [],
-                        'run_mode': mode,
-                        'source': 'runModePolicy',
-                        'errors': errors,
-                    })
-                if mapped.get('raw'):
-                    errors.append('runMode=%d 有规则模型但没有可映射字段' % mode)
-                else:
-                    errors.append('runMode=%d 未返回 runRuleModel' % mode)
-            except Exception as e:  # noqa: BLE001
-                errors.append('runMode=%d: %s' % (mode, e))
+            for op in (POL.OPERATE_TYPE_SEMESTER, POL.OPERATE_TYPE_RUN):
+                try:
+                    data = POL.fetch_policy(rc, acct, run_mode=mode,
+                                            operate_type=op)
+                    mapped = POL.rules_from_policy(data)
+                    if mapped.get('rules'):
+                        return _ok({
+                            'rules': mapped['rules'],
+                            'meta': mapped.get('meta') or {},
+                            'raw': mapped.get('raw') or {},
+                            'mapped': mapped.get('mapped') or [],
+                            'run_mode': mode,
+                            'operate_type': op,
+                            'policy': data.get('policy'),
+                            'source': 'runModePolicy',
+                            'errors': errors,
+                        })
+                    if mapped.get('raw'):
+                        errors.append(
+                            'runMode=%d operateType=%d 有规则模型但没有可映射字段'
+                            % (mode, op))
+                    else:
+                        errors.append(
+                            'runMode=%d operateType=%d 未返回 runRuleModel'
+                            % (mode, op))
+                except Exception as e:  # noqa: BLE001
+                    errors.append('runMode=%d operateType=%d: %s'
+                                  % (mode, op, e))
         return _fail('服务器没有返回可用的学校规则: %s' % '; '.join(errors),
                      data={'errors': errors})
 

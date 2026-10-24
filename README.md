@@ -75,7 +75,9 @@ python app.py
 python run.py --port 65520
 ```
 
-首次登录在「账号」页完成；密码只在内存中，token 存在本机 `data/`。
+首次登录在「账号」页完成；保活用的密码只在内存中，token 存在本机 `data/`。
+登录页可勾选「记住密码」：勾选后用 Windows DPAPI 加密保存到
+`data/saved_login.json`，不勾选不保存，取消勾选立即删除。
 
 ## 测试
 

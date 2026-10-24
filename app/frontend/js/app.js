@@ -20,6 +20,7 @@ document.addEventListener('click', ev => {
    (redraw -> scheduleModelPreview) so no let/const is read in its TDZ. */
 let _pointsSeq = 0, _recordsSeq = 0, _overviewSeq = 0;
 let _receiptsSeq = 0, _dateCountsSeq = 0, _detailSeq = 0, _modelSeq = 0;
+let _profileSeq = 0, _violSeq = 0;
 let _headerDay = '', _modelTimer = null, accountBusy = false;
 let distanceManual = false, lastRouteLength = 0;
 function invalidateLiveRequests(){
@@ -27,6 +28,7 @@ function invalidateLiveRequests(){
   // (or a previous logout) cannot repopulate the UI after the switch.
   _pointsSeq++; _recordsSeq++; _overviewSeq++;
   _receiptsSeq++; _dateCountsSeq++; _detailSeq++; _modelSeq++;
+  _profileSeq++; _violSeq++;
 }
 
 /* ---------- map ---------- */
@@ -789,7 +791,7 @@ dockBtn.addEventListener('click', () => {
 });
 
 /* ---------- page routing ---------- */
-const PAGES = ['overview', 'accounts', 'run', 'routes', 'records', 'settings'];
+const PAGES = ['overview', 'accounts', 'run', 'routes', 'records', 'profile', 'settings'];
 let runMapFitted = false;
 function go(page){
   if(!PAGES.includes(page)) page = 'overview';
@@ -810,6 +812,10 @@ function go(page){
   if(page === 'records'){
     if(!LIVE.receiptsLoaded) loadReceipts();
     setTimeout(() => { if(rdMap) rdMap.invalidateSize(); }, 80);
+  }
+  if(page === 'profile' && hasSession() && !LIVE.profile && !LIVE.profileLoading &&
+     !LIVE.profileError){
+    loadProfile({silent: true});
   }
   if(page === 'settings' && hasSession() &&
      !(LIVE.rules && (LIVE.rules.configured ||
@@ -854,7 +860,7 @@ const startPage = (location.hash || '#overview').slice(1);
    from the local Python bridge.  No synthetic rows are generated.
    ============================================================ */
 const LIVE = {
-  session: null, checked: null, points: [], fence: [], pointsDistance: null,
+  session: null, checked: null, points: [], fence: [],
   records: [], recordsLoaded: false, recordsLoading: false, recordFilter: 'all',
   routes: [], selectedRoute: -1,
   routeFilter: 'all', rules: null, model: null, plan: null,
@@ -862,6 +868,8 @@ const LIVE = {
   dailyCountsUid: null,
   recordsError: null, weekError: null, planError: null,
   semester: null, semesterError: null,
+  profile: null, profileError: null, profileLoading: false, profileAt: 0,
+  violations: null, violationsError: null, violationsAt: 0,
   receipts: [], receiptsLoaded: false, receiptsError: null,
   preflight: null, lastDetail: null,
   tokenUpdatedAt: null,
@@ -919,12 +927,63 @@ function setLoginBusy(on, text, tone){
   });
   const eye = $('#loginEye');
   if(eye) eye.disabled = !!on;
+  const remember = $('#loginRemember');
+  if(remember) remember.disabled = !!on;
   if(on){
     const err = $('#loginError');
     if(err){ err.hidden = true; err.textContent = ''; }
     if(text) setLoginStatus(text, tone || 'busy');
   }else if(text !== undefined){
     setLoginStatus(text, tone || '');
+  }
+}
+async function restoreSavedLogin(){
+  try{
+    const j = await liveApi('get_saved_login', {}, 5000);
+    if(!liveOk(j)) return false;
+    const d = j.data || {};
+    const box = $('#loginRemember');
+    if(!d.saved){
+      if(box) box.checked = false;
+      return false;
+    }
+    if(box) box.checked = true;
+    const user = $('#loginUser'), pass = $('#loginPass');
+    // Do not overwrite a password manager or an operator who started typing
+    // while the bridge call was in flight.
+    if(user && !user.value) user.value = d.account || '';
+    if(pass && !pass.value) pass.value = d.password || '';
+    return true;
+  }catch(e){
+    return false;
+  }
+}
+async function rememberLoginChoice(account, password){
+  const box = $('#loginRemember');
+  const remember = !!(box && box.checked);
+  try{
+    const j = remember
+      ? await liveApi('save_login', {account: account, password: password}, 8000)
+      : await liveApi('clear_saved_login', {}, 5000);
+    if(!liveOk(j)) throw new Error(j.message || '本地保存失败');
+    return true;
+  }catch(e){
+    liveLog('记住密码保存失败', e && e.message ? e.message : String(e), 'warn');
+    return false;
+  }
+}
+async function forgetSavedLogin(){
+  try{
+    const j = await liveApi('clear_saved_login', {}, 5000);
+    if(!liveOk(j)) throw new Error(j.message || '清除失败');
+    return true;
+  }catch(e){
+    const box = $('#loginRemember');
+    // The file may still be there; do not leave the UI claiming it forgot.
+    if(box) box.checked = true;
+    setLoginStatus('取消记住密码失败，请重试。', 'error');
+    liveLog('清除本地保存失败', e && e.message ? e.message : String(e), 'warn');
+    return false;
   }
 }
 function stopLoginClock(){
@@ -1003,6 +1062,10 @@ function enterApp(resetPage){
   if(!gate) return;
   stopLoginClock();
   LOGIN.visible = false;
+  // The saved password is only needed to prefill the gate.  Once the app is
+  // unlocked, do not leave it sitting in the hidden login DOM.
+  const passEl = $('#loginPass');
+  if(passEl) passEl.value = '';
   document.title = '好想跑 · 工作台';
   document.body.classList.remove('login-locked');
   if(app){ app.removeAttribute('aria-hidden'); app.inert = false; }
@@ -1063,6 +1126,9 @@ async function gateLogin(){
   liveLog('登录中', '正在验证账号', 'info');
   try{
     const profile = await requestLogin(user, pass);
+    const rememberBox = $('#loginRemember');
+    const wantedRemember = !!(rememberBox && rememberBox.checked);
+    const remembered = await rememberLoginChoice(user, pass);
     const passEl = $('#loginPass');
     if(passEl) passEl.value = '';
     clearAccountActivity();
@@ -1083,6 +1149,9 @@ async function gateLogin(){
       LOGIN.busy = false;
       setLoginBusy(false);
       enterApp(true);
+      if(wantedRemember && !remembered){
+        toast('已登录，但本地保存密码失败；下次需要重新输入');
+      }
     }, 320);
   }catch(e){
     loginFail(prettyLoginError(e && e.message ? e.message : e));
@@ -1254,11 +1323,15 @@ function clearAccountActivity(){
   LIVE.planError = null;
   LIVE.recordsError = null;
   LIVE.semester = null; LIVE.semesterError = null;
+  LIVE.profile = null; LIVE.profileError = null; LIVE.profileLoading = false;
+  LIVE.profileAt = 0;
+  LIVE.violations = null; LIVE.violationsError = null; LIVE.violationsAt = 0;
   LIVE.receipts = []; LIVE.receiptsLoaded = false; LIVE.receiptsError = null;
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   LIVE.lastDetail = null;
   renderLog();
   renderRecords();
+  renderProfileEmpty();
 }
 
 /* ---------------- session / account ---------------- */
@@ -1302,6 +1375,35 @@ function renderSession(){
   $('#setSession').textContent = s.disabled ? '账号已禁用' : (logged ? '已加载 token' : '未登录');
   $('#setCampus').textContent = logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ') || '—') : '—';
   $('#setDevice').textContent = logged ? (s.deviceName || s.deviceModel || '—') : '—';
+
+  // The "我的" page hero mirrors the session immediately; the detailed
+  // profile arrives from real_profile and only fills the remaining rows.
+  const pp = (logged && LIVE.profile && LIVE.profile.profile) || {};
+  const heroName = pp.nickname || pp.name || display;
+  if($('#profAvatar')) $('#profAvatar').textContent =
+    s.disabled ? '!' : (heroName || '?').slice(0, 1);
+  if($('#profName')) $('#profName').textContent = heroName;
+  if($('#profMeta')) $('#profMeta').textContent = s.disabled
+    ? '该会话已按用户要求停用'
+    : (logged ? ([pp.schoolName || s.schoolName,
+                  pp.campusName || s.campusName]
+                  .filter(Boolean).join(' · ') || '登录后显示学校 / 校区')
+               : '登录后显示学校 / 校区');
+  if($('#profUidChip')) $('#profUidChip').textContent =
+    (logged && s.uid) ? ('uid ' + s.uid) : 'uid —';
+  if($('#profUnidChip')) $('#profUnidChip').textContent =
+    (logged && s.unid) ? ('unid ' + s.unid) : 'unid —';
+  if($('#profLoginState')) $('#profLoginState').textContent = s.disabled
+    ? '账号已停用' : (logged ? (verified ? '已登录 · 已验证' : '已登录 · 未验证') : '未登录');
+  if($('#profDevice')) $('#profDevice').textContent = logged
+    ? (s.deviceName || s.deviceModel || (hasDevice ? '设备号已冻结' : '—')) : '—';
+  if($('#profSession')) $('#profSession').textContent = logged
+    ? '已加载 token' : (s.disabled ? '已停用' : '未登录');
+  if($('#violList') && !LIVE.violations && !LIVE.violationsError){
+    $('#violList').innerHTML = '<div class="violation-empty">'
+      + (logged ? '点「查询违规」读取本账号的违规记录。'
+                : '登录后点「查询违规」。') + '</div>';
+  }
 
   const table = $('#accTable');
   if(table){
@@ -1366,11 +1468,20 @@ async function liveInitSession(){
   await Promise.all([loadPoints(false), loadOverview()]);
   refreshChecks();
   refreshModelPreview();
+  // A direct reload on #profile runs go('profile') before the session is
+  // restored, so that first call is a no-op.  Load it again now that the
+  // token is verified.
+  if(document.querySelector('.page.active')
+     && document.querySelector('.page.active').id === 'page-profile'
+     && !LIVE.profile && !LIVE.profileLoading){
+    loadProfile({silent: true});
+  }
   return {state: 'app'};
 }
 
 async function bootAuth(){
   showLoginGate('正在读取本地会话…', 'busy');
+  await restoreSavedLogin();
   setLoginBusy(true, '正在读取本地会话…', 'busy');
   setLoginButton('读取中…', true);
   try{ await loadRules(); }catch(e){ /* local rules are optional for login */ }
@@ -1404,7 +1515,6 @@ function renderEmptyData(){
   redraw();
   LIVE.points = [];
   LIVE.fence = [];
-  LIVE.pointsDistance = null;
   LIVE.records = [];
   LIVE.recordsLoaded = false;
   LIVE.recordsLoading = false;
@@ -1414,6 +1524,11 @@ function renderEmptyData(){
   LIVE.plan = null;
   LIVE.daily = null;
   LIVE.lastSubmit = null;
+  LIVE.preflight = null;
+  LIVE.semester = null; LIVE.semesterError = null;
+  LIVE.profile = null; LIVE.profileError = null; LIVE.profileLoading = false;
+  LIVE.profileAt = 0;
+  LIVE.violations = null; LIVE.violationsError = null; LIVE.violationsAt = 0;
   LIVE.receipts = []; LIVE.receiptsLoaded = false; LIVE.receiptsError = null;
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   updateFenceChip();
@@ -1422,6 +1537,7 @@ function renderEmptyData(){
   renderRecords();
   renderReceipts();
   renderOverviewEmpty();
+  renderProfileEmpty();
   refreshChecks();
 }
 
@@ -1437,6 +1553,7 @@ async function liveLogin(){
   liveLog('登录中', '正在验证账号', 'info');
   try{
     const profile = await requestLogin(u, p);
+    const remembered = await rememberLoginChoice(u, p);
     clearAccountActivity();
     liveLog('登录成功', profile.name || profile.campusName || '会话已保存', 'ok');
     $('#accPass').value = '';
@@ -1448,7 +1565,7 @@ async function liveLogin(){
     ensureKeepalive();
     enterApp(false);
     fetchSchoolRules({silent: true});
-    toast('登录成功');
+    toast(remembered ? '登录成功' : '登录成功；本地保存密码失败');
   }catch(e){
     const msg = prettyLoginError(e && e.message ? e.message : e);
     liveLog('登录失败', msg, 'err');
@@ -1497,7 +1614,6 @@ async function liveLogout(){
   if(liveOk(j)){
     const d = j.data || {};
     LIVE.session = {}; LIVE.checked = null; LIVE.points = []; LIVE.fence = [];
-    LIVE.pointsDistance = null;
     LIVE.daily = null; LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0;
     LIVE.dailyCountsUid = null; LIVE.receipts = []; LIVE.receiptsLoaded = false;
     LIVE.receiptsError = null;
@@ -1517,6 +1633,7 @@ async function liveLogout(){
     });
     showLoginGate(verified ? '已退出登录，请重新登录。'
                            : '已退出本机登录，请重新登录。');
+    await restoreSavedLogin();
     toast(verified ? '已退出登录' : '已退出本机登录');
   }else{
     // Real_logout clears local identity even when verification fails.  This
@@ -1546,6 +1663,7 @@ async function loadKeepalive(){
       LIVE.checked = null;
       invalidateLiveRequests();
       renderSession();
+      renderEmptyData();
       refreshChecks();
       if(!LOGIN.visible && !LIVE.submitting && !accountBusy){
         showLoginGate('这个本地会话已停用，请登录你的账号。');
@@ -1561,6 +1679,7 @@ async function loadKeepalive(){
       LIVE.checked = null;
       invalidateLiveRequests();
       renderSession();
+      renderEmptyData();
       refreshChecks();
       if(!LOGIN.visible && !LIVE.submitting && !accountBusy){
         showLoginGate('登录已失效，请重新登录。');
@@ -1656,20 +1775,16 @@ function freeRunOn(){
 }
 async function loadPoints(force){
   if(!hasSession()){ toast('先登录后再刷新点位'); return; }
-  const kmNow = +$('#inKm').value;
-  if(!isFinite(kmNow) || kmNow < RUN_LIMITS.km.min || kmNow > RUN_LIMITS.km.max){
-    toast('先填写有效的目标距离（' + RUN_LIMITS.km.min + '–' +
-      RUN_LIMITS.km.max + ' km）再刷新点位');
-    return;
-  }
   const seq = ++_pointsSeq;
   const s = LIVE.session;
   const btn = $('#fetchPoints');
   if(btn){ btn.textContent = '刷新中…'; btn.disabled = true; }
+  // Checkpoints belong to the campus, not to today's target distance.  The
+  // bridge uses its fixed campus-query distance; changing 目标距离 must not
+  // re-fetch or invalidate the points already on the map.
   const j = await liveApi('real_fetch_points', {
     school: s.schoolName || '', glat: +s.lat || 0, glon: +s.lon || 0,
-    unid: s.unid || null, force: !!force,
-    distance_m: Math.max(1, Math.round(kmNow * 1000))
+    unid: s.unid || null, force: !!force
   });
   // A slower older request must not overwrite a newer campus/distance.
   if(seq !== _pointsSeq) return;
@@ -1678,13 +1793,12 @@ async function loadPoints(force){
     liveLog('围栏/点位加载失败', j.message || '', 'err');
     setFence([], '跑步围栏');
     renderPoints([]);
-    LIVE.points = []; LIVE.fence = []; LIVE.pointsDistance = null;
+    LIVE.points = []; LIVE.fence = [];
     updateFenceChip();
     refreshChecks();
     return;
   }
   const d = j.data || {};
-  LIVE.pointsDistance = +d.distance_m || Math.round(kmNow * 1000);
   LIVE.fence = (Array.isArray(d.polygon) ? d.polygon : [])
     .filter(p => p && isFinite(+ (p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
   LIVE.points = (Array.isArray(d.checkpoints) ? d.checkpoints : [])
@@ -1697,7 +1811,7 @@ async function loadPoints(force){
   if(Array.isArray(d.errors) && d.errors.length){
     liveLog('围栏/点位部分失败', d.errors.join('；'), 'warn');
   }
-  liveLog('围栏/点位已加载', `${LIVE.fence.length} 个围栏顶点 · ${livePoints.length} 个打卡点 · 按 ${(d.distance_m || Math.round(kmNow * 1000))} m 拉取`, 'ok');
+  liveLog('围栏/点位已加载', `${LIVE.fence.length} 个围栏顶点 · ${livePoints.length} 个打卡点 · 按校区固定范围拉取（与目标距离无关）`, 'ok');
   updateFenceChip();
   refreshChecks();
   refreshModelPreview();
@@ -1799,19 +1913,20 @@ function renderWeekTrend(weeks){
     return `<div class="wb ${i === weeks.length - 1 ? 'cur' : ''}" title="${esc((w.week_start || '') + ' – ' + (w.week_end || ''))}"><i style="height:${h}px"></i><span>${esc(label)}</span></div>`;
   }).join('');
 }
-function renderSemesterCard(semester){
+function renderSemesterInto(prefix, semester, error){
   const v = (semester && semester.view) || null;
-  const title = $('#ovSemesterTitle'), pct = $('#ovSemesterPct');
-  const done = $('#ovSemesterDone'), left = $('#ovSemesterLeft'), days = $('#ovSemesterDays');
-  const bar = $('#ovSemesterBar'), source = $('#ovSemesterSource');
+  const el = suffix => $('#' + prefix + suffix);
+  const title = el('SemesterTitle'), pct = el('SemesterPct');
+  const done = el('SemesterDone'), left = el('SemesterLeft'), days = el('SemesterDays');
+  const bar = el('SemesterBar'), source = el('SemesterSource');
   if(!v){
-    if(title) title.textContent = LIVE.semesterError ? '学期数据读取失败' : '登录后读取';
+    if(title) title.textContent = error ? '学期数据读取失败' : '登录后读取';
     if(pct) pct.textContent = '—';
     if(done) done.textContent = '—';
     if(left) left.textContent = '—';
     if(days) days.textContent = '—';
     if(bar) bar.style.width = '0%';
-    if(source) source.textContent = LIVE.semesterError ? '失败' : '—';
+    if(source) source.textContent = error ? '失败' : '—';
     return;
   }
   const goal = v.goal_km, got = v.done_km;
@@ -1826,6 +1941,278 @@ function renderSemesterCard(semester){
     ? (v.days_left <= 0 ? '已结束' : (v.days_left + ' 天')) : '—';
   if(bar) bar.style.width = Math.max(0, Math.min(100, percent)).toFixed(1) + '%';
   if(source) source.textContent = v.source === 'personal' ? '个人完成度' : (v.source === 'summary' ? '学期汇总' : '—');
+}
+function renderSemesterCard(semester){
+  renderSemesterInto('ov', semester, LIVE.semesterError);
+}
+function beijingDateTime(ms){
+  if(!ms) return '';
+  let n = +ms;
+  if(!isFinite(n) || n <= 0) return String(ms);
+  if(n < 1e11) n *= 1000;
+  try{
+    return new Date(n).toLocaleString('zh-CN',
+      {timeZone: 'Asia/Shanghai', hour12: false});
+  }catch(e){
+    return new Date(n).toLocaleString('zh-CN', {hour12: false});
+  }
+}
+function violationTime(v){
+  if(v == null || v === '') return '—';
+  if(typeof v === 'number') return beijingDateTime(v);
+  const s = String(v).trim();
+  return /^\d{10,13}$/.test(s) ? beijingDateTime(+s) : s;
+}
+function renderProfileEmpty(){
+  const s = LIVE.session || {};
+  const logged = !!((s.token_present || s.token) && !s.disabled);
+  const name = logged ? (s.nickname || s.name || '') : '';
+  const avatar = s.disabled ? '!' : (name || '?').slice(0, 1);
+  const display = s.disabled ? '旧账号已停用'
+    : (name || (logged ? ('uid ' + (s.uid || '—')) : '未登录'));
+  const setText = (id, v) => {
+    const el = $('#' + id);
+    if(el) el.textContent = (v == null || v === '') ? '—' : v;
+  };
+  if($('#profAvatar')) $('#profAvatar').textContent = avatar;
+  if($('#profName')) $('#profName').textContent = display;
+  if($('#profMeta')) $('#profMeta').textContent = s.disabled
+    ? '该会话已按用户要求停用'
+    : (logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ')
+                 || '登录后显示学校 / 校区') : '登录后显示学校 / 校区');
+  if($('#profUidChip')) $('#profUidChip').textContent = s.uid ? ('uid ' + s.uid) : 'uid —';
+  if($('#profUnidChip')) $('#profUnidChip').textContent = s.unid ? ('unid ' + s.unid) : 'unid —';
+  if($('#profVerifiedChip')){
+    $('#profVerifiedChip').textContent = s.disabled ? '账号已停用'
+      : (logged ? '资料未加载' : '未验证');
+    $('#profVerifiedChip').className = 'chip '
+      + (s.disabled ? 'red' : (logged ? 'warn' : ''));
+  }
+  if($('#profSemesterChip')){
+    $('#profSemesterChip').textContent = '学期未加载';
+    $('#profSemesterChip').className = 'chip';
+  }
+  if($('#profUpdated')) $('#profUpdated').textContent = '—';
+  if($('#profSource')) $('#profSource').textContent = '—';
+  ['profRealName', 'profNickname', 'profGradeClass', 'profSchool',
+   'profCampus', 'profBody', 'profUid', 'profUnid'].forEach(id => setText(id, ''));
+  setText('profLoginState', s.disabled ? '账号已停用'
+    : (logged ? '已登录' : '未登录'));
+  setText('profDevice', logged ? (s.deviceName || s.deviceModel || '—') : '—');
+  setText('profSession', s.disabled ? '已停用'
+    : (logged ? '已加载 token' : '未登录'));
+  renderSemesterInto('prof', null, '');
+  if($('#violState')){
+    $('#violState').textContent = '未查询';
+    $('#violState').className = 'tag';
+  }
+  if($('#violList')){
+    $('#violList').innerHTML = '<div class="violation-empty">'
+      + (logged ? '点「查询违规」读取本账号的违规记录。'
+                : '登录后点「查询违规」。') + '</div>';
+  }
+  if($('#violCheck')){
+    $('#violCheck').disabled = false;
+    $('#violCheck').textContent = '查询违规';
+  }
+  if($('#profRefresh')){
+    $('#profRefresh').disabled = false;
+    $('#profRefresh').textContent = '刷新资料';
+  }
+}
+async function loadProfile(opts){
+  opts = opts || {};
+  if(!hasSession()){
+    _profileSeq++;
+    LIVE.profile = null; LIVE.profileError = null; LIVE.profileLoading = false;
+    renderProfileEmpty();
+    return;
+  }
+  const seq = ++_profileSeq;
+  LIVE.profileLoading = true;
+  const btn = $('#profRefresh');
+  if(btn){ btn.disabled = true; btn.textContent = '刷新中…'; }
+  try{
+    const j = await liveApi('real_profile', {}, 60000);
+    if(seq !== _profileSeq) return;
+    if(!liveOk(j)){
+      LIVE.profile = null;
+      LIVE.profileError = j.message || '资料读取失败';
+      renderProfile();
+      liveLog('个人资料读取失败', LIVE.profileError, 'warn');
+      if(!opts.silent) toast('资料读取失败：' + LIVE.profileError);
+      return;
+    }
+    LIVE.profile = j.data || {};
+    LIVE.profileError = null;
+    LIVE.profileAt = Date.now();
+    renderProfile();
+    const errs = Array.isArray(LIVE.profile.errors) ? LIVE.profile.errors : [];
+    if(errs.length) liveLog('部分资料读取失败', errs.join('；'), 'warn');
+    else liveLog('个人资料已刷新',
+      (LIVE.profile.profile && (LIVE.profile.profile.nickname
+        || LIVE.profile.profile.name)) || '已读取', 'ok');
+    if(!opts.silent) toast('个人资料已刷新');
+  } finally {
+    if(seq === _profileSeq){
+      LIVE.profileLoading = false;
+      if(btn){ btn.disabled = false; btn.textContent = '刷新资料'; }
+    }
+  }
+}
+function renderProfile(){
+  const d = LIVE.profile || {};
+  const p = d.profile || {};
+  const s = LIVE.session || {};
+  const logged = hasSession();
+  const name = p.nickname || p.name || s.nickname || s.name || '';
+  const setText = (id, v) => {
+    const el = $('#' + id);
+    if(el) el.textContent = (v == null || v === '') ? '—' : v;
+  };
+  if($('#profAvatar')) $('#profAvatar').textContent = (name || '?').slice(0, 1);
+  if($('#profName')) $('#profName').textContent =
+    name || (logged ? ('uid ' + (p.uid || s.uid || '—')) : '未登录');
+  if($('#profMeta')) $('#profMeta').textContent =
+    ([p.schoolName || s.schoolName, p.campusName || s.campusName]
+      .filter(Boolean).join(' · ') || '登录后显示学校 / 校区');
+  if($('#profUidChip')) $('#profUidChip').textContent = (p.uid || s.uid)
+    ? ('uid ' + (p.uid || s.uid)) : 'uid —';
+  if($('#profUnidChip')) $('#profUnidChip').textContent = (p.unid || s.unid)
+    ? ('unid ' + (p.unid || s.unid)) : 'unid —';
+
+  if($('#profVerifiedChip')){
+    if(LIVE.profileError){
+      $('#profVerifiedChip').textContent = '资料读取失败';
+      $('#profVerifiedChip').className = 'chip red';
+    }else if(p.verified){
+      $('#profVerifiedChip').textContent = '资料已验证';
+      $('#profVerifiedChip').className = 'chip ok';
+    }else{
+      $('#profVerifiedChip').textContent = logged ? '本地资料' : '未验证';
+      $('#profVerifiedChip').className = 'chip ' + (logged ? 'warn' : '');
+    }
+  }
+  if($('#profUpdated')) $('#profUpdated').textContent =
+    LIVE.profileAt ? ('更新 ' + nowHM()) : '—';
+  if($('#profSource')) $('#profSource').textContent =
+    p.verified ? 'user/info'
+      : ((p.name || p.nickname || s.name || s.nickname) ? '本地会话' : '—');
+
+  const body = [
+    p.height ? (p.height + ' cm') : '',
+    p.weight ? (p.weight + ' kg') : ''
+  ].filter(Boolean).join(' · ');
+  setText('profRealName', p.name || s.name);
+  setText('profNickname', p.nickname || s.nickname);
+  setText('profGradeClass', p.gradeClass);
+  setText('profSchool', p.schoolName || s.schoolName);
+  setText('profCampus', p.campusName || s.campusName);
+  setText('profBody', body);
+  setText('profUid', p.uid || s.uid);
+  setText('profUnid', p.unid || s.unid);
+  setText('profLoginState', s.disabled ? '账号已停用'
+    : (logged ? (p.verified ? '已登录 · 已验证' : '已登录') : '未登录'));
+  setText('profDevice', logged
+    ? (s.deviceName || s.deviceModel
+       || (s.device_id_present ? '设备号已冻结' : '—')) : '—');
+  setText('profSession', logged ? '已加载 token' : '未登录');
+
+  const sem = d.semester || LIVE.semester;
+  const semErr = d.semester_error || LIVE.semesterError;
+  renderSemesterInto('prof', sem, semErr);
+  if($('#profSemesterChip')){
+    const hasSem = !!(sem && sem.view);
+    $('#profSemesterChip').textContent = hasSem ? '学期已加载'
+      : (semErr ? '学期读取失败' : '学期未加载');
+    $('#profSemesterChip').className = 'chip '
+      + (hasSem ? 'ok' : (semErr ? 'warn' : ''));
+  }
+  if(!LIVE.violations && !LIVE.violationsError && $('#violList')){
+    $('#violList').innerHTML = '<div class="violation-empty">'
+      + '点「查询违规」读取本账号的违规记录。</div>';
+  }
+}
+async function loadViolations(){
+  if(!hasSession()){ toast('先登录'); return; }
+  const btn = $('#violCheck');
+  if(btn && btn.disabled) return;
+  const seq = ++_violSeq;
+  if(btn){ btn.disabled = true; btn.textContent = '查询中…'; }
+  try{
+    const j = await liveApi('real_violations', {page: 1, page_size: 20}, 60000);
+    if(seq !== _violSeq) return;
+    if(!liveOk(j)){
+      LIVE.violations = null;
+      LIVE.violationsError = j.message || '违规查询失败';
+      renderViolations(null, LIVE.violationsError);
+      liveLog('违规自查失败', LIVE.violationsError, 'err');
+      toast('违规查询失败：' + LIVE.violationsError);
+      return;
+    }
+    LIVE.violations = j.data || {};
+    LIVE.violationsError = null;
+    LIVE.violationsAt = Date.now();
+    renderViolations(LIVE.violations);
+    const state = LIVE.violations.state;
+    if(state === 'violations'){
+      liveLog('违规自查：发现记录',
+        (LIVE.violations.count || (LIVE.violations.records || []).length)
+        + ' 条；以官方 App 为准', 'warn');
+      toast('查询到违规记录，请查看列表');
+    }else if(state === 'none_found'){
+      liveLog('违规自查：本次未发现', '只代表本次查询', 'ok');
+      toast('本次查询暂未发现违规记录');
+    }else if(state === 'unknown'){
+      liveLog('违规自查：结果未知', LIVE.violations.message || '', 'warn');
+      toast('结果未知，请勿当作正常');
+    }else{
+      liveLog('违规自查失败', LIVE.violations.message || '未知状态', 'err');
+      toast('查询失败，请稍后重试');
+    }
+  } finally {
+    if(seq === _violSeq && btn){
+      btn.disabled = false; btn.textContent = '查询违规';
+    }
+  }
+}
+function renderViolations(data, error){
+  const tag = $('#violState'), list = $('#violList');
+  if(!tag || !list) return;
+  const state = error ? 'failed' : ((data && data.state) || 'unknown');
+  const meta = {
+    none_found: ['未发现', 'tag ok'],
+    violations: ['有记录', 'tag red'],
+    unknown: ['结果未知', 'tag warn'],
+    failed: ['查询失败', 'tag red']
+  }[state] || ['结果未知', 'tag warn'];
+  tag.textContent = meta[0];
+  tag.className = meta[1];
+
+  const checked = data && data.checked_at ? beijingDateTime(data.checked_at) : '';
+  const stale = !!(data && data.stale);
+  let msg = error || (data && data.message) || '';
+  if(state === 'none_found') msg = msg || '本次查询暂未发现违规记录';
+  if(state === 'unknown') msg = msg || '响应缺少个人违规状态字段，结果未知';
+  if(state === 'failed') msg = msg || '查询失败';
+  const records = Array.isArray(data && data.records) ? data.records : [];
+  if(!records.length){
+    list.innerHTML = '<div class="violation-empty">' + esc(msg)
+      + (checked ? ' · ' + esc(checked) : '')
+      + (stale ? ' · 结果已过期' : '') + '</div>';
+    return;
+  }
+  const rows = records.map(r => {
+    const reason = r.reason || '（服务器未返回原因）';
+    const rrid = r.rrid ? ('rrid ' + r.rrid) : '';
+    return '<div class="violation-row">'
+      + '<span class="vtime">' + esc(violationTime(r.time)) + '</span>'
+      + '<span class="vreason">' + esc(reason) + '</span>'
+      + '<span class="vrrid">' + esc(rrid) + '</span>'
+      + '</div>';
+  }).join('');
+  list.innerHTML = rows + (stale
+    ? '<div class="violation-empty">结果已过期，建议重新查询。</div>' : '');
 }
 function renderPlanGrid(){
   const wrap = $('#ovPlanGrid');
@@ -2097,10 +2484,17 @@ function clearRecordMap(){
 function renderRecordMap(detail){
   const track = Array.isArray(detail && detail.track) ? detail.track : [];
   const five = Array.isArray(detail && detail.five_point) ? detail.five_point : [];
+  const meta = (detail && detail.detail) || {};
   const hint = $('#rdMapHint');
   if(!track.length){
     clearRecordMap();
-    if(hint) hint.textContent = '这条记录没有读到轨迹（服务端未返回 allLocJson）。';
+    if(hint){
+      hint.textContent = meta.obs_error
+        ? ('轨迹在 OBS，但读取失败：' + meta.obs_error)
+        : (meta.json_from_obs
+          ? '这条记录的轨迹在 OBS，但服务端没有返回可读对象。'
+          : '这条记录没有读到轨迹（服务端未返回 allLocJson）。');
+    }
     return;
   }
   ensureRecordMap();
@@ -3281,6 +3675,8 @@ async function runPreflight(){
       if(grid) grid.hidden = true;
       if(text){ text.className = 'preflight-warn'; text.textContent = j.message || '网络自检失败'; }
       liveLog('网络自检失败', j.message || '', 'warn');
+      LIVE.preflight = {ok: false, error: j.message || '网络自检失败', at: Date.now()};
+      refreshChecks();
       return;
     }
     const d = j.data || {};
@@ -3306,6 +3702,14 @@ async function runPreflight(){
     }
     liveLog('网络自检', `${got || '未知'} / 校区 ${want}` +
       (warns.length ? (' · ' + warns[0]) : ''), warns.length ? 'warn' : 'ok');
+    LIVE.preflight = {
+      ok: match === true,
+      city: got,
+      want: want,
+      warnings: warns,
+      at: Date.now()
+    };
+    refreshChecks();
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '开始自检'; }
   }
@@ -3315,6 +3719,26 @@ function refreshChecks(){
   const checks = [];
   const verified = !!(LIVE.checked && liveOk(LIVE.checked));
   checks.push({ok: verified, label: 'token 有效', note: verified ? '服务端已验证' : (hasSession() ? '未验证/失效' : '未登录')});
+  // Network egress is part of the pre-submit checklist: the run detail page
+  // shows the IP's city, so a campus in Jiangmen on a Guangzhou egress is an
+  // avoidable exposure.  The check is advisory; submission is never blocked.
+  const pf = LIVE.preflight;
+  if(!pf){
+    checks.push({ok: false, warn: true, label: '网络出口',
+      note: '未自检；点「开始自检」确认与校区同城（仅提醒）'});
+  }else if(pf.error){
+    checks.push({ok: false, warn: true, label: '网络出口',
+      note: pf.error + '（仅提醒）'});
+  }else{
+    checks.push({
+      ok: !!pf.ok,
+      warn: !pf.ok,
+      label: '网络出口',
+      note: pf.ok
+        ? ('同城 · ' + (pf.city || pf.want || '已确认'))
+        : ('不一致 · ' + (pf.city || '未知') + ' / ' + (pf.want || '校区未知'))
+    });
+  }
   const free = freeRunOn();
   checks.push({ok: free || livePoints.length > 0, warn: free && !livePoints.length,
     label: free ? '自由跑' : '点位已加载',
@@ -3323,13 +3747,6 @@ function refreshChecks(){
   checks.push({ok: free || (cov.total > 0 && cov.missed === 0), warn: free,
     label: '经过全部打卡点',
     note: free ? '自由跑已跳过' : (cov.total ? (cov.passed + '/' + cov.total + ' 在 40m 内') : '未加载点位')});
-  if(!free && LIVE.pointsDistance && livePoints.length){
-    const wantM = Math.round((+$('#inKm').value || 2.5) * 1000);
-    if(Math.abs(LIVE.pointsDistance - wantM) > 100){
-      checks.push({ok: true, warn: true, label: '点位距离',
-        note: `按 ${(LIVE.pointsDistance / 1000).toFixed(2)} km 拉取，当前 ${(wantM / 1000).toFixed(2)} km；点「刷新」重拉`});
-    }
-  }
   let out = null;
   if(LIVE.fence.length && route && route.length >= 2){
     out = route.filter(p => !pointInPolygon(p, LIVE.fence)).length;
@@ -3553,6 +3970,14 @@ function liveWire(){
       }
     });
   });
+  const rememberBox = $('#loginRemember');
+  if(rememberBox){
+    rememberBox.addEventListener('change', () => {
+      // Unchecking is an explicit "forget it now", not just a preference for
+      // the next successful login.
+      if(!rememberBox.checked) forgetSavedLogin();
+    });
+  }
   $('#ovRefresh').addEventListener('click', async () => {
     const btn = $('#ovRefresh');
     if(btn.disabled) return;
@@ -3700,6 +4125,8 @@ function liveWire(){
     try{ await loadRecords(); }
     finally{ btn.disabled = false; btn.textContent = old; }
   });
+  $('#profRefresh').addEventListener('click', () => loadProfile());
+  $('#violCheck').addEventListener('click', loadViolations);
   $('#recExport').addEventListener('click', exportRecordsCsv);
   $('#recordTable').addEventListener('click', ev => {
     const row = ev.target.closest('[data-rec-index]');

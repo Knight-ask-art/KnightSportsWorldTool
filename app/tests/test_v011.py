@@ -179,6 +179,77 @@ class BridgeIntegrationTest(unittest.TestCase):
         self.assertEqual(got['data']['view']['sname'], '2026 秋')
         self.assertEqual(got['data']['view']['done_km'], 12.35)
 
+    def test_profile_bridge_merges_user_info_and_semester(self):
+        api = self._api()
+        with mock.patch.object(RA.ReplicaApi, 'real_check_session',
+                               return_value=RA._ok({
+                                   'uid': '1', 'name': '张三',
+                                   'nickname': '小张',
+                                   'schoolName': '广州软件学院',
+                                   'campusName': '江门校区',
+                                   'gradeClass': '2024 级 1 班',
+                                   'unid': 47203, 'height': 175,
+                                   'weight': 68})), \
+             mock.patch.object(readonly, 'semester_summary',
+                               return_value={'ok': True, 'data': {
+                                   'semesterDis': 60000}}), \
+             mock.patch.object(readonly, 'semester_personal',
+                               return_value={'ok': True, 'data': {
+                                   'sname': '2026 秋', 'curValidDis': 12345,
+                                   'semesterGoal': 60}}):
+            got = api.real_profile()
+        self.assertEqual(got['code'], 200)
+        p = got['data']['profile']
+        self.assertEqual(p['gradeClass'], '2024 级 1 班')
+        self.assertTrue(p['verified'])
+        self.assertEqual(got['data']['semester']['view']['done_km'], 12.35)
+
+    def test_profile_falls_back_to_session_when_user_info_fails(self):
+        api = self._api()
+        session = {'uid': '1', 'token': 'test', 'unid': 47203,
+                   'name': '本地名', 'schoolName': '广州软件学院',
+                   'campusName': '江门校区'}
+        with mock.patch.object(api, '_read_session', return_value=session), \
+             mock.patch.object(RA.ReplicaApi, 'real_check_session',
+                               return_value=RA._fail('HTTP 500')), \
+             mock.patch.object(readonly, 'semester_summary',
+                               return_value={'ok': False, 'error': 'boom'}), \
+             mock.patch.object(readonly, 'semester_personal',
+                               return_value={'ok': False, 'error': 'boom'}):
+            got = api.real_profile()
+        self.assertEqual(got['code'], 200)
+        self.assertFalse(got['data']['profile']['verified'])
+        self.assertEqual(got['data']['profile']['name'], '本地名')
+        self.assertIsNone(got['data']['semester'])
+        self.assertIn('学期', ' '.join(got['data']['errors']))
+
+    def test_violations_bridge_exposes_unknown_and_staleness(self):
+        api = self._api()
+        with mock.patch.object(readonly, 'check_violations',
+                               return_value={'state': 'unknown',
+                                             'message': '缺字段',
+                                             'records': [],
+                                             'checked_at': 0}):
+            got = api.real_violations()
+        self.assertEqual(got['code'], 200)
+        self.assertEqual(got['data']['state'], 'unknown')
+        self.assertTrue(got['data']['stale'])
+
+    def test_violations_bridge_lists_records(self):
+        api = self._api()
+        rec = {'id': 1, 'rrid': 42, 'reason': '原因',
+               'time': 1761000000000}
+        with mock.patch.object(readonly, 'check_violations',
+                               return_value={'state': 'violations',
+                                             'message': '存在违规记录',
+                                             'records': [rec],
+                                             'checked_at': safety.now_ms()}):
+            got = api.real_violations()
+        self.assertEqual(got['code'], 200)
+        self.assertEqual(got['data']['count'], 1)
+        self.assertEqual(got['data']['records'][0]['rrid'], 42)
+        self.assertFalse(got['data']['stale'])
+
     def test_school_rules_bridge_maps_run_rule_model(self):
         api = self._api()
         data = {'runRuleModel': {

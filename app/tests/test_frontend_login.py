@@ -42,6 +42,35 @@ def test_login_gate_uses_the_real_bridge_and_auto_keepalive():
     assert '已退出本机登录，请重新登录。' in SOURCE
 
 
+def test_login_remembers_password_only_through_the_encrypted_bridge():
+    assert 'id="loginRemember"' in HTML
+    assert '使用系统加密' in HTML
+    assert "liveApi('get_saved_login'" in SOURCE
+    assert "liveApi('save_login'" in SOURCE
+    assert "liveApi('clear_saved_login'" in SOURCE
+    # Never park the credential in browser storage (routes may use it).
+    for line in SOURCE.splitlines():
+        if 'localStorage' in line or 'sessionStorage' in line:
+            assert 'pass' not in line.lower()
+
+
+def test_points_are_not_tied_to_target_distance():
+    assert '按校区固定范围拉取' in SOURCE
+    assert "label: '点位距离'" not in SOURCE
+    assert 'distance_m: Math.max' not in SOURCE
+
+
+def test_network_egress_is_back_in_the_checklist():
+    assert "label: '网络出口'" in SOURCE
+    assert 'LIVE.preflight =' in SOURCE
+    assert '未自检；点「开始自检」确认与校区同城（仅提醒）' in SOURCE
+
+
+def test_obs_track_fallback_is_wired():
+    assert "meta.obs_error" in SOURCE
+    assert '这条记录的轨迹在 OBS' in SOURCE
+
+
 def test_partial_school_rules_and_issue_records_are_visible():
     assert '留空 = 学校没有这项要求' in SOURCE
     assert 'data-rec-filter="issue"' in SOURCE
@@ -90,6 +119,15 @@ def test_today_nav_indicator_is_wired():
     assert 'id="runNavDot"' in HTML
     assert 'function updateTodayNav()' in JS
     assert "今天已跑 ' + n + ' 次" in JS
+
+
+def test_profile_and_violation_pages_are_wired():
+    assert 'id="page-profile"' in HTML
+    assert 'data-page="profile"' in HTML
+    assert "liveApi('real_profile'" in JS
+    assert "liveApi('real_violations'" in JS
+    assert '结果未知不会当成正常' in HTML
+    assert 'id="violState"' in HTML
 
 
 def test_distance_follows_drawn_route_until_manual_edit():

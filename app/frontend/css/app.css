@@ -1115,6 +1115,18 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 }
 .login-eye:hover{color:var(--ink)}
 .login-eye[aria-pressed="true"]{color:var(--ink-blue)}
+.login-remember{
+  display:flex;align-items:baseline;gap:7px;margin-top:-6px;
+  color:var(--faint);font-size:10.5px;line-height:1.5;
+  cursor:pointer;user-select:none;
+}
+.login-remember input{
+  flex:none;width:13px;height:13px;margin:0;
+  accent-color:var(--ink-blue);transform:translateY(1px);
+}
+.login-remember span{color:var(--ink)}
+.login-remember em{font-style:normal;color:var(--faint);font-size:9.5px}
+.login-remember input:focus-visible{outline:2px solid var(--ink-blue);outline-offset:2px}
 .login-error{
   margin:-1px 0 0;padding:8px 10px;border-left:3px solid var(--stamp);
   background:rgba(182,72,60,.055);color:var(--stamp);
@@ -1203,6 +1215,23 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .receipt-state.rejected{color:var(--faint)}
 .receipt-meta{color:var(--faint);font-size:9px}
 .receipt-empty{font:10px/1.5 var(--sans);color:var(--faint);padding:4px 0}
+
+.profile-hero{margin-bottom:4px}
+.violation-list{display:flex;flex-direction:column;gap:0;margin-top:2px}
+.violation-row{
+  display:grid;grid-template-columns:112px minmax(0,1fr) auto;gap:8px;
+  align-items:start;padding:6px 4px;border-top:1px dashed var(--rule);
+  font:9.5px/1.45 var(--mono);
+}
+.violation-row:first-child{border-top:0}
+.violation-row .vtime{color:var(--faint);white-space:nowrap}
+.violation-row .vreason{font:11px/1.5 var(--sans);color:var(--ink);word-break:break-word}
+.violation-row .vrrid{color:var(--faint);white-space:nowrap}
+.violation-empty{font:10px/1.6 var(--sans);color:var(--faint);padding:5px 0}
+@media (max-width:620px){
+  .violation-row{grid-template-columns:1fr auto}
+  .violation-row .vtime{grid-column:1 / -1}
+}
 
 .record-map-wrap{margin-top:9px;padding-top:8px;border-top:1px dashed var(--rule)}
 .record-map{height:190px;border:1.2px solid var(--ink);border-radius:var(--sketch-sm);overflow:hidden;background:var(--paper-3)}

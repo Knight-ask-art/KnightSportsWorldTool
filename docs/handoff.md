@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 87 passed`、`selfcheck 22/22`。
+> 回归基线更新为 `pytest 115 passed`、`selfcheck 22/22`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -20,13 +20,17 @@
 
 ### 2026-10-24 v0.1.1 最新状态
 
-- **v0.1.1 稳定包**：点位按目标距离拉取、`fivePointJson.position` 用数组下标、
+- **v0.1.1 稳定包**：UI 点位按校区固定范围拉取（后端/CLI 保留目标距离查询与提交补点）、`fivePointJson.position` 用数组下标、
   OBS 10 秒窗按真机语义、回执只读核对、网络自检、记录轨迹地图、日历次数、
   学期进度、4 周趋势、14 天计划、路线库落盘/GPX、3 km+ 样本库、诊断包、自由跑；
   **学校规则自动读取**：登录/进入设置时若本地未配置，读取
   `runModePolicy.runRuleModel` 并填入距离/配速/时长/步频/时间窗；
   主动清空保存会写 `auto_fetch=false`，停止后续自动读取。
-- 回归（重构后）：`pytest` 87 passed；`replica.selfcheck` 22/22；`node --check` 通过。
+- **个人主页 / 违规自查**：新增「我的」页；资料来自 `user/info`，失败时回落
+  本地会话并标记「本地资料」；违规查询只读 `v78/cheat/cheatlist`，
+  `none_found / violations / unknown / failed` 四种状态显式区分，
+  `unknown` 不会显示成“正常”。
+- 回归（重构后）：`pytest` 115 passed；`replica.selfcheck` 22/22；`node --check` 通过。
 - 本轮 bug 修复：`build.ps1` 改为版本化输出且保留同版本 `data/`；学期空响应
   不再显示空白成功；样本库采集改为增量合并；OBS/回读增加 uuid 回退；
   日志时间统一北京时间；下载 blob 延迟释放。
@@ -56,7 +60,7 @@ OBS 轨迹双 key 上传 + 回读           ✅ 本地模拟通过，线上待�
 本地回执 / 每日上限 / 深夜闸门        ✅ 单元测试（计数已改为按日期存 map）
 补跑（今天..3 天前 09:00–22:00）      ✅ 本地自测 / UI / CLI；服务器接受度未验证
 每日次数提醒（按所选日期）            ✅ 服务器记录优先；超上限/未知都只 warn，不阻止提交
-点位按目标距离拉取                    ✅ 离线测试（上游 #106 真机路径）
+UI 点位按校区固定范围拉取（提交按目标距离补点） ✅ 离线测试 + 真实点位缓存对比
 回执只读核对                          ✅ 后端 + UI；不重发/不补传 OBS
 网络自检（显式）                      ✅ 后端 + UI；只在点击时查公网 IP
 记录详情轨迹地图                      ✅ 轨迹/起点终点/打卡点；可导出 GPX/存路线
@@ -71,7 +75,7 @@ OBS 轨迹双 key 上传 + 回读           ✅ 本地模拟通过，线上待�
 
 ```
 python -m replica.selfcheck                     22/22 模块 PASS（含 tokenkeeper）
-python -m pytest tests -q                       87 passed
+python -m pytest tests -q                       115 passed
 python tests/legacy/legacy_bridge_suite.py      38 passed
 python tests/legacy/legacy_http_suite.py        23 passed
 python -m pytest ../private/research/tests -q    3 passed
@@ -268,7 +272,9 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
 - **登录门禁**：启动后先显示全屏登录页；没有 token 时 app 被 `inert` 锁住，
   登录成功后才进入六个菜单。已有有效本地会话时自动进入；退出登录会回到登录页。
   登录页支持回车提交、密码显示/隐藏、极验/10121/超时错误提示、登录耗时提示；
-  登录成功后自动开启 probe-only token 保活（不保存密码，不自动重登）。
+  登录成功后自动开启 probe-only token 保活（保活不保存密码，不自动重登）。
+  登录页可选「记住密码」，勾选后账号/密码用 Windows DPAPI 加密保存在
+  `data/saved_login.json`，只用于下次预填，不参与保活。
   外部 `lxgw-wenkai` CDN 字体已移除，改用系统 KaiTi/STKaiti，启动不再等待网络字体。
 - **假数据已移除**：不再有 10 点位池、固定 2.41km 环线、6 条假记录、95 分模型、
   假 IP/假 token 天数/假日志；没有真实数据时显示空状态。
@@ -358,6 +364,7 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
   - 探测只能证明 token 还活着 / 提前发现失效；
   - 真正的续期是**显式开启的自动重登**：用 `--user/--pass` 或 UI 上的手机/密码，
     密码只在内存，**不写 `accounts_emu.json`**；`disabled` 会话永不重登。
+    （登录页「记住密码」是独立的 DPAPI 存储，只用于预填登录框，不会被保活读取。）
 - `ReplicaApi`：`real_keepalive_status` / `once` / `start` / `stop` / `resume`；
   `serve()` 启动时若 keepalive.enabled=true 会恢复“仅探测”线程（密码不持久化）。
 - CLI：`--keepalive`、`--keepalive-once`、`--keepalive-interval SECONDS`、

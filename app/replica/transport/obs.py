@@ -289,12 +289,23 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
     }
 
 
+def rrid_key(rrid) -> str:
+    """The object key the official detail page reads for one record.
+
+    `ObsClient.downloadJsonSync` uses
+    ``run_data/{rrid // 1000000}/{rrid}.json``; the same key is written by
+    :func:`obs_keys` as its second entry.
+    """
+    n = int(rrid)
+    return 'run_data/%d/%d.json' % (n // 1000000, n)
+
+
 def obs_keys(run, rrid, uuid) -> list[str]:
     start_ms = run['allLocJson'][0]['ts']
     t0 = safety.to_beijing(start_ms).strftime('%Y%m%d%H')
     return [
         'run_data/%s/%s.json' % (t0, uuid),
-        'run_data/%d/%d.json' % (int(rrid) // 1000000, int(rrid)),
+        rrid_key(rrid),
     ]
 
 
@@ -332,12 +343,19 @@ def put_object(signed_url: str, payload: bytes, timeout: float = 60.0) -> int:
         return r.status
 
 
-def get_object(signed_url: str, timeout: float = 60.0) -> tuple[int, int]:
-    """GET a signed object. Returns (status, byte length)."""
+def get_object_bytes(signed_url: str,
+                     timeout: float = 60.0) -> tuple[int, bytes]:
+    """GET a signed object. Returns (status, body)."""
     import urllib.request
     req = urllib.request.Request(signed_url, method='GET')
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.status, len(r.read())
+        return r.status, r.read()
+
+
+def get_object(signed_url: str, timeout: float = 60.0) -> tuple[int, int]:
+    """GET a signed object. Returns (status, byte length)."""
+    status, body = get_object_bytes(signed_url, timeout=timeout)
+    return status, len(body)
 
 
 def _retry(fn, tries: int = 3, base: float = 0.6):

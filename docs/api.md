@@ -67,8 +67,16 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 | 主榜 / 历史榜 | `api/v41/rank`、`api/v41/historyRank` | POST | upstream |
 | 室内榜 | `api/v43/runnings/indoor/studentRank` | POST | upstream |
 
+> `runModePolicy` 的 `operateType`：`0` = 开始跑步，只返回 `policy`；`1` = 学期
+> 视图，才返回 `runRuleModel`。设置页「从服务器读取」必须用 `operateType=1`。
+>
 > 记录详情先试 `v61200`（APK 里实际用的），失败再试 `v70260`（上游用的）。
 > 两条都失败时错误信息会同时带上两边的原因。
+>
+> 详情返回 `jsonFromObs=1` 时，数据库行里的 `allLocJson` / `fivePointJson` 是空的；
+> 完整轨迹在 OBS 对象 `run_data/{rrid//1000000}/{rrid}.json`（与上传的第二条 key
+> 相同）。详情接口会按需 GET 该对象，再解析 `run_data.allLocJson`；
+> OBS 读取失败只影响轨迹，不影响距离/配速/平台检查项。
 
 ---
 
@@ -104,10 +112,14 @@ POST api/v560/get/1/distance/2500
 }
 ```
 
-- 路径末尾是**本次目标距离（米）**，不是固定 `1`。真机抓包见上游 PR #106
+- 路径末尾是**服务端查询距离（米）**，不是固定 `1`。真机抓包见上游 PR #106
   （`.../distance/2000`）；写死 `1` 会让服务端只返回最小/固定点位集。
+- **UI 侧固定用 2500 m 查询**（`CAMPUS_POINTS_DISTANCE_M`），不随「目标距离」
+  变化；这样同一次登录看到的点位稳定，不会因为目标距离改了就让旧点位“过期”。
+- **提交时仍按目标距离查询**，并把路线吸附到目标距离对应的缺失点位；服务器确实
+  会按距离返回不同点位（实测 2.5 km 与 4.1 km 相差一个点）。
 - 限流码 `10603`：命中后优先用 300s 缓存；没有缓存就报错，不硬刷。
-- 缓存键：`uid + unid + runAreaId + 锚点(~11m) + 目标距离`。
+- 缓存键：`uid + unid + runAreaId + 锚点(~11m) + 查询距离`。
 
 ### 围栏
 
@@ -243,7 +255,12 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_receipts` | `limit` | 列出写前回执（pending/accepted/rejected/unknown） |
 | `real_reconcile_receipts` | `uuid`、`limit` | **只读**核对未决回执与服务器记录；匹配到才回写 accepted，绝不重发 |
 | `real_semester` | — | 学期汇总 + 个人完成度，返回归一化 `view` 与原始数据 |
+| `real_profile` | — | 合并 `user/info` 资料与学期进度；`user/info` 失败时回落本地会话并返回 `errors` |
+| `real_violations` | `page`、`page_size` | **只读** `v78/cheat/cheatlist`；返回 `state`（`none_found`/`violations`/`unknown`/`failed`）、`records`、`stale` |
 | `real_fetch_school_rules` | `run_mode` | 只读 `runModePolicy.runRuleModel`，映射成设置页规则；不猜未返回字段 |
+| `get_saved_login` | — | 读取登录页「记住密码」的 DPAPI 密文；没有则 `saved=false` |
+| `save_login` | `account`、`password`、`remember` | 勾选时用 Windows DPAPI 加密保存；`remember=false` 立即删除 |
+| `clear_saved_login` | — | 删除 `data/saved_login.json` 和旧版明文 `account.json` |
 | `real_get_routes` | — | 读取本机 `data/routes.json` 路线库 |
 | `real_save_routes` | `routes` | 整体替换并校验路线库，替代仅靠 localStorage |
 | `real_diagnostics` | — | 生成脱敏诊断包（不含 token/密码/uid/坐标/IP） |

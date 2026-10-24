@@ -87,16 +87,35 @@ def check_violations(client, acct, page: int = 1, page_size: int = 20) -> dict:
         out['message'] = '响应中缺少个人违规状态字段，结果未知'
     else:
         out['state'] = 'violations'
-        out['message'] = str(me)
+        if isinstance(me, dict):
+            out['message'] = str(me.get('message') or me.get('reason')
+                                  or '存在违规记录')
+        else:
+            out['message'] = str(me)
 
     for rec in (d.get('list') or d.get('records') or []):
+        if not isinstance(rec, dict):
+            continue
+        raw_rrid = rec.get('rrid')
+        try:
+            rrid = int(raw_rrid)
+        except (TypeError, ValueError):
+            rrid = None
+        if rrid is not None and rrid <= 0:
+            rrid = None
         out['records'].append({
             'id': rec.get('id'),
-            'rrid': rec.get('rrid') if isinstance(rec.get('rrid'), int)
-                    and rec.get('rrid', 0) > 0 else None,
+            'rrid': rrid,
             'reason': rec.get('reason') or rec.get('cheatReason'),
             'time': rec.get('createTime') or rec.get('time'),
         })
+    if out['records']:
+        # A non-empty list is authoritative even if `self` is missing or null:
+        # do not label a page with rows as "none found".
+        if out['state'] != 'violations':
+            out['state'] = 'violations'
+            out['message'] = '存在违规记录（服务器返回了列表）'
+    out['count'] = len(out['records'])
     return out
 
 
@@ -582,6 +601,45 @@ def parse_track(raw) -> list[dict]:
     return out
 
 
+def _five_list(raw) -> list:
+    fp = _unwrap(raw)
+    if isinstance(fp, dict):
+        fp = _unwrap(fp.get('fivePointJson'))
+    return fp if isinstance(fp, list) else []
+
+
+def _segments(raw) -> list:
+    seg = _unwrap(raw)
+    if isinstance(seg, dict):
+        seg = (seg.get('segmentJson') or seg.get('segments') or [])
+    return seg if isinstance(seg, list) else []
+
+
+def _fetch_obs_detail(client, acct, rrid) -> dict:
+    """Read the OBS object when the server row is only a stub.
+
+    Records uploaded with ``jsonFromObs=1`` keep ``allLocJson`` and
+    ``fivePointJson`` empty in the database; the full ``OutdoorDecoder`` JSON
+    is at ``run_data/{rrid//1000000}/{rrid}.json``.  Without this fallback the
+    detail page says "no track" even though the replay has one.
+    """
+    from ..transport import obs as OBS
+
+    signed = OBS.sign_url(client, acct, OBS.rrid_key(rrid), method='Get')
+    status, body = OBS.get_object_bytes(signed)
+    if status != 200:
+        raise QueryFailed('OBS GET HTTP %s' % status)
+    if not body:
+        raise QueryFailed('OBS 对象为空')
+    try:
+        raw = json.loads(body.decode('utf-8'))
+    except Exception as e:  # noqa: BLE001
+        raise QueryFailed('OBS JSON 解析失败: %s' % e)
+    if not isinstance(raw, dict):
+        raise QueryFailed('OBS 对象不是 JSON 对象')
+    return raw
+
+
 def record_detail(client, acct, rrid, uuid=None) -> dict:
     """Everything the detail endpoint exposes for one run."""
     if not rrid:
@@ -621,18 +679,29 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
     if not track:
         track = parse_track(obj.get('allLocJson'))
 
-    fp = _unwrap(obj.get('fixed_point_json'))
-    five = _unwrap(fp.get('fivePointJson')) if isinstance(fp, dict) else []
-    if not isinstance(five, list):
-        five = []
+    five = _five_list(obj.get('fixed_point_json'))
+    segs = _segments(obj.get('segment_json'))
 
-    seg = _unwrap(obj.get('segment_json'))
-    if isinstance(seg, dict):
-        segs = seg.get('segmentJson') or seg.get('segments') or []
-    else:
-        segs = seg if isinstance(seg, list) else []
-    if not isinstance(segs, list):
-        segs = []
+    # `jsonFromObs=1` means the row is only a summary and the real track lives
+    # in OBS.  Pull it on demand so the detail map is not empty.
+    json_from_obs = int(_num(obj.get('jsonFromObs')))
+    obs_error = ''
+    if json_from_obs and (not track or not five or not segs):
+        try:
+            obs_obj = _fetch_obs_detail(client, acct, rrid)
+        except Exception as e:  # noqa: BLE001
+            obs_obj, obs_error = None, str(e)
+        if isinstance(obs_obj, dict):
+            obs_run = _unwrap(obs_obj.get('run_data'))
+            if not track:
+                track = parse_track(obs_run.get('allLocJson')
+                                    if isinstance(obs_run, dict) else None)
+            if not five:
+                five = _five_list(obs_obj.get('fixed_point_json'))
+            if not segs:
+                segs = _segments(obs_obj.get('segment_json'))
+        elif not obs_error:
+            obs_error = 'OBS 对象为空或格式不对'
 
     reasons = []
     for item in (obj.get('reasonList') or []):
@@ -670,6 +739,8 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
                                obj.get('statusInfo') or '', reasons,
                                obj.get('status')),
         'reasons': reasons,
+        'json_from_obs': bool(json_from_obs),
+        'obs_error': obs_error,
     }
 
     alts = [p['altitude'] for p in track if p.get('altitude')]
@@ -680,6 +751,8 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
         'has_altitude': bool(alts),
         'has_cadence': detail['avg_step_freq'] > 0 or detail['total_steps'] > 0,
         'has_track': bool(track),
+        'has_obs_track': bool(track and json_from_obs),
+        'json_from_obs': bool(json_from_obs),
         'segments': len(segs),
         'five_points': len(five),
     }
@@ -732,6 +805,13 @@ def self_test() -> list[tuple[str, bool, str]]:
     fake = _FakeClient({'error': 10000, 'data': {'self': {}, 'list': []}})
     r = check_violations(fake, object())
     out.append(('self {} -> none_found', r['state'] == 'none_found', r['state']))
+
+    # a non-empty list wins over a missing/null self field
+    fake = _FakeClient({'error': 10000, 'data': {
+        'self': None, 'list': [{'rrid': 7, 'reason': 'x'}]}})
+    r = check_violations(fake, object())
+    out.append(('list wins over null self', r['state'] == 'violations'
+                and r['count'] == 1, '%s/%s' % (r['state'], r['count'])))
 
     # failure is reported as failure
     fake = _FakeClient(None)

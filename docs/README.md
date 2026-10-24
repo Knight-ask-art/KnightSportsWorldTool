@@ -29,7 +29,7 @@ python -m replica.selfcheck
 
 启动后先显示**登录页**；没有有效本地会话时必须登录后才能进入工作台。
 进入后的顺序：**总览 → 点位/围栏 → 画路线 → 节奏 → 提交 → 记录**。
-围栏和点位都按 token 实时拉；登录成功会自动开启 probe-only token 保活（密码不落盘）。
+围栏和点位都按 token 实时拉；登录成功会自动开启 probe-only token 保活（保活密码只在内存）。登录页可选「记住密码」，勾选后用 Windows DPAPI 加密保存在 `data/saved_login.json`，不勾选不保存。
 
 ---
 
@@ -55,7 +55,7 @@ python -m replica.selfcheck
 
 ```
 22/22 模块自测     PASS
-pytest（tests/）   87 passed
+pytest（tests/）   115 passed
 私有 corpus tests   3 passed
 legacy_bridge_suite  38 checks passed
 legacy_http_suite    23 checks passed
@@ -74,7 +74,7 @@ validate_sim      1/2/3/5 km PASS
 | token 保活 | 定时 `user/info` 探测；失效标记；可选内存自动重登；`disabled` 旧账号不探测 |
 | 补跑（今天..3 天前，09:00–22:00） | 代码完成；服务器是否接受历史日期**未验证** |
 | 每日次数提醒 | 按所选日期查服务器记录；超学校上限时只给 `warn` 提醒，不阻止提交 |
-| v0.1.1 稳定包 | 点位按距离拉取、回执只读核对、网络自检、记录轨迹地图、日历次数、学期进度、路线库落盘、14 天计划、诊断包、学校规则自动读取 |
+| v0.1.1 稳定包 | UI 点位按校区固定范围拉取（提交按目标距离补点）、回执只读核对、网络自检、记录轨迹地图、日历次数、学期进度、路线库落盘、14 天计划、诊断包、学校规则自动读取、个人主页/违规自查 |
 
 > 最后一条是硬限制：没有可用 token 时，所有真实接口都会明确报错，
 > 不会伪装成空数据。详见 [operations.md](operations.md#3-排错表)。
