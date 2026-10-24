@@ -4255,8 +4255,10 @@ async function submitRun(){
   if(d.readback && d.readback.isCheat) warnings.push('回读标记 isCheat=' + d.readback.isCheat);
   if(d.obs_error) warnings.push('轨迹上传失败：' + d.obs_error);
   if(d.obs && d.obs.of && ((d.obs.uploaded || 0) < d.obs.of || (d.obs.verified || 0) < d.obs.of)){
+    const obsErr = (d.obs.errors && d.obs.errors.length)
+      ? '（' + d.obs.errors[0] + '）' : '';
     warnings.push('轨迹上传不完整：' + (d.obs.uploaded || 0) + '/' + d.obs.of +
-      ' 上传，' + (d.obs.verified || 0) + '/' + d.obs.of + ' 校验');
+      ' 上传，' + (d.obs.verified || 0) + '/' + d.obs.of + ' 校验' + obsErr);
   }
   if(d.receipt_error) warnings.push('回执记录失败：' + d.receipt_error);
   if(d.missed_points && d.missed_points.length) warnings.push('仍有点位未经过');
