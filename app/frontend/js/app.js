@@ -817,6 +817,10 @@ function go(page){
      !LIVE.profileError){
     loadProfile({silent: true});
   }
+  if(page === 'profile'){
+    if(LIVE.violations) renderViolations(LIVE.violations);
+    else if(LIVE.violationsError) renderViolations(null, LIVE.violationsError);
+  }
   if(page === 'settings' && hasSession() &&
      !(LIVE.rules && (LIVE.rules.configured ||
         (LIVE.rules.rules && LIVE.rules.rules.auto_fetch === false)))){
@@ -1425,6 +1429,14 @@ function renderSession(){
   $('#ovDate').textContent = bp.iso + ' ' + bp.weekday;
   // #runDate is owned by updateRunDateLabel(); resetting it here overwrote a
   // backfill date the operator had already chosen.
+  if(!logged){
+    // No usable token: do not leave the previous account's profile or
+    // violation rows on screen while waiting for the next keeper probe.
+    _profileSeq++; _violSeq++;
+    LIVE.profile = null; LIVE.profileError = null; LIVE.profileLoading = false;
+    LIVE.violations = null; LIVE.violationsError = null;
+    renderProfileEmpty();
+  }
 }
 
 async function liveInitSession(){
@@ -1663,7 +1675,12 @@ async function loadKeepalive(){
       LIVE.checked = null;
       invalidateLiveRequests();
       renderSession();
-      renderEmptyData();
+      // Clear only the personal page: a token probe must not wipe records or
+      // a submission that is still in flight.
+      LIVE.profile = null; LIVE.profileError = null; LIVE.profileLoading = false;
+      LIVE.profileAt = 0;
+      LIVE.violations = null; LIVE.violationsError = null; LIVE.violationsAt = 0;
+      renderProfileEmpty();
       refreshChecks();
       if(!LOGIN.visible && !LIVE.submitting && !accountBusy){
         showLoginGate('这个本地会话已停用，请登录你的账号。');
@@ -1679,7 +1696,11 @@ async function loadKeepalive(){
       LIVE.checked = null;
       invalidateLiveRequests();
       renderSession();
-      renderEmptyData();
+      // Same as the disabled branch: only the "我的" data is cleared here.
+      LIVE.profile = null; LIVE.profileError = null; LIVE.profileLoading = false;
+      LIVE.profileAt = 0;
+      LIVE.violations = null; LIVE.violationsError = null; LIVE.violationsAt = 0;
+      renderProfileEmpty();
       refreshChecks();
       if(!LOGIN.visible && !LIVE.submitting && !accountBusy){
         showLoginGate('登录已失效，请重新登录。');
@@ -2197,7 +2218,10 @@ function renderViolations(data, error){
   tag.className = meta[1];
 
   const checked = data && data.checked_at ? beijingDateTime(data.checked_at) : '';
-  const stale = !!(data && data.stale);
+  let checkedMs = data && data.checked_at ? +data.checked_at : 0;
+  if(checkedMs && checkedMs < 1e11) checkedMs *= 1000;
+  const stale = !!(data && (data.stale ||
+    (checkedMs && Date.now() - checkedMs > 5 * 60 * 1000)));
   let msg = error || (data && data.message) || '';
   if(state === 'none_found') msg = msg || '本次查询暂未发现违规记录';
   if(state === 'unknown') msg = msg || '响应缺少个人违规状态字段，结果未知';

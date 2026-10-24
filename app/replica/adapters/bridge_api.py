@@ -1700,12 +1700,13 @@ class ReplicaApi:
             errors.append('资料: %s'
                           % (checks.get('message') or 'user/info 失败'))
 
-        # Some campuses only return the combined "学校 校区" name.  Keep the
-        # school row useful instead of showing "—" for every such account.
+        # Some campuses return only "学校 校区" as the campus name.  Only
+        # split it when the prefix actually looks like a school; a plain
+        # "江门 校区" must not become a fabricated school named "江门".
         campus = str(profile.get('campusName') or '').strip()
         if not profile.get('schoolName') and ' ' in campus:
             head = campus.rsplit(' ', 1)[0].strip()
-            if head:
+            if head.endswith(('大学', '学院', '学校')):
                 profile['schoolName'] = head
 
         summary = personal = None
