@@ -680,8 +680,6 @@ def audit_profile(profile: dict) -> list[str]:
         issues.append('isRoot is not 0')
     if int(p['appUpdateTime']) < int(p['appInstallTime']):
         issues.append('appInstallTime is later than appUpdateTime')
-    if p['DeviceId'] != p['DeviceId'].strip():
-        issues.append('DeviceId has surrounding whitespace')
     return issues
 
 

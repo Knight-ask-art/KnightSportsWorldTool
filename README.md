@@ -110,6 +110,7 @@ python -m pytest private\research\tests -q
 cd 好想跑\app
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 # 输出 dist\好想跑_v<版本>\ + dist\好想跑_v<版本>_win64.zip
+#      + dist\好想跑_v<版本>_win64.sha256
 ```
 
 构建脚本会做冻结导入检查和 HTTP 冒烟；同版本重建会保留目标目录里的 `data/`，

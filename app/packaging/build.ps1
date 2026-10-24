@@ -3,6 +3,7 @@
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 0.1.1
 # Output: dist/好想跑_v<version>/好想跑.exe  (+ _internal)
 #         dist/好想跑_v<version>_win64.zip
+#         dist/好想跑_v<version>_win64.sha256
 #
 # The output is versioned on purpose.  The old `dist/好想跑/` belongs to an
 # existing install and may contain live data; this script never deletes it.
@@ -92,9 +93,11 @@ try {
 }
 $HASH = Join-Path $DIST ($NAME + '_win64.sha256')
 if (Test-Path $HASH) { Remove-Item $HASH -Force }
-$hashValue = (Get-FileHash $ZIP -Algorithm SHA256).Hash
-($hashValue + '  ' + (Split-Path $ZIP -Leaf)) |
-    Set-Content -Path $HASH -Encoding ASCII
+$hashValue = (Get-FileHash $ZIP -Algorithm SHA256).Hash.ToLowerInvariant()
+$hashLine = $hashValue + '  ' + (Split-Path $ZIP -Leaf)
+[System.IO.File]::WriteAllText(
+    $HASH, $hashLine + "`r`n",
+    (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host '== 5/5 Install (preserve live data) =='
 # If rebuilding the same version, move its data aside before replacing the
