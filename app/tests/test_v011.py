@@ -8,10 +8,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from replica.application import points
-from replica.application import policy
-from replica.application import readonly
 from replica.adapters import bridge_api as RA
+from replica.application import points, policy, readonly
 from replica.domain import safety
 
 
@@ -71,6 +69,38 @@ class SemesterViewTest(unittest.TestCase):
         self.assertEqual(view['start_ms'], start_s * 1000)
         self.assertEqual(view['end_ms'], end_s * 1000)
         self.assertIn(view['days_left'], (29, 30))
+
+    def test_distance_goal_uses_metres_even_below_one_km(self):
+        view = RA.semester_view({}, {'semesterGoal': 500,
+                                      'validTotalDis': 250,
+                                      'goalMethod': 0})
+        self.assertEqual(view['goal_unit'], 'km')
+        self.assertEqual(view['goal_km'], 0.5)
+        self.assertEqual(view['done_km'], 0.25)
+        self.assertEqual(view['remaining_km'], 0.25)
+        self.assertIsNone(view['goal_count'])
+
+    def test_count_goal_method_two_uses_semester_fields(self):
+        view = RA.semester_view({}, {'sname': '体能训练 III',
+                                      'semesterGoal': 1,
+                                      'semesterValid': 0,
+                                      'goalMethod': 2})
+        self.assertEqual(view['goal_unit'], 'count')
+        self.assertIsNone(view['goal_km'])
+        self.assertIsNone(view['done_km'])
+        self.assertEqual(view['goal_count'], 1)
+        self.assertEqual(view['valid_count'], 0)
+        self.assertEqual(view['remaining_count'], 1)
+
+    def test_count_goal_method_one_uses_goal_count_fields(self):
+        view = RA.semester_view({}, {'semesterGoalCount': 30,
+                                      'validTotalCount': 12,
+                                      'goalMethod': 1})
+        self.assertEqual(view['goal_unit'], 'count')
+        self.assertEqual(view['goal_count'], 30)
+        self.assertEqual(view['valid_count'], 12)
+        self.assertEqual(view['remaining_count'], 18)
+        self.assertIsNone(view['goal_km'])
 
 
 class ReceiptMatchTest(unittest.TestCase):

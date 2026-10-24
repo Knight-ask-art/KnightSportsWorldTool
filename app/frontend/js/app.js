@@ -1323,6 +1323,7 @@ function clearAccountActivity(){
   LIVE.daily = null;
   LIVE.model = null;
   LIVE.records = []; LIVE.recordsLoaded = false; LIVE.recordsLoading = false;
+  LIVE.week = null; LIVE.weekLoaded = false;
   LIVE.weekError = null;
   LIVE.planError = null;
   LIVE.recordsError = null;
@@ -1339,6 +1340,13 @@ function clearAccountActivity(){
 }
 
 /* ---------------- session / account ---------------- */
+function deviceLabelText(s){
+  s = s || {};
+  const os = s.device_os
+    ? ((s.device_platform === 'ios' ? 'iOS ' : 'Android ') + s.device_os)
+    : '';
+  return [s.device_name, os].filter(Boolean).join(' · ');
+}
 function renderSession(){
   const s = LIVE.session || {};
   const logged = !!( (s.token_present || s.token) && !s.disabled );
@@ -1372,10 +1380,7 @@ function renderSession(){
     session: '手动',
     error: '读取失败'
   }[s.device_source] || '已冻结';
-  const osLabel = s.device_os
-    ? ((s.device_platform === 'ios' ? 'iOS ' : 'Android ') + s.device_os)
-    : '';
-  const deviceLabel = [s.device_name, osLabel].filter(Boolean).join(' · ');
+  const deviceLabel = deviceLabelText(s);
   $('#accDeviceChip').textContent = logged
     ? (s.device_source === 'error' ? '设备读取失败' : '设备 · ' + deviceSource)
     : '设备未加载';
@@ -1552,6 +1557,7 @@ function renderEmptyData(){
   LIVE.recordsLoaded = false;
   LIVE.recordsLoading = false;
   LIVE.recordsError = null;
+  LIVE.week = null; LIVE.weekLoaded = false;
   LIVE.weekError = null;
   LIVE.planError = null;
   LIVE.plan = null;
@@ -1954,6 +1960,7 @@ function updateFenceChip(){
 /* ---------------- overview ---------------- */
 function renderOverviewEmpty(){
   LIVE.recordsError = null;
+  LIVE.week = null; LIVE.weekLoaded = false;
   LIVE.weekError = null;
   LIVE.planError = null;
   LIVE.semester = null;
@@ -2037,14 +2044,21 @@ function renderSemesterInto(prefix, semester, error){
     if(source) source.textContent = error ? '失败' : '—';
     return;
   }
-  const goal = v.goal_km, got = v.done_km;
+  const countMode = v.goal_unit === 'count' ||
+    (v.goal_km == null && v.goal_count != null);
+  const goal = countMode ? v.goal_count : v.goal_km;
+  const got = countMode ? v.valid_count : v.done_km;
   const percent = v.completed_pct != null ? +v.completed_pct
     : (goal && got != null ? Math.min(100, got / goal * 100) : 0);
   if(title) title.textContent = v.sname || '本学期';
   if(pct) pct.textContent = (percent != null ? percent.toFixed(1) + '%' : '—') +
-    (v.goal_count ? (' · ' + (v.valid_count || 0) + '/' + v.goal_count + ' 次') : '');
-  if(done) done.innerHTML = got != null ? (got.toFixed(1) + '<small> km</small>') : '—';
-  if(left) left.innerHTML = v.remaining_km != null ? (v.remaining_km.toFixed(1) + '<small> km</small>') : '—';
+    (v.goal_count != null ? (' · ' + (v.valid_count || 0) + '/' + v.goal_count + ' 次') : '');
+  if(done) done.innerHTML = got != null
+    ? (countMode ? (got + '<small> 次</small>') : (got.toFixed(1) + '<small> km</small>'))
+    : '—';
+  if(left) left.innerHTML = countMode
+    ? (v.remaining_count != null ? (v.remaining_count + '<small> 次</small>') : '—')
+    : (v.remaining_km != null ? (v.remaining_km.toFixed(1) + '<small> km</small>') : '—');
   if(days) days.textContent = v.days_left != null
     ? (v.days_left <= 0 ? '已结束' : (v.days_left + ' 天')) : '—';
   if(bar) bar.style.width = Math.max(0, Math.min(100, percent)).toFixed(1) + '%';
@@ -2108,9 +2122,7 @@ function renderProfileEmpty(){
    'profCampus', 'profBody', 'profUid', 'profUnid'].forEach(id => setText(id, ''));
   setText('profLoginState', s.disabled ? '账号已停用'
     : (logged ? '已登录' : '未登录'));
-  setText('profDevice', logged
-    ? ([s.device_name, s.device_os ? ('Android ' + s.device_os) : '']
-        .filter(Boolean).join(' · ') || '—') : '—');
+  setText('profDevice', logged ? (deviceLabelText(s) || '—') : '—');
   setText('profSession', s.disabled ? '已停用'
     : (logged ? '已加载 token' : '未登录'));
   renderSemesterInto('prof', null, '');
@@ -2230,9 +2242,7 @@ function renderProfile(){
   setText('profUnid', p.unid || s.unid);
   setText('profLoginState', s.disabled ? '账号已停用'
     : (logged ? (p.verified ? '已登录 · 已验证' : '已登录') : '未登录'));
-  setText('profDevice', logged
-    ? ([s.device_name, s.device_os ? ('Android ' + s.device_os) : '']
-        .filter(Boolean).join(' · ') || '—') : '—');
+  setText('profDevice', logged ? (deviceLabelText(s) || '—') : '—');
   setText('profSession', logged ? '已加载 token' : '未登录');
 
   const sem = d.semester || LIVE.semester;
@@ -2421,6 +2431,7 @@ async function loadOverview(){
   if(!hasSession()){
     LIVE.records = []; LIVE.recordsLoaded = false;
     LIVE.recordsLoading = false; LIVE.recordsError = null;
+    LIVE.week = null; LIVE.weekLoaded = false;
     LIVE.weekError = null; LIVE.planError = null;
     renderRecords();
     renderOverviewEmpty();
@@ -2445,6 +2456,8 @@ async function loadOverview(){
   const weekOk = liveOk(wj);
   const weeks = weekOk ? (((wj.data && wj.data.weeks) || [])) : [];
   const week = weeks[weeks.length - 1] || null;
+  LIVE.week = week;
+  LIVE.weekLoaded = weekOk;
   LIVE.weekError = weekOk ? null : (wj.message || '周汇总加载失败');
   LIVE.planError = liveOk(pj) ? null : (pj.message || '计划生成失败');
   LIVE.plan = liveOk(pj) ? (pj.data || null) : null;
@@ -2455,6 +2468,49 @@ async function loadOverview(){
   if(!weekOk) liveLog('周汇总加载失败', LIVE.weekError, 'warn');
   if(!liveOk(pj)) liveLog('计划生成失败', LIVE.planError, 'warn');
   if(!liveOk(sj)) liveLog('学期数据加载失败', LIVE.semesterError, 'warn');
+}
+
+/* The overview's right-hand cards depend on data that arrives after its first
+ * paint (points, rules, model, week count).  Keep them reactive instead of
+ * baking the values into renderOverview and leaving stale "未加载/未配置". */
+function refreshOverviewState(){
+  const wrap = $('#ovChecklist');
+  if(!wrap || !hasSession()) return;
+  const tokenOk = !!(LIVE.checked && liveOk(LIVE.checked));
+  const pointsOk = livePoints.length > 0;
+  const rulesOk = !!(LIVE.rules && LIVE.rules.configured);
+  const checklist = [
+    {ok: tokenOk, text: tokenOk ? 'token 有效' : 'token 未验证'},
+    {ok: pointsOk, text: pointsOk ? ('点位已加载 · ' + livePoints.length + ' 个') : '点位未加载'},
+    {ok: rulesOk, text: rulesOk ? '学校要求已配置' : '学校要求未配置'}
+  ];
+  wrap.innerHTML = checklist.map(x =>
+    `<div class="mini-check ${x.ok ? 'done' : 'warn'}">${esc(x.text)}</div>`).join('');
+
+  const cap = LIVE.rules && LIVE.rules.configured && LIVE.rules.rules
+    ? LIVE.rules.rules.max_per_day : null;
+  if($('#ovTodayLimit')) $('#ovTodayLimit').textContent = cap
+    ? ('/' + cap + ' 次') : '/— 次';
+
+  if($('#ovRhythm')){
+    const week = LIVE.week;
+    if(LIVE.weekLoaded || LIVE.weekError){
+      $('#ovRhythm').textContent = !LIVE.weekLoaded
+        ? ('周汇总加载失败：' + LIVE.weekError)
+        : (`本周已跑 ${(week && week.count) || 0} 次` +
+           (cap ? ` · 学校每日上限 ${cap} 次` : ' · 未配置学校每日上限'));
+    }
+  }
+
+  if($('#ovModelChip')){
+    const modelOk = !!(LIVE.model && LIVE.model.configured);
+    const modelBad = modelOk && LIVE.model.verdict === 'fail';
+    $('#ovModelChip').textContent = modelOk
+      ? ('模型 ' + LIVE.model.score)
+      : (rulesOk ? '模型待预览' : '模型未配置');
+    $('#ovModelChip').className = 'chip ' + (modelOk ? (modelBad ? 'warn' : 'ok') : 'warn');
+    $('#ovModelChip').innerHTML = '<i></i>' + $('#ovModelChip').textContent;
+  }
 }
 function renderOverview(records, week, weeks, semester){
   const bp = beijingParts();
@@ -2476,8 +2532,6 @@ function renderOverview(records, week, weeks, semester){
     }
     $('#ovTodayCount').textContent = String(today.length);
   }
-  const cap = LIVE.rules && LIVE.rules.configured && LIVE.rules.rules ? LIVE.rules.rules.max_per_day : null;
-  $('#ovTodayLimit').textContent = cap ? ('/' + cap + ' 次') : '/— 次';
 
   if(week){
     $('#ovKm').innerHTML = (+week.distance_km || 0).toFixed(1) + '<small>km</small>';
@@ -2511,13 +2565,6 @@ function renderOverview(records, week, weeks, semester){
     : (records.length ? records.slice(0, 4).map(overviewRecordRow).join('')
                       : '<div class="empty-state">暂无跑步记录。</div>');
 
-  const checklist = [
-    {ok: !!(LIVE.checked && liveOk(LIVE.checked)), text: LIVE.checked && liveOk(LIVE.checked) ? 'token 有效' : 'token 未验证'},
-    {ok: livePoints.length > 0, text: livePoints.length ? ('点位已加载 · ' + livePoints.length + ' 个') : '点位未加载'},
-    {ok: !!(LIVE.rules && LIVE.rules.configured), text: LIVE.rules && LIVE.rules.configured ? '学校要求已配置' : '学校要求未配置'}
-  ];
-  $('#ovChecklist').innerHTML = checklist.map(x => `<div class="mini-check ${x.ok ? 'done' : 'warn'}">${esc(x.text)}</div>`).join('');
-
   const slot = nextPlanSlot(LIVE.plan && (LIVE.plan.slots || []));
   if(slot){
     $('#ovPlan').innerHTML = `${esc(slot.day || '')}<br>${esc(slot.distance_km)} km · ${esc(slot.pace_hhmmss || '')} · ${esc(slot.route || '')}`;
@@ -2525,16 +2572,7 @@ function renderOverview(records, week, weeks, semester){
     $('#ovPlan').textContent = LIVE.planError
       ? ('计划生成失败：' + LIVE.planError) : '暂时没有可用计划。';
   }
-  const weekCount = week ? (week.count || 0) : null;
-  $('#ovRhythm').textContent = weekCount === null
-    ? (LIVE.weekError ? ('周汇总加载失败：' + LIVE.weekError) : '本周还没有记录。')
-    : (`本周已跑 ${weekCount} 次` + (cap ? ` · 学校每日上限 ${cap} 次` : ' · 未配置学校每日上限'));
-  const modelOk = !!(LIVE.model && LIVE.model.configured);
-  const modelBad = modelOk && LIVE.model.verdict === 'fail';
-  const rulesConfigured = !!(LIVE.rules && LIVE.rules.configured);
-  $('#ovModelChip').textContent = modelOk ? ('模型 ' + LIVE.model.score) : (rulesConfigured ? '模型待预览' : '模型未配置');
-  $('#ovModelChip').className = 'chip ' + (modelOk ? (modelBad ? 'warn' : 'ok') : 'warn');
-  $('#ovModelChip').innerHTML = '<i></i>' + $('#ovModelChip').textContent;
+  refreshOverviewState();
   renderSession();
 }
 
@@ -2653,6 +2691,7 @@ function clearRecordDetail(){
   const tag = $('#rdTag'); if(tag){ tag.textContent = '未选择'; tag.className = 'tag'; }
   if($('#rdTitle')) $('#rdTitle').textContent = '点左侧记录查看详情';
   if($('#rdReasons')) $('#rdReasons').innerHTML = '';
+  if($('#rdReasonSummary')) $('#rdReasonSummary').textContent = '';
   if($('#rdVerdict')){ $('#rdVerdict').hidden = true; $('#rdVerdict').textContent = ''; }
   if($('#rdCopy')){ $('#rdCopy').disabled = true; delete $('#rdCopy').dataset.rrid; }
   LIVE.lastDetail = null;
@@ -2829,6 +2868,13 @@ async function selectRecord(i){
       verdict.hidden = true;
       verdict.textContent = '';
     }
+  }
+  if($('#rdReasonSummary')){
+    const passed = reasons.filter(y => y.complete).length;
+    $('#rdReasonSummary').textContent = reasons.length
+      ? (passed + '/' + reasons.length + ' 通过') : '';
+    $('#rdReasonSummary').className = 'mini ' +
+      (badReasons.length ? 'warn' : (reasons.length ? 'ok' : ''));
   }
   $('#rdReasons').innerHTML = reasons.length
     ? reasons.map(y => `<li class="${y.complete ? '' : 'miss'}">${esc(y.reason)}${y.complete ? '' : ' · 未通过'}</li>`).join('')
@@ -3917,6 +3963,7 @@ function refreshChecks(){
   const dot = $('#submitDot'); if(dot) dot.classList.toggle('ok', all);
   if($('#submitRun')) $('#submitRun').disabled = !hasSession() || !verified || LIVE.submitting;
   if($('#submitHint')) $('#submitHint').textContent = all ? '检查通过。提交后该时段会被回执锁定，不能重复提交。' : '先补齐上面的检查项；提交仍会由后端再次校验。';
+  refreshOverviewState();
 }
 
 function liveDockClick(){

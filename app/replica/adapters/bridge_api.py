@@ -132,12 +132,53 @@ def semester_view(summary, personal):
             n *= 1000
         return n
 
-    goal_km = km(pick('semesterGoal', 'requiredDistance', 'goalDistance'))
-    done_km = km(pick('curValidDis', 'semesterValidDis', 'validTotalDis',
-                      'semesterDis'))
-    goal_count = pick('semesterGoalCount', 'requiredCount')
-    valid_count = pick('semesterValidCount', 'semesterValid',
-                       'validTotalCount', 'semesterCount')
+    raw_goal_distance = pick('semesterGoal', 'requiredDistance',
+                             'goalDistance')
+    raw_done_distance = pick('curValidDis', 'semesterValidDis',
+                             'validTotalDis', 'semesterDis')
+    raw_goal_count = pick('semesterGoalCount', 'requiredCount')
+    raw_valid_count = pick('semesterValidCount', 'semesterValid',
+                           'validTotalCount', 'semesterCount', 'validCount')
+    try:
+        goal_method = int(pick('goalMethod'))
+    except (TypeError, ValueError):
+        goal_method = None
+
+    def metres_to_km(v):
+        return round(v / 1000.0, 2) if v is not None else None
+
+    if goal_method == 0:
+        # Distance goal: the app compares validTotalDis (metres) with
+        # semesterGoal / 1000.  Do not apply the heuristic here: a 500 m
+        # goal would otherwise become 500 km.
+        goal_km = metres_to_km(raw_goal_distance)
+        done_km = metres_to_km(raw_done_distance)
+        goal_count = None
+        valid_count = None
+        goal_unit = 'km'
+    elif goal_method in (1, 2):
+        # Count goal.  goalMethod=2 uses semesterGoal/semesterValid directly
+        # (the official app shows them with the unit "次"); goalMethod=1 uses
+        # semesterGoalCount/validTotalCount, with the same fields as fallback.
+        goal_count = raw_goal_count
+        if goal_count is None or goal_count <= 0:
+            goal_count = raw_goal_distance
+        valid_count = raw_valid_count
+        if valid_count is None:
+            valid_count = raw_done_distance
+        goal_km = None
+        done_km = None
+        goal_unit = 'count'
+    else:
+        # Older/unknown payloads: keep the old heuristic and expose both views
+        # when the server returned both.
+        goal_km = km(raw_goal_distance)
+        done_km = km(raw_done_distance)
+        goal_count = raw_goal_count
+        valid_count = raw_valid_count
+        goal_unit = ('km' if goal_km is not None
+                     else ('count' if goal_count is not None else None))
+
     start_ms = timestamp_ms(pick('startDate', 'semesterStartTime',
                                  'mSemesterStartTime'))
     end_ms = timestamp_ms(pick('endDate', 'semesterEndTime',
@@ -162,6 +203,8 @@ def semester_view(summary, personal):
             days_left = None
     return {
         'sname': sname,
+        'goal_method': goal_method,
+        'goal_unit': goal_unit,
         'goal_km': goal_km,
         'done_km': done_km,
         'remaining_km': remaining_km,

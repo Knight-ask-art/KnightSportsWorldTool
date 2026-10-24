@@ -7,7 +7,6 @@ blocking external font request, or break the external CSS/JS links.
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / 'frontend'
 HTML = (FRONTEND / 'index.html').read_text(encoding='utf-8')
@@ -139,6 +138,9 @@ def test_device_profile_is_single_source_and_visible():
     assert 'device_platform' in JS
     assert "s.device_platform === 'ios'" in JS
     assert 'iOS 提交链尚未真实验证' in JS
+    assert 'function deviceLabelText' in JS
+    assert "deviceLabelText(s)" in JS
+    assert "Android ' + s.device_os" not in JS
     assert '设备指纹在本机生成一次' in JS
     assert 's.deviceName' not in JS
     assert 's.deviceModel' not in JS
@@ -181,3 +183,20 @@ def test_submit_is_blocked_while_account_switch_is_busy():
 
 def test_no_blocking_external_font_request():
     assert 'cdn.jsdelivr.net' not in SOURCE
+
+
+def test_overview_state_is_reactive():
+    # Points, rules and the model arrive after the first overview paint.
+    # Baking "未加载/未配置" into renderOverview left the checklist stale.
+    assert 'function refreshOverviewState' in JS
+    assert 'refreshOverviewState();' in JS
+    assert 'LIVE.weekLoaded' in JS
+    assert "点位已加载 · ' + livePoints.length" in JS
+    assert '学校要求已配置' in JS
+
+
+def test_semester_count_goal_is_rendered_in_runs():
+    # goalMethod=2 means semesterGoal/semesterValid are counts, not km.
+    assert "v.goal_unit === 'count'" in JS
+    assert "got + '<small> 次</small>'" in JS
+    assert "v.remaining_count + '<small> 次</small>'" in JS
