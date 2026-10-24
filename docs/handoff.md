@@ -1,7 +1,7 @@
 # 交接：好想跑 v0.1.2（app）
 
 > **2026-10-25 v0.1.2 稳定收尾**：版本号/前端版本统一、跨版本 `data/` 自动迁移、
-> 配速/步频软提醒、不可行路线明确报错、OBS 回读 SHA-256 校验。回归基线 `pytest 202 passed`。
+> 配速/步频软提醒、不可行路线明确报错、OBS 回读 SHA-256 校验。回归基线 `pytest 203 passed`。
 >
 > **2026-10-25 iOS 真机验证通过**：2026-10-25 00:52（北京时间）用 v0.1.1 提交了
 > 2026-10-23 12:58–13:36:49 的补跑，rrid `1344757460`，4.13 km / 2329 s /
@@ -90,6 +90,7 @@
   目标目录 186.1 MB，zip 不含 `data/`。首次安装自动从 v0.1.1 迁移 9 个 data 文件
   （token、iOS 指纹、学校规则、学期目标、点位缓存、回执/限额），备份在
   `app/backup/好想跑_v0.1.1-data-20261025-011052/`；v0.1.1 目录保留可回滚。
+  **不要同时运行 v0.1.1 和 v0.1.2**：回执/限额各存一份，同时开会失去跨版本防重保护。
   冻结验证：UI 显示 v0.1.2；迁移后 `token_present=true`、`platform=ios`、
   `iPhone 15 Pro Max`；学期 18.24/18.87、室内 0/1、`days_left=5`；计划 `days=6`
   只到 10/30；rrid `1344757460` 详情四项全 0，轨迹来源 `OBS · 466 点`
@@ -131,8 +132,8 @@
   `accounts_emu.json` / `device_profile.json` / `school_rules.json` 等是合法 JSON；zip 仍不含
   `data/`。`-MigrateDataFrom` 可指定来源，`-NoDataMigration` 可关闭。
 - **配速/步频软提醒**：`plausibility_warnings()` 对配速 <4.5 或 >8.5 min/km、步频 <150 或
-  >180 spm 返回黄色提醒；预览模型卡、提交确认框和日志都会显示，但**不阻止提交**。已验证的
-  9'40"/117 spm 记录仍可提交。
+  >180 spm 返回黄色提醒；预览模型卡、提交确认框和日志都会显示，模型卡 tag/概览 chip
+  也会同步转黄，但**不阻止提交**。已验证的 9'40"/117 spm 记录仍可提交。
 - **不可行路线明确报错**：闭合路线航点跨度超过目标距离、开放路线长度超过目标距离时，造数前
   抛 `ValueError`（“路线跨度/长度 X m 超过目标距离 Y m”），不再生成一条最后才被
   `teleport-detected`/`geometry` 拒绝的坏数据。
@@ -140,7 +141,7 @@
   不一致会重试 3 次。汇总明确区分 `uploaded`（PUT 成功）与 `verified`（GET 哈希一致）。
   记录详情新增「轨迹来源」：`OBS · N 点` / `记录内联 · N 点`；OBS 读取失败标红并保留错误文本。
   已验证的 iOS 记录详情为 `json_from_obs=true`、`has_obs_track=true`、`obs_error=''`、466 点。
-- 回归：`pytest 202 passed`；`test_pipeline` 连跑通过；`node --check` / `app.py --check` 通过。
+- 回归：`pytest 203 passed`；`test_pipeline` 连跑通过；`node --check` / `app.py --check` 通过。
 
 ---
 

@@ -101,3 +101,12 @@ def test_record_detail_exposes_the_obs_source():
     js = (ROOT / 'frontend' / 'js' / 'app.js').read_text(encoding='utf-8')
     assert 'id="rdSource"' in html
     assert 'json_from_obs' in js and 'OBS 读取失败' in js
+
+
+def test_frontend_warning_constants_match_backend():
+    js = (ROOT / 'frontend' / 'js' / 'app.js').read_text(encoding='utf-8')
+    assert f'PLAUSIBLE_PACE_MIN = {PLAUSIBLE_PACE_MIN}' in js
+    assert f'PLAUSIBLE_PACE_MAX = {PLAUSIBLE_PACE_MAX}' in js
+    assert f'PLAUSIBLE_CADENCE_MIN = {PLAUSIBLE_CADENCE_MIN}' in js
+    assert f'PLAUSIBLE_CADENCE_MAX = {PLAUSIBLE_CADENCE_MAX}' in js
+    assert '参数提醒' in js

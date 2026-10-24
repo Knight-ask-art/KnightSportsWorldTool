@@ -2767,9 +2767,15 @@ function renderRecordMap(detail){
   if($('#rdSaveRoute')) $('#rdSaveRoute').disabled = false;
 }
 function clearRecordDetail(){
-  ['rdPace','rdTime','rdCadence','rdSteps','rdTrack','rdCheat','rdPolicy','rdRrid'].forEach(id => {
+  ['rdPace','rdTime','rdCadence','rdSteps','rdTrack','rdSource','rdCheat','rdPolicy','rdRrid'].forEach(id => {
     const el = $('#' + id); if(el) el.textContent = '—';
   });
+  ['rdCheat','rdPolicy','rdSource'].forEach(id => {
+    const el = $('#' + id); if(el){ el.className = ''; el.title = ''; }
+  });
+  const appealRow = $('#rdAppealRow');
+  if(appealRow) appealRow.hidden = true;
+  if($('#rdAppeal')) $('#rdAppeal').textContent = '—';
   const tag = $('#rdTag'); if(tag){ tag.textContent = '未选择'; tag.className = 'tag'; }
   if($('#rdTitle')) $('#rdTitle').textContent = '点左侧记录查看详情';
   if($('#rdReasons')) $('#rdReasons').innerHTML = '';
@@ -3948,11 +3954,13 @@ function renderModel(){
   }
   score.textContent = String(m.score);
   const pw = LIVE.modelWarnings || [];
+  const effective = m.verdict === 'fail' ? 'fail'
+    : ((m.verdict === 'warn' || pw.length) ? 'warn' : 'pass');
   const baseSub = m.summary || ((m.verdict === 'pass' ? '合格' : m.verdict === 'warn' ? '有提醒' : '不合格') +
     (m.warnings && m.warnings.length ? (' · ' + m.warnings.length + ' 项注意') : ''));
   sub.textContent = baseSub + (pw.length ? (' · 参数 ' + pw.length + ' 项提醒') : '');
-  tag.textContent = m.verdict === 'pass' ? '合格' : m.verdict === 'warn' ? '提醒' : '不合格';
-  tag.className = 'tag ' + (m.verdict === 'pass' ? 'ok' : m.verdict === 'warn' ? 'warn' : 'warn');
+  tag.textContent = effective === 'pass' ? '合格' : effective === 'warn' ? '提醒' : '不合格';
+  tag.className = 'tag ' + (effective === 'pass' ? 'ok' : 'warn');
   bar.style.width = Math.max(0, Math.min(100, +m.score || 0)) + '%';
   empty.hidden = true; checks.hidden = false;
   checks.innerHTML = (m.checks || []).map(c => {
@@ -3961,16 +3969,18 @@ function renderModel(){
     return `<li><span>${esc(c.label)}</span><b>${esc(c.value)}</b><i class="${cls}">${txt}</i></li>`;
   }).join('') + pw.map(w =>
     `<li><span>${esc(w)}</span><b>参数</b><i class="warn">提醒</i></li>`).join('');
-  $('#runModelTag').textContent = '模型 ' + m.score;
-  $('#runModelTag').className = 'tag ' + (m.verdict === 'fail' ? 'warn' : 'ok');
+  $('#runModelTag').textContent = '模型 ' + m.score + (pw.length ? ' · 参数提醒' : '');
+  $('#runModelTag').className = 'tag ' + (effective === 'pass' ? 'ok' : 'warn');
   $('#runModelLink').textContent = '查看';
-  $('#genState').textContent = '模型就绪'; $('#genState').className = 'ok';
-  $('#runModelChip').textContent = '模型 ' + m.score; $('#runModelChip').className = 'chip ' + (m.verdict === 'fail' ? 'warn' : 'ok');
+  $('#genState').textContent = '模型就绪' + (pw.length ? ' · 参数提醒' : '');
+  $('#genState').className = effective === 'pass' ? 'ok' : 'warn';
+  $('#runModelChip').textContent = '模型 ' + m.score + (pw.length ? ' · 参数提醒' : '');
+  $('#runModelChip').className = 'chip ' + (effective === 'pass' ? 'ok' : 'warn');
   $('#runModelChip').innerHTML = '<i></i>' + $('#runModelChip').textContent;
   if($('#logModel')) $('#logModel').textContent = m.score + ' 分';
   if($('#ovModelChip')){
-    $('#ovModelChip').textContent = '模型 ' + m.score;
-    $('#ovModelChip').className = 'chip ' + (m.verdict === 'fail' ? 'warn' : 'ok');
+    $('#ovModelChip').textContent = '模型 ' + m.score + (pw.length ? ' · 参数提醒' : '');
+    $('#ovModelChip').className = 'chip ' + (effective === 'pass' ? 'ok' : 'warn');
     $('#ovModelChip').innerHTML = '<i></i>' + $('#ovModelChip').textContent;
   }
 }
