@@ -69,6 +69,7 @@ adapters  ──▶ application ──▶ domain
 | 路径 | 内容 | 入库/打包 |
 |---|---|---|
 | `app/data/` | 会话、设备指纹、限额、回执、点位缓存、路线库 | 否 |
+| `app/data/device_profile.json` | 本机设备指纹（登录/提交共用；旧指纹备份同目录） | 否 |
 | `app/backup/` | 本机数据备份 | 否 |
 | `app/dist/` | 构建产物 | 否 |
 | `private/data/` | 采集样本（含轨迹） | 否 |

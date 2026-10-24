@@ -102,9 +102,19 @@ def _keepalive_cli(args):
 # --------------------------------------------------------------------------
 
 def do_login(args):
+    from ..application import device_profile as DP
     from ..application.login_flow import login
+    store = DP.default_store_dir()
+    device = DP.load_or_create(store, legacy_session=DP.read_session(store))
+    if args.device_id:
+        device = dict(device, DeviceId=args.device_id)
+    if args.device_model:
+        device = dict(device, deviceName=args.device_model)
+    if args.os_version:
+        device = dict(device, osVersion=args.os_version)
     log('[1/6] 登录（纯协议，本地解极验）...')
-    sess = login(args.user, args.password, captcha_id=args.captcha_id, log=log)
+    sess = login(args.user, args.password, captcha_id=args.captcha_id, log=log,
+                 device=device)
     log('      uid=%s unid=%s name=%s'
         % (sess['uid'], sess['unid'], sess['profile'].get('name')))
     return sess
@@ -450,8 +460,8 @@ def main(argv=None, client_factory=None):
     auth.add_argument('--uid', default=None)
     auth.add_argument('--unid', type=int, default=47203)
     auth.add_argument('--device-id', default=None)
-    auth.add_argument('--device-model', default='NCO-AL00')
-    auth.add_argument('--os-version', default='12')
+    auth.add_argument('--device-model', default=None)
+    auth.add_argument('--os-version', default=None)
 
     run_g = ap.add_argument_group('跑步')
     run_g.add_argument('--km', type=float, default=2.5)
@@ -581,19 +591,29 @@ def main(argv=None, client_factory=None):
         report['login'] = {k: sess['profile'].get(k) for k in
                            ('uid', 'name', 'campusName', 'unid')}
 
-    if args.device_id:
-        acct.DeviceId = args.device_id
-    acct.deviceName = args.device_model
-    acct.osVersion = args.os_version
-
-    # device fingerprint: remembered once, never silently rotated
+    # Device fingerprint: the installation profile is the single source of
+    # truth.  --device-id/--device-model/--os-version are one-run overrides so
+    # login and submit cannot drift apart.
+    from ..application import device_profile as DP
     from ..application import identity
-    dev = identity.resolve(acct.uid, explicit=args.device_id,
-                           defaults={'DeviceId': acct.DeviceId})
-    if dev.get('DeviceId'):
-        acct.DeviceId = dev['DeviceId']
+    store = DP.default_store_dir()
+    device = DP.load_or_create(store, legacy_session=DP.read_session(store))
     if args.device_id:
-        log('   设备号已记住（后续无需再传）')
+        device['DeviceId'] = args.device_id
+    if args.device_model:
+        device['deviceName'] = args.device_model
+    if args.os_version:
+        device['osVersion'] = args.os_version
+    try:
+        DP.apply_to_account(acct, device)
+    except Exception as e:  # noqa: BLE001
+        return _fail('设备指纹无效: %s' % e, 1)
+    if args.device_id:
+        try:
+            identity.remember(acct.uid, DeviceId=args.device_id)
+        except Exception as e:  # noqa: BLE001
+            log('   设备号记录失败（不影响本次提交）: %s' % e)
+        log('   本次运行使用手动设备号；不传时回到本机设备指纹')
 
     if args.dry_run:
         log('   (--dry-run：不提交)')

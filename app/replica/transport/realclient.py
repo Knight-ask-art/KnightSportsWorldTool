@@ -52,6 +52,7 @@ class Account:
     logicPixel: str = '600x1066'
     appInstallTime: str = '1785436971435'
     appUpdateTime: str = '1788581965711'
+    isRoot: str = '1'
     # The server enforces a minimum client version: api/v70103/runModePolicy
     # answers `11019 ERROR:版本过低，请更新至7.3.10版本` for anything older, and
     # the official CDN ships sw_7.3.11.apk as the current build.
@@ -115,7 +116,7 @@ def build_headers(acct: Account, ts: str, nonce: str) -> dict:
         'appVersion': acct.appVersion,
         'physicPixel': acct.physicPixel,
         'logicPixel': acct.logicPixel,
-        'isRoot': '1',
+        'isRoot': acct.isRoot,
         'osType': '0',
         'uid': acct.uid,
         'IMEI': '',

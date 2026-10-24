@@ -2,7 +2,7 @@
 
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 115 passed`、`selfcheck 22/22`。
+> 回归基线更新为 `pytest 137 passed`、`selfcheck 23/23`。
 
 > 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
@@ -31,6 +31,13 @@
   `none_found / violations / unknown / failed` 四种状态显式区分，
   `unknown` 不会显示成“正常”。
 - 回归（重构后）：`pytest` 115 passed；`replica.selfcheck` 22/22；`node --check` 通过。
+- **设备指纹（2026-10-24 16:15）**：新增 `replica/application/device_profile.py`；
+  每个 `data` 目录一份随机 Android 指纹，登录/提交/OBS 共用。旧 v0.1.1 数据已显式
+  rotate 一次：新 DeviceId `72a0…940d`、机型 `22081212C / Android 14`、
+  `arm64-v8a`、`isRoot=0`；旧指纹 `afa5…4311` 已备份到
+  `backup/v0.1.1-data-20261024-1536/data/device_profile.backup-20261024-161514.json`。
+  新安装首次运行随机；旧数据未 rotate 时冻结原指纹。真实登录/提交尚未用新指纹验证。
+- 回归（设备指纹后）：`pytest` 137 passed；`selfcheck` 23/23；`node --check` 通过。
 - 本轮 bug 修复：`build.ps1` 改为版本化输出且保留同版本 `data/`；学期空响应
   不再显示空白成功；样本库采集改为增量合并；OBS/回读增加 uuid 回退；
   日志时间统一北京时间；下载 blob 延迟释放。
@@ -74,8 +81,8 @@ UI 点位按校区固定范围拉取（提交按目标距离补点） ✅ 离线
 **回归现状（自检 2026-10-24，结构重构后）**
 
 ```
-python -m replica.selfcheck                     22/22 模块 PASS（含 tokenkeeper）
-python -m pytest tests -q                       115 passed
+python -m replica.selfcheck                     23/23 模块 PASS（含 tokenkeeper / device_profile）
+python -m pytest tests -q                       137 passed
 python tests/legacy/legacy_bridge_suite.py      38 passed
 python tests/legacy/legacy_http_suite.py        23 passed
 python -m pytest ../private/research/tests -q    3 passed

@@ -7,7 +7,9 @@
 | 路径 | 内容 | 能不能外发 |
 |---|---|---|
 | `accounts_emu.json` | UI/CLI 保存的会话（uid、token、校区、中心点、keepalive 状态） | **不能** |
-| `devices/<uid>.json` | 设备指纹（DeviceId、型号、系统版本…） | **不能** |
+| `device_profile.json` | 本机设备指纹（DeviceId、机型、Android 版本、安装/更新时间）；登录和提交共用 | **不能** |
+| `device_profile.backup-*.json` | 更换设备指纹前的旧指纹备份（回滚用） | **不能** |
+| `devices/<uid>.json` | CLI 手动 `--device-id` 的本次运行覆盖记录（审计用；不自动生效） | **不能** |
 | `limits/<uid>.json` | 按日期存的提交计数（北京时间） | 可以 |
 | `submission_receipts/<uid>__<unid>.json` | 提交回执（状态、rrid、时间窗） | 可以（不含 token/坐标） |
 | `points_cache.json` | 打卡点缓存（300 秒，按目标距离分键） | 可以 |
@@ -23,6 +25,15 @@
 > 登录页勾选「记住密码」时，密码单独走 Windows DPAPI 加密的 `data/saved_login.json`，
 > 不会写进会话、回执或诊断包；取消勾选立即删除。
 > `disabled: true` 的会话不会被探测或重登——这是停用旧账号的硬开关。
+>
+> **设备指纹**：`device_profile.json` 每个 data 目录只生成一次，之后登录、提交、回读
+> 都读同一份，不会逐请求漂移。旧数据首次升级时冻结原来的提交指纹（`source=legacy-*`），
+> 不会静默换机；要更换必须显式执行
+> `python -m replica.application.device_profile --data-dir <data> --rotate`，旧指纹会先
+> 备份到 `device_profile.backup-*.json`。回滚时把备份文件复制回
+> `device_profile.json` 并重启程序。**升级/迁移时复制整个 `data/` 目录（含
+> `device_profile.json`）；只复制 `accounts_emu.json` 会被当成旧数据并冻结旧指纹。**
+> **`data/` 不参与打包；把整个 `data/` 复制给别人等于复制同一台设备。**
 
 ---
 

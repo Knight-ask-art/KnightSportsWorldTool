@@ -90,7 +90,10 @@ checkGeeUse
   → login（手机号 + 密码）
 ```
 
-- 设备指纹按 uid 存在 `data/devices/<uid>.json`，下次复用，避免“设备突然变了”。
+- 设备指纹每个 `data` 目录生成一次，保存在 `data/device_profile.json`；登录和提交
+  共用这一份。旧数据升级时冻结原来的提交指纹（`source=legacy-*`），要更换必须显式
+  rotate，旧指纹会备份到 `device_profile.backup-*.json`。CLI 的 `--device-id` 只对
+  本次运行做手动覆盖，并记录到 `data/devices/<uid>.json` 供审计；下次不自动套用。
 - 密码错误 → `10175`；账号在别处在线 → `10121`。
 
 ---
@@ -264,6 +267,10 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_get_routes` | — | 读取本机 `data/routes.json` 路线库 |
 | `real_save_routes` | `routes` | 整体替换并校验路线库，替代仅靠 localStorage |
 | `real_diagnostics` | — | 生成脱敏诊断包（不含 token/密码/uid/坐标/IP） |
+| `real_get_session` | — | 返回脱敏会话；`device_name`、`device_os`、`device_source` 是本机实际生效的设备指纹，`device_id_masked` 只露首尾 |
+
+`device_source`：`generated`（本机随机）、`legacy-default` / `legacy-session`
+（旧数据冻结）、`rotated`（已更换）、`session`（手动覆盖）、`error`（指纹文件损坏）。
 
 `date` 为 `YYYY-MM-DD`（北京时间），只接受今天..3 天前；`start_time` 为
 `HH:MM` 或 `null`（窗口内随机）。CLI 仍可用 `--days-ago N` 作为等价简写。

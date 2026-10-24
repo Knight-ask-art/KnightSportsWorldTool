@@ -72,6 +72,20 @@ def test_logout_without_session_is_a_clean_noop(tmp_path):
     assert out['data']['local_only'] is True
 
 
+def test_corrupt_device_profile_does_not_block_local_logout(tmp_path):
+    api = _api(tmp_path)
+    _login(api)
+    (tmp_path / 'device_profile.json').write_text('{broken', encoding='utf-8')
+    api._invalidate_device()
+
+    out = api.real_logout(local_only=True)
+    assert out['code'] == 200
+    assert out['data']['local_only'] is True
+    assert out['data']['background'] is False
+    session = api._read_session()
+    assert 'token' not in session and 'uid' not in session
+
+
 def test_local_only_logout_returns_before_network(tmp_path, monkeypatch):
     api = _api(tmp_path)
     _login(api)

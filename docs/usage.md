@@ -56,6 +56,14 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 | **我的** | 个人资料、本学期进度、违规自查 | 资料来自 `user/info`；违规只读，`unknown` 不会显示成正常 |
 | **设置** | 11 项学校要求、代理/高德 Key、诊断包 | 登录后优先从服务器自动读取；未返回项留空，不猜规则 |
 
+> **设备指纹**：每个 `data` 目录首次运行生成一份随机 Android 指纹，保存在
+> `data/device_profile.json`；登录、提交、OBS 回读共用同一份。旧数据升级会冻结
+> 原来的提交指纹，不会静默换机；更换需显式执行
+> `python -m replica.application.device_profile --data-dir <data> --rotate`，旧指纹
+> 会先备份。账号页显示实际生效的机型 / Android 版本 / 脱敏 DeviceId 和来源
+> （本机随机 / 旧版冻结 / 已更换）。升级/迁移时复制整个 `data/` 目录，不要只复制
+> `accounts_emu.json`，否则会回退到旧指纹。
+
 ### 画路线
 
 1. 登录后打开跑步页；围栏和点位自动加载（有缓存）。点「刷新」强制拉取。
@@ -194,9 +202,9 @@ python -m replica.pipeline --plan 1
 | `--token` | — | 已有 token，跳过登录 |
 | `--uid` | — | 配合 `--token` 必填 |
 | `--unid` | `47203` | 学校/校区 ID |
-| `--device-id` | 自动 | 设备指纹；不填会从 `data/devices/<uid>.json` 复用 |
-| `--device-model` | `NCO-AL00` | 设备型号 |
-| `--os-version` | `12` | Android 版本 |
+| `--device-id` | 本机设备指纹 | 仅本次运行手动覆盖 DeviceId；不填时用 `data/device_profile.json`。传了会记录到 `devices/<uid>.json` 供审计，下次不自动覆盖 |
+| `--device-model` | 跟随设备指纹 | 仅本次运行覆盖机型；只用于对照测试 |
+| `--os-version` | 跟随设备指纹 | 仅本次运行覆盖 Android 版本；只用于对照测试 |
 
 ### 4.1.1 token 保活
 
@@ -329,7 +337,7 @@ python -m app.replica.pipeline --plan 14
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `JHP_DATA_DIR` | `app/data` | 回执、每日上限、设备指纹的根目录 |
+| `JHP_DATA_DIR` | `app/data` | 回执、每日上限、会话、设备指纹 `device_profile.json` 的根目录 |
 | `JHP_POINTS_CACHE` | `app/data/points_cache.json` | 点位缓存文件 |
 | `JHP_AMAP_KEY` | — | 高德 Web 服务 Key（吸附道路用） |
 | `JHP_PROXY` | — | 同 `--proxy` |

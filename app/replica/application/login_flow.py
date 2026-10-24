@@ -23,6 +23,7 @@ import uuid
 
 from ..transport import gt4 as GT4
 from ..transport.realclient import Account, RealClient
+from . import device_profile as DP
 
 GEE_CHECK = 'api/v65/security/checkGeeUse'
 GEE_VALIDATE = 'api/v70270/security/geevalidate'
@@ -35,11 +36,19 @@ def _log(msg):
 
 def login(username: str, password: str, device_model: str = 'NCO-AL00',
           os_version: str = '12', captcha_id: str | None = None,
-          max_captcha_rounds: int = 3, log=_log) -> dict:
-    """Returns {'uid','token','unid','profile'} or raises RuntimeError."""
+          max_captcha_rounds: int = 3, log=_log,
+          device: dict | None = None) -> dict:
+    """Returns {'uid','token','unid','profile'} or raises RuntimeError.
+
+    ``device`` is the installation profile resolved by
+    :mod:`replica.application.device_profile`.  When supplied it replaces the
+    legacy model/os defaults, so login and submission use the same phone.
+    """
     acct = Account(name=username, uid='-1', token='')
     acct.deviceName = device_model
     acct.osVersion = os_version
+    if device:
+        DP.apply_to_account(acct, device)
     client = RealClient()
 
     login_uuid = str(uuid.uuid4())
@@ -99,8 +108,8 @@ def login(username: str, password: str, device_model: str = 'NCO-AL00',
 
     # ---- 4. login ------------------------------------------------------
     body = {
-        'device_model': device_model,
-        'os_version': os_version,
+        'device_model': acct.deviceName,
+        'os_version': acct.osVersion,
         'mac_address': '',
         'imei': '',
         'loginType': 0,
@@ -154,7 +163,10 @@ if __name__ == '__main__':
     a = ap.parse_args()
 
     try:
-        sess = login(a.user, a.password, captcha_id=a.captcha_id)
+        store = DP.default_store_dir()
+        device = DP.load_or_create(store, legacy_session=DP.read_session(store))
+        sess = login(a.user, a.password, captcha_id=a.captcha_id,
+                     device=device)
     except Exception as e:  # noqa: BLE001
         print('\nLOGIN FAILED:', type(e).__name__, e)
         raise SystemExit(1)
@@ -165,6 +177,8 @@ if __name__ == '__main__':
     print('  unid  =', sess['unid'])
     print('  name  =', sess['profile'].get('name'))
     print('  campus=', sess['profile'].get('campusName'))
+    print('  device=', device['deviceName'], '/ Android',
+          device['osVersion'], '/', DP.mask_device_id(device['DeviceId']))
     if a.out:
         with open(a.out, 'w', encoding='utf-8') as f:
             json.dump(sess, f, ensure_ascii=False, indent=1)

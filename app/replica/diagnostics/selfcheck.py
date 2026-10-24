@@ -18,6 +18,7 @@ MODULES = [
     'transport.obs', 'application.policy', 'application.points', 'domain.routes', 'domain.stadium', 'application.readonly', 'application.riskcheck',
     'diagnostics.collector', 'application.variation', 'application.identity', 'application.limits', 'transport.realclient', 'adapters.http_server',
     'application.qualification', 'application.tokenkeeper',
+    'application.device_profile',
 ]
 
 

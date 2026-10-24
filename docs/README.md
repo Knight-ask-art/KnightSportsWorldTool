@@ -54,8 +54,8 @@ python -m replica.selfcheck
 **离线回归**
 
 ```
-22/22 模块自测     PASS
-pytest（tests/）   115 passed
+23/23 模块自测     PASS
+pytest（tests/）   137 passed
 私有 corpus tests   3 passed
 legacy_bridge_suite  38 checks passed
 legacy_http_suite    23 checks passed
@@ -75,6 +75,7 @@ validate_sim      1/2/3/5 km PASS
 | 补跑（今天..3 天前，09:00–22:00） | 代码完成；服务器是否接受历史日期**未验证** |
 | 每日次数提醒 | 按所选日期查服务器记录；超学校上限时只给 `warn` 提醒，不阻止提交 |
 | v0.1.1 稳定包 | UI 点位按校区固定范围拉取（提交按目标距离补点）、回执只读核对、网络自检、记录轨迹地图、日历次数、学期进度、路线库落盘、14 天计划、诊断包、学校规则自动读取、个人主页/违规自查 |
+| 设备指纹 | 每个 `data` 目录随机一次；登录/提交/OBS 共用；旧数据冻结原指纹；更换需显式 rotate 并备份 |
 
 > 最后一条是硬限制：没有可用 token 时，所有真实接口都会明确报错，
 > 不会伪装成空数据。详见 [operations.md](operations.md#3-排错表)。

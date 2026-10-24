@@ -1,4 +1,11 @@
-"""Per-account device fingerprint that stays put.
+"""Per-account device fingerprint override record.
+
+The primary identity is the per-installation profile in
+:mod:`replica.application.device_profile`.  This module records an explicit
+CLI ``--device-id`` for audit/recovery.  The installation profile remains the
+single source of truth for login and submission; a saved per-account id is not
+silently applied on a later password login (the uid is unknown before login,
+and applying it only after login would make login/submit use different phones).
 
 Two failure modes this prevents:
 
@@ -14,8 +21,8 @@ Two failure modes this prevents:
 Rules
 -----
 * first sight of an account: keep whatever the client already uses (no change);
-* operator passes ``--device-id`` once: remember it and keep it forever;
-* never silently rotate.
+* operator passes ``--device-id``: record it for that run;
+* never silently rotate the installation profile.
 
 The file lives in ``app/data/devices/<uid>.json`` (or under
 ``JHP_DATA_DIR``), one per account.
@@ -28,15 +35,13 @@ import os
 import time
 
 FIELDS = ('DeviceId', 'deviceName', 'osVersion', 'cpuModel',
-          'physicPixel', 'logicPixel', 'appInstallTime', 'appUpdateTime')
+          'physicPixel', 'logicPixel', 'appInstallTime', 'appUpdateTime',
+          'isRoot')
 
 
 def _base_dir() -> str:
-    base = os.environ.get('JHP_DATA_DIR')
-    if not base:
-        base = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
-    return os.path.join(base, 'devices')
+    from .device_profile import default_store_dir
+    return os.path.join(default_store_dir(), 'devices')
 
 
 def _path(uid) -> str:

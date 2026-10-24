@@ -130,6 +130,18 @@ def test_profile_and_violation_pages_are_wired():
     assert 'id="violState"' in HTML
 
 
+def test_device_profile_is_single_source_and_visible():
+    # The account page must show the effective installation fingerprint, not
+    # "device not loaded" while submissions silently use a compiled-in id.
+    assert 'device_source' in JS
+    assert 'device_name' in JS
+    assert 'device_os' in JS
+    assert '设备指纹在本机生成一次' in JS
+    assert 's.deviceName' not in JS
+    assert 's.deviceModel' not in JS
+    assert 's.DeviceId' not in JS
+
+
 def test_distance_follows_drawn_route_until_manual_edit():
     assert 'function autoFillDistanceFromRoute(m)' in JS
     assert 'distanceManual' in JS

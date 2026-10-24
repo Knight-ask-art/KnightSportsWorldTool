@@ -79,12 +79,17 @@ python run.py --port 65520
 登录页可勾选「记住密码」：勾选后用 Windows DPAPI 加密保存到
 `data/saved_login.json`，不勾选不保存，取消勾选立即删除。
 
+设备指纹每个 `data` 目录首次运行生成一次，保存在 `data/device_profile.json`；
+登录和提交共用同一份。旧数据升级会冻结原来的提交指纹；更换需显式运行
+`python -m replica.application.device_profile --data-dir <data> --rotate`，
+旧指纹会先备份到 `device_profile.backup-*.json`。`data/` 不参与打包。
+
 ## 测试
 
 ```powershell
 cd 好想跑\app
 python -m pytest tests -q            # 主测试套件
-python -m replica.selfcheck          # 22 个模块离线自测
+python -m replica.selfcheck          # 23 个模块离线自测
 python tools\validate_sim.py         # 造数/校验器矩阵
 
 # 历史 main() 套件（不进入 pytest）

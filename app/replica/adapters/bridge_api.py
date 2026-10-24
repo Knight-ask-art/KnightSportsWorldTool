@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 import requests
 
 from ..application import credentials as CRED
+from ..application import device_profile as DP
 from ..domain import crypto as C
 from ..domain.rundata import generate_run_data
 from ..transport.realclient import as_dict
@@ -289,6 +290,8 @@ class ReplicaApi:
         self._geetokens: list[dict] = []
         self._keeper = None
         self._keeper_lock = threading.Lock()
+        self._device_lock = threading.RLock()
+        self._device_cache = None
         self._load()
 
     # -- persistence ------------------------------------------------------
@@ -764,6 +767,30 @@ class ReplicaApi:
         a truncated file (that would look like "token missing" mid-run)."""
         _write_json(self._session_path(), d)
 
+    def _device_profile(self, session: dict | None = None) -> dict:
+        """The installation profile, loaded once per process.
+
+        The cache is deliberately not refreshed on every request: a profile
+        change must be an explicit rotate + restart, not a quiet side effect.
+        """
+        with self._device_lock:
+            if self._device_cache is None:
+                if session is None:
+                    session = self._read_session()
+                self._device_cache = DP.load_or_create(
+                    self.store_dir, legacy_session=session)
+            return self._device_cache
+
+    def _effective_device(self, session: dict | None = None) -> dict:
+        """Profile + any explicit session override (manual DeviceId)."""
+        if session is None:
+            session = self._read_session()
+        return DP.effective_device(self._device_profile(session), session)
+
+    def _invalidate_device(self) -> None:
+        with self._device_lock:
+            self._device_cache = None
+
     @staticmethod
     def _mask_secret(value: str) -> str:
         value = str(value or '')
@@ -781,12 +808,25 @@ class ReplicaApi:
         into devtools and any screenshot of the network panel.
         """
         d = d if isinstance(d, dict) else {}
+        raw_device = ('DeviceId', 'deviceName', 'osVersion', 'cpuModel',
+                      'physicPixel', 'logicPixel', 'isRoot',
+                      'appInstallTime', 'appUpdateTime')
         out = {k: v for k, v in d.items()
-               if k not in ('token', 'DeviceId')}
+               if k not in ('token',) + raw_device}
         out['token_present'] = bool(d.get('token'))
         out['token_masked'] = self._mask_secret(d.get('token'))
-        out['device_id_present'] = bool(d.get('DeviceId'))
-        out['device_id_masked'] = self._mask_secret(d.get('DeviceId'))
+        try:
+            profile = self._device_profile(d)
+            out.update(DP.public_view(profile, d))
+        except Exception as e:  # noqa: BLE001
+            # A corrupt profile must not crash the login gate.  Keep the
+            # session visible, but never claim a device is ready.
+            out['device_id_present'] = False
+            out['device_id_masked'] = ''
+            out['device_name'] = ''
+            out['device_os'] = ''
+            out['device_source'] = 'error'
+            out['device_error'] = str(e)
         return out
 
     def real_get_session(self):
@@ -794,7 +834,10 @@ class ReplicaApi:
 
     def real_set_session(self, uid=None, token=None, campusName=None,
                          schoolName=None, unid=None, lat=None, lon=None,
-                         DeviceId=None, name=None, nickname=None):
+                         DeviceId=None, name=None, nickname=None,
+                         deviceName=None, osVersion=None, cpuModel=None,
+                         physicPixel=None, logicPixel=None, isRoot=None,
+                         appInstallTime=None, appUpdateTime=None):
         if token:
             # A new session must not inherit the previous account's keeper
             # thread or in-memory password.
@@ -811,7 +854,12 @@ class ReplicaApi:
                      ('campusName', campusName), ('schoolName', schoolName),
                      ('unid', unid), ('lat', lat), ('lon', lon),
                      ('DeviceId', DeviceId), ('name', name),
-                     ('nickname', nickname)):
+                     ('nickname', nickname),
+                     ('deviceName', deviceName), ('osVersion', osVersion),
+                     ('cpuModel', cpuModel), ('physicPixel', physicPixel),
+                     ('logicPixel', logicPixel), ('isRoot', isRoot),
+                     ('appInstallTime', appInstallTime),
+                     ('appUpdateTime', appUpdateTime)):
             if v not in (None, ''):
                 d[k] = v
         if token:
@@ -831,6 +879,7 @@ class ReplicaApi:
             state['token_expired'] = False
             state['last_error'] = ''
         self._write_session(d)
+        self._invalidate_device()
         return _ok(self._public_session(d))
 
     def _real_account(self):
@@ -848,8 +897,7 @@ class ReplicaApi:
             campusName=d.get('campusName', '江门校区'),
             unid=int(d.get('unid') or 47203),
         )
-        if d.get('DeviceId'):
-            acct.DeviceId = d['DeviceId']
+        DP.apply_to_account(acct, self._effective_device(d))
         if d.get('lat') and d.get('lon'):
             acct.center_lat = float(d['lat'])
             acct.center_lng = float(d['lon'])
@@ -988,11 +1036,18 @@ class ReplicaApi:
         """
         self._stop_keeper()
         d = self._read_session()
-        acct = self._real_account()
+        try:
+            acct = self._real_account()
+        except Exception:  # noqa: BLE001
+            # A corrupt device profile must never trap the operator in a
+            # logged-in UI.  Local logout still clears token/identity; the
+            # server logout is simply skipped.
+            acct = None
 
         if local_only:
             d = self._clear_session_identity(d)
             self._write_session(d)
+            self._invalidate_device()
             if acct is not None:
                 threading.Thread(target=self._remote_logout_background,
                                  args=(acct,), daemon=True).start()
@@ -1014,6 +1069,7 @@ class ReplicaApi:
         # alive; no local credential remains to use that token.
         d = self._clear_session_identity(d)
         self._write_session(d)
+        self._invalidate_device()
 
         if acct is None:
             return _ok({'verified': False, 'local_only': True,
@@ -1134,17 +1190,31 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录模块不可用: {e}')
         try:
-            sess = do_login(username, password, log=lambda *_: None)
+            raw_session = self._read_session()
+            device = self._effective_device(raw_session)
+            sess = do_login(username, password, log=lambda *_: None,
+                            device=device)
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录失败: {e}')
         profile = sess.get('profile') or {}
+        # A manual per-account override (CLI/import) must survive the new
+        # token write.  Copy only fields that were explicitly in the session;
+        # copying the merged profile would shadow a later rotate().
+        extra = {}
+        if device.get('source') == 'session':
+            extra['DeviceId'] = device['DeviceId']
+            for key in ('deviceName', 'osVersion', 'cpuModel',
+                        'physicPixel', 'logicPixel', 'isRoot',
+                        'appInstallTime', 'appUpdateTime'):
+                if raw_session.get(key) not in (None, ''):
+                    extra[key] = raw_session[key]
         saved = self.real_set_session(
             uid=sess['uid'], token=sess['token'],
             name=profile.get('name'),
             nickname=profile.get('nickname'),
             schoolName=profile.get('schoolName'),
             campusName=profile.get('campusName'),
-            unid=sess.get('unid'))
+            unid=sess.get('unid'), **extra)
         data = dict(sess.get('profile') or {})
         data.pop('token', None)
         data['session'] = (saved or {}).get('data')

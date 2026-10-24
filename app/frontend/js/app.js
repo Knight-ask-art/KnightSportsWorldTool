@@ -1363,22 +1363,37 @@ function renderSession(){
   $('#accTopStatus').className = 'chip ' + (s.disabled ? 'red' : (logged ? (verified ? 'ok' : 'warn') : ''));
   $('#accTokenChip').textContent = s.disabled ? '账号已禁用' : (logged ? (verified ? 'token 有效' : 'token 已加载') : 'token 未加载');
   $('#accTokenChip').className = 'chip ' + (s.disabled ? 'red' : (logged ? (verified ? 'ok' : 'warn') : ''));
-  const hasDevice = !!(s.device_id_present || s.DeviceId);
-  $('#accDeviceChip').textContent = logged && hasDevice ? '设备号已冻结' : '设备未加载';
-  $('#accDeviceChip').className = 'chip';
+  const hasDevice = !!s.device_id_present;
+  const deviceSource = {
+    generated: '本机随机',
+    'legacy-default': '旧版冻结',
+    'legacy-session': '旧版会话',
+    rotated: '已更换',
+    session: '手动',
+    error: '读取失败'
+  }[s.device_source] || '已冻结';
+  const deviceLabel = [s.device_name,
+    s.device_os ? ('Android ' + s.device_os) : ''].filter(Boolean).join(' · ');
+  $('#accDeviceChip').textContent = logged
+    ? (s.device_source === 'error' ? '设备读取失败' : '设备 · ' + deviceSource)
+    : '设备未加载';
+  $('#accDeviceChip').className = 'chip' + (s.device_source === 'error' ? ' red' : '');
+  $('#accDeviceChip').title = s.device_source === 'error'
+    ? (s.device_error || '设备指纹读取失败')
+    : '设备指纹在本机生成一次，登录和提交共用；不要频繁更换。';
   $('#accUidChip').textContent = s.uid ? ('uid ' + s.uid) : 'uid —';
   $('#accDisabledChip').hidden = !s.disabled;
   $('#accTokenMasked').textContent = logged
     ? (s.token_masked || maskToken(s.token)) : '—';
-  $('#accDevice').textContent = logged ? (s.deviceName || s.deviceModel || '—') : '—';
+  $('#accDevice').textContent = logged ? (deviceLabel || '—') : '—';
   $('#accDeviceId').textContent = logged && hasDevice
-    ? (s.device_id_masked || maskToken(s.DeviceId)) : '—';
+    ? (s.device_id_masked || '—') : '—';
   $('#accCampus').textContent = logged ? (s.campusName || '—') : '—';
   $('#accUnid').textContent = logged ? (s.unid || '—') : '—';
 
   $('#setSession').textContent = s.disabled ? '账号已禁用' : (logged ? '已加载 token' : '未登录');
   $('#setCampus').textContent = logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ') || '—') : '—';
-  $('#setDevice').textContent = logged ? (s.deviceName || s.deviceModel || '—') : '—';
+  $('#setDevice').textContent = logged ? (deviceLabel || '—') : '—';
 
   // The "我的" page hero mirrors the session immediately; the detailed
   // profile arrives from real_profile and only fills the remaining rows.
@@ -1400,7 +1415,7 @@ function renderSession(){
   if($('#profLoginState')) $('#profLoginState').textContent = s.disabled
     ? '账号已停用' : (logged ? (verified ? '已登录 · 已验证' : '已登录 · 未验证') : '未登录');
   if($('#profDevice')) $('#profDevice').textContent = logged
-    ? (s.deviceName || s.deviceModel || (hasDevice ? '设备号已冻结' : '—')) : '—';
+    ? (deviceLabel || '—') : '—';
   if($('#profSession')) $('#profSession').textContent = logged
     ? '已加载 token' : (s.disabled ? '已停用' : '未登录');
   if($('#violList') && !LIVE.violations && !LIVE.violationsError){
@@ -2021,7 +2036,9 @@ function renderProfileEmpty(){
    'profCampus', 'profBody', 'profUid', 'profUnid'].forEach(id => setText(id, ''));
   setText('profLoginState', s.disabled ? '账号已停用'
     : (logged ? '已登录' : '未登录'));
-  setText('profDevice', logged ? (s.deviceName || s.deviceModel || '—') : '—');
+  setText('profDevice', logged
+    ? ([s.device_name, s.device_os ? ('Android ' + s.device_os) : '']
+        .filter(Boolean).join(' · ') || '—') : '—');
   setText('profSession', s.disabled ? '已停用'
     : (logged ? '已加载 token' : '未登录'));
   renderSemesterInto('prof', null, '');
@@ -2142,8 +2159,8 @@ function renderProfile(){
   setText('profLoginState', s.disabled ? '账号已停用'
     : (logged ? (p.verified ? '已登录 · 已验证' : '已登录') : '未登录'));
   setText('profDevice', logged
-    ? (s.deviceName || s.deviceModel
-       || (s.device_id_present ? '设备号已冻结' : '—')) : '—');
+    ? ([s.device_name, s.device_os ? ('Android ' + s.device_os) : '']
+        .filter(Boolean).join(' · ') || '—') : '—');
   setText('profSession', logged ? '已加载 token' : '未登录');
 
   const sem = d.semester || LIVE.semester;
