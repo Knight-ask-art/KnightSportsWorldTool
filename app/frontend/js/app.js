@@ -868,6 +868,7 @@ const LIVE = {
   records: [], recordsLoaded: false, recordsLoading: false, recordFilter: 'all',
   routes: [], selectedRoute: -1,
   routeFilter: 'all', rules: null, model: null, plan: null,
+  modelWarnings: [],
   runDate: null, daily: null, dailyCounts: {}, dailyCountsAt: 0,
   dailyCountsUid: null,
   recordsError: null, weekError: null, planError: null,
@@ -1322,6 +1323,7 @@ function clearAccountActivity(){
   LIVE.plan = null;
   LIVE.daily = null;
   LIVE.model = null;
+  LIVE.modelWarnings = [];
   LIVE.records = []; LIVE.recordsLoaded = false; LIVE.recordsLoading = false;
   LIVE.week = null; LIVE.weekLoaded = false;
   LIVE.weekError = null;
@@ -3868,15 +3870,15 @@ function scheduleModelPreview(){ clearTimeout(_modelTimer); _modelTimer = setTim
 async function refreshModelPreview(){
   const seq = ++_modelSeq;
   if(!hasSession()){
-    LIVE.model = null; renderModel(); refreshChecks(); return;
+    LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return;
   }
   const ti = selectedTimeInfo();
-  if(!ti.ok){ LIVE.model = null; renderModel(); refreshChecks(); return; }
-  if(!LIVE.rules || !LIVE.rules.configured){ LIVE.model = null; renderModel(); refreshChecks(); return; }
+  if(!ti.ok){ LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return; }
+  if(!LIVE.rules || !LIVE.rules.configured){ LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return; }
   const di = dailyCountInfo();
   const params = readRunParams();
   if(validateRunParams(params)){
-    LIVE.model = null; renderModel(); refreshChecks(); return;
+    LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return;
   }
   const j = await liveApi('real_preview_model', {
     km: params.km, pace: params.pace,
@@ -3892,10 +3894,24 @@ async function refreshModelPreview(){
   });
   if(seq !== _modelSeq) return;
   LIVE.model = liveOk(j) ? ((j.data && j.data.model) || null) : null;
+  LIVE.modelWarnings = liveOk(j) && j.data ? (j.data.param_warnings || []) : [];
   if(!liveOk(j)) liveLog('模型预览失败', j.message || '', 'warn');
   renderModel();
   refreshChecks();
 }
+/* Product-level plausibility band.  It is deliberately wider than any one
+   school's rules: a soft yellow reminder, never a submit block. */
+const PLAUSIBLE_PACE_MIN = 4.5, PLAUSIBLE_PACE_MAX = 8.5;
+const PLAUSIBLE_CADENCE_MIN = 150, PLAUSIBLE_CADENCE_MAX = 180;
+function paramWarnings(pace, cadence){
+  const out = [], p = +pace, c = +cadence;
+  if(p && (p < PLAUSIBLE_PACE_MIN || p > PLAUSIBLE_PACE_MAX))
+    out.push(`配速 ${paceText(p)} 超出常见 4'30"–8'30"`);
+  if(c && (c < PLAUSIBLE_CADENCE_MIN || c > PLAUSIBLE_CADENCE_MAX))
+    out.push(`步频 ${Math.round(c)} spm 超出常见 150–180`);
+  return out;
+}
+
 function renderModel(){
   const m = LIVE.model;
   const score = $('#modelScore'), sub = $('#modelSub'), tag = $('#modelTag');
@@ -3924,8 +3940,10 @@ function renderModel(){
     return;
   }
   score.textContent = String(m.score);
-  sub.textContent = m.summary || ((m.verdict === 'pass' ? '合格' : m.verdict === 'warn' ? '有提醒' : '不合格') +
+  const pw = LIVE.modelWarnings || [];
+  const baseSub = m.summary || ((m.verdict === 'pass' ? '合格' : m.verdict === 'warn' ? '有提醒' : '不合格') +
     (m.warnings && m.warnings.length ? (' · ' + m.warnings.length + ' 项注意') : ''));
+  sub.textContent = baseSub + (pw.length ? (' · 参数 ' + pw.length + ' 项提醒') : '');
   tag.textContent = m.verdict === 'pass' ? '合格' : m.verdict === 'warn' ? '提醒' : '不合格';
   tag.className = 'tag ' + (m.verdict === 'pass' ? 'ok' : m.verdict === 'warn' ? 'warn' : 'warn');
   bar.style.width = Math.max(0, Math.min(100, +m.score || 0)) + '%';
@@ -3934,7 +3952,8 @@ function renderModel(){
     const cls = c.status === 'pass' ? 'ok' : (c.status === 'skip' ? 'skip' : 'warn');
     const txt = c.status === 'pass' ? '合格' : c.status === 'skip' ? '未要求' : c.status === 'warn' ? '注意' : '不合格';
     return `<li><span>${esc(c.label)}</span><b>${esc(c.value)}</b><i class="${cls}">${txt}</i></li>`;
-  }).join('');
+  }).join('') + pw.map(w =>
+    `<li><span>${esc(w)}</span><b>参数</b><i class="warn">提醒</i></li>`).join('');
   $('#runModelTag').textContent = '模型 ' + m.score;
   $('#runModelTag').className = 'tag ' + (m.verdict === 'fail' ? 'warn' : 'ok');
   $('#runModelLink').textContent = '查看';
@@ -4175,14 +4194,17 @@ async function submitRun(){
   const warnLine = missing.length
     ? `\n未通过：${missing.join('、')}\n（后端仍会重新校验）`
     : '';
+  const band = paramWarnings(pace, cadence);
+  const bandLine = band.length ? `\n参数提醒：${band.join('；')}` : '';
   if(!confirm(`确认提交 ${km} km @ ${pace.toFixed(2)} min/km？
 提交日期：${dayText}
 开始时间：${timeText}
-当日次数：${dailyText}${warnLine}
+当日次数：${dailyText}${warnLine}${bandLine}
 提交后该时段会被回执锁定，不能重复提交。`)) return;
   LIVE.submitting = true;
   const btn = $('#submitRun');
   btn.disabled = true; btn.textContent = '提交中…';
+  if(band.length) liveLog('参数提醒', band.join('；'), 'warn');
   liveLog('开始提交', `${km} km · ${pace.toFixed(2)} /km · ${cadence} spm · ${dayText} ${timeText}`, 'info');
   const j = await liveApi('real_submit_run', {
     km: km, pace: pace, cadence: cadence, altitude: altitude,
@@ -4222,6 +4244,7 @@ async function submitRun(){
   if(d.receipt_error) warnings.push('回执记录失败：' + d.receipt_error);
   if(d.missed_points && d.missed_points.length) warnings.push('仍有点位未经过');
   if(d.daily && d.daily.source === 'unknown') warnings.push('当日次数未知');
+  (d.param_warnings || []).forEach(w => warnings.push(w));
   const summary = 'rrid=' + (d.rrid || '') + ' · ' + (d.km || km) + ' km' +
     (d.start ? ' · ' + d.start.text : '');
   if(warnings.length){

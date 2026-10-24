@@ -1,6 +1,8 @@
 # One-click packaging for the pure-Python build.
 # Usage:  powershell -ExecutionPolicy Bypass -File packaging\build.ps1
-#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 0.1.1
+#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 0.1.2
+#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -MigrateDataFrom dist\好想跑_v0.1.1
+#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -NoDataMigration
 # Output: dist/好想跑_v<version>/好想跑.exe  (+ _internal)
 #         dist/好想跑_v<version>_win64.zip
 #         dist/好想跑_v<version>_win64.sha256
@@ -13,7 +15,9 @@
 #
 # No JRE / unidbg runtime is copied: login and the submit path are pure Python.
 param(
-    [string]$Version = ''
+    [string]$Version = '',
+    [string]$MigrateDataFrom = '',
+    [switch]$NoDataMigration
 )
 $ErrorActionPreference = 'Stop'
 $ROOT = Split-Path $PSScriptRoot -Parent
@@ -118,6 +122,47 @@ if ($hasBackup) {
     Move-Item (Join-Path $backup 'data') (Join-Path $TARGET 'data')
     Remove-Item $backup -Recurse -Force
 }
+
+# A new version directory starts empty.  Carry the live data over from the
+# newest existing version (or -MigrateDataFrom) so the operator stays logged
+# in and the receipt/daily guards keep their state.  The zip was built above,
+# so data/ can never enter it.
+$targetData = Join-Path $TARGET 'data'
+if (-not $NoDataMigration -and -not (Test-Path $targetData)) {
+    $sourceData = $null
+    if ($MigrateDataFrom) {
+        $candidate = if (Test-Path (Join-Path $MigrateDataFrom 'data')) {
+            Join-Path $MigrateDataFrom 'data'
+        } else {
+            $MigrateDataFrom
+        }
+        if (Test-Path $candidate) {
+            $sourceData = $candidate
+        } else {
+            Write-Warning "MigrateDataFrom has no data/: $MigrateDataFrom"
+        }
+    } else {
+        $candidates = @(Get-ChildItem -Path $DIST -Directory -Filter '好想跑_v*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -ne $TARGET -and (Test-Path (Join-Path $_.FullName 'data')) } |
+            Sort-Object { try { [version]($_.Name -replace '^好想跑_v', '') } catch { [version]'0.0.0' } } -Descending)
+        if ($candidates.Count -gt 0) {
+            $sourceData = Join-Path $candidates[0].FullName 'data'
+        }
+    }
+    if ($sourceData) {
+        Write-Host ('== data migration: ' + (Split-Path (Split-Path $sourceData -Parent) -Leaf) + ' ==')
+        try {
+            & (Join-Path $PSScriptRoot 'migrate_data.ps1') -From $sourceData -To $targetData `
+                -BackupRoot (Join-Path $ROOT 'backup')
+        } catch {
+            Write-Warning ('data migration failed: ' + $_.Exception.Message)
+            Write-Warning 'the new build starts logged out; copy data/ manually from the previous version'
+        }
+    } else {
+        Write-Host '== data migration: no previous version found (clean install) =='
+    }
+}
+
 if (Test-Path $STAGE) { Remove-Item $STAGE -Recurse -Force }
 if (Test-Path $WORK) { Remove-Item $WORK -Recurse -Force }
 
@@ -125,4 +170,4 @@ $size = (Get-ChildItem $TARGET -Recurse -File | Measure-Object Length -Sum).Sum 
 Write-Host ('完成: {0}' -f (Join-Path $TARGET '好想跑.exe'))
 Write-Host ('压缩包: {0}' -f $ZIP)
 Write-Host ('总体积: {0:N1} MB' -f $size)
-Write-Host '旧 dist/好想跑/ 未改动；本次版本目录的 data/ 已保留。'
+Write-Host '旧 dist/好想跑/ 未改动；本次版本目录的 data/ 已保留（同版本重建）或从旧版本迁移。'

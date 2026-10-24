@@ -1,10 +1,19 @@
-# 交接：好想跑 v0.1.1（app）
+# 交接：好想跑 v0.1.2（app）
 
+> **2026-10-25 v0.1.2 稳定收尾**：版本号/前端版本统一、跨版本 `data/` 自动迁移、
+> 配速/步频软提醒、不可行路线明确报错。回归基线 `pytest 199 passed`。
+>
+> **2026-10-25 iOS 真机验证通过**：2026-10-25 00:52（北京时间）用 v0.1.1 提交了
+> 2026-10-23 12:58–13:36:49 的补跑，rrid `1344757460`，4.13 km / 2329 s /
+> 9'40"/km / 117 spm / 466 点；详情 `status=0`、`isCheat=0`、`policy=0`、
+> `stepFreqStatus=0`、`complete=true`；本地回执 `accepted`，`sportunid` 为
+> iOS 大写带横线（`1D9302E1-34C0-479E-8CC9-0438C94872EB`）。这条参数低于常见
+> 步频/偏慢，所以 v0.1.2 只做黄色提醒，不做硬拦截。
+>
 > **2026-10-24 结构变更**：采集与样本库已整体迁出产品，放入 `private/research/`，
 > 不再注册 bridge、不再出现在界面、不参与打包；下方 P0-6 属于历史记录。
-> 回归基线更新为 `pytest 193 passed`、`selfcheck 23/23`。
 
-> 更新于 2026-10-24（北京时间）。**这是会话交接，不是使用手册。**
+> 更新于 2026-10-25（北京时间）。**这是会话交接，不是使用手册。**
 > 日常查阅先看 `docs/README.md`；技术演进主日志是
 > `reverse-engineering/unidbg/PORT_FROM_NEKO.md`；更早的文档已统一封存到 `archive/`。
 > 旧 `交接文档.md`（2026-09-07）的响应解密部分已被纯 Python `netsec.py` 取代，
@@ -14,9 +23,10 @@
 
 ## 0. 一句话
 
-纯 Python 复刻了 NetSecKit 信封 + 极验 v4，真实提交和回读链路已经跑通；
-目前停在**最后一次真机回归验证**；新 UI 与 v0.1.1 桌面版本已启用。
-`token` 保活与旧 token 清理已完成（见 P0-8）；旧账号、密码和抓包凭据已按用户要求彻底清除，不再保留可用的 `token` 或会话。
+纯 Python 复刻了 NetSecKit 信封 + 极验 v4，真实提交和回读链路已在 iOS 指纹下
+跑通（rrid `1344757460`）；v0.1.2 是稳定收尾版，重点是不丢旧 `data/`、参数
+越界只提醒、路线不可行时给出人话错误。
+`token` 保活与旧 token 清理已完成（见 P0-8）；旧账号、密码和抓包凭据已按用户要求彻底清除。
 
 ### 2026-10-24 v0.1.1 最新状态
 
@@ -99,6 +109,22 @@
 - 记录详情新增「风险标记 / 配速区间 / 申诉」，直接展示服务器 `isCheat`、`policy`、`stepFreqStatus`、
   `speedTop`/`speedBottom`（min/km）、`stepBottom`/`stepTop`、`appealStatus`；列表/详情把 `status=1`
   （运动数据有问题）与 `status=2`（可疑）都标成“有问题”，不再显示成“已通过”。
+
+### 2026-10-25 v0.1.2 稳定收尾
+
+- `APP_VERSION` 与前端三处版本号统一为 `0.1.2`；新增测试扫描 `frontend/index.html`，版本字符串
+  必须等于 `APP_VERSION`，防止下次漏改。
+- **跨版本 data 迁移**：新增 `packaging/migrate_data.ps1`，`build.ps1` 在新版本目录没有 `data/`
+  时自动找最新 `dist/好想跑_v*/data`，先备份再复制；跳过 `*.lock`/`*.tmp`；校验
+  `accounts_emu.json` / `device_profile.json` / `school_rules.json` 等是合法 JSON；zip 仍不含
+  `data/`。`-MigrateDataFrom` 可指定来源，`-NoDataMigration` 可关闭。
+- **配速/步频软提醒**：`plausibility_warnings()` 对配速 <4.5 或 >8.5 min/km、步频 <150 或
+  >180 spm 返回黄色提醒；预览模型卡、提交确认框和日志都会显示，但**不阻止提交**。已验证的
+  9'40"/117 spm 记录仍可提交。
+- **不可行路线明确报错**：闭合路线航点跨度超过目标距离、开放路线长度超过目标距离时，造数前
+  抛 `ValueError`（“路线跨度/长度 X m 超过目标距离 Y m”），不再生成一条最后才被
+  `teleport-detected`/`geometry` 拒绝的坏数据。
+- 回归：`pytest 199 passed`；`test_pipeline` 连跑通过；`node --check` / `app.py --check` 通过。
 
 ---
 
@@ -280,16 +306,20 @@ keyDataOne..Four -> fold32 x4 -> ror32 -> pAesKey
 
 ## 6. 已知问题 / 下一个会话优先做
 
-### P0-1 真机最终回归（唯一能验证这几十处改动的事）
+### P0-1 真机最终回归（已完成 2026-10-25）
 
-代码从第二轮修改后就没再上过真服务器。要做的：
+iOS 真机链路已跑通：2026-10-25 00:52 提交 2026-10-23 的补跑，rrid `1344757460`，
+4.13 km / 2329 s / 9'40"/km / 117 spm / 466 点；详情 `status=0`、`isCheat=0`、
+`policy=0`、`stepFreqStatus=0`、`complete=true`，本地回执 `accepted`。没有用助手
+账号执行提交，提交由用户完成。
 
-1. 让用户在手机 App 里**退出登录**（解 10121），确认手机和电脑在同一城市网络
-   （手机热点最稳；本机直连时出口 IP 在广州、校区在江门，详情页会暴露）。
-2. 用户明确同意后，跑一条 **2.5km / 随机档位 / `--proxy`** 的真实提交。
-3. 验收四件事：`error=10000` + rrid；回读 `complete` 6/6、`isCheat=0`；
-   OBS PUT/GET 字节一致；App 详情页有轨迹、有绿勾、地址是江门。
-4. 如果任何一项不对，先抓这一条的响应/回读，不要连提交第二条。
+后续版本（v0.1.2）只改版本号/data 迁移/提醒/路线报错，没有改提交加密或 OBS 格式。
+如果要再跑一条真机，仍按原来的四件事验收：
+
+1. 手机和电脑在同一城市网络（手机热点最稳）。
+2. 2.5 km / 默认档位跑一条。
+3. `error=10000` + rrid；回读 `complete=true`、`isCheat=0`；App 详情有轨迹和绿勾。
+4. 任何一项不对，先抓这一条的响应/回读，不要连提交第二条。
 
 ### P0-2 UI 提交路径绕过了本地闸门（本轮已修复）
 
@@ -313,7 +343,8 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
 - `build.ps1` 自动做 HTTP smoke test，确认冻结后的 exe 能返回登录页；
 - v0.1.1 产物：`dist/好想跑_v0.1.1/好想跑.exe` + `_internal`，约 186 MB；
   `dist/好想跑_v0.1.1_win64.zip` 约 74.5 MB；
-  SHA256 `c05abe2831c59b485770397de4b38d2adaec838229c62f9abd0343858d41bca7`。
+  SHA256 `922a8edbe8bef4f5a302aeedd0bc67f11c7f2c46dd39b35c4d172271f3b9fdfd`（最终 v0.1.1；
+  中间产物 `c05abe…` 已废弃）。
   zip 已检查不含 `data/`；首次启动自动生成 `data/` 和随机指纹。
   旧 `dist/好想跑/` 保留原 live 数据，未覆盖。
 - `build.ps1` 现在按 `APP_VERSION` 输出 `dist/好想跑_v<版本>/`，同版本重建时

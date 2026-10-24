@@ -31,7 +31,7 @@ from ..transport.realclient import as_dict
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
 #: open-source build; AMap binds keys to a domain/app and a leaked one is a
 #: billing and quota risk.
-APP_VERSION = '0.1.1'
+APP_VERSION = '0.1.2'
 # Fixed checkpoint-query distance for the UI.  Campus checkpoints belong to the
 # school, not to the distance the operator plans to run today; the requested
 # target must not cause a re-fetch or invalidate the points already displayed.
@@ -51,6 +51,33 @@ def _ok(data=None, message='success'):
 
 def _fail(message='failed', code=500, data=None):
     return {'code': code, 'message': message, 'data': data}
+
+
+#: Product-level plausibility band, deliberately wider than any one school's
+#: rule set.  Outside it the operator gets a yellow reminder, never a block:
+#: the server accepted real runs at 9'06"/km and 112 spm.
+PLAUSIBLE_PACE_MIN = 4.5
+PLAUSIBLE_PACE_MAX = 8.5
+PLAUSIBLE_CADENCE_MIN = 150
+PLAUSIBLE_CADENCE_MAX = 180
+
+
+def plausibility_warnings(pace, cadence) -> list[str]:
+    """Soft warnings for parameters outside the common running band."""
+    out = []
+    try:
+        p = float(pace)
+    except (TypeError, ValueError):
+        p = 0.0
+    try:
+        c = int(float(cadence))
+    except (TypeError, ValueError):
+        c = 0
+    if p and (p < PLAUSIBLE_PACE_MIN or p > PLAUSIBLE_PACE_MAX):
+        out.append('配速 %.2f min/km 超出常见 4′30″–8′30″' % p)
+    if c and (c < PLAUSIBLE_CADENCE_MIN or c > PLAUSIBLE_CADENCE_MAX):
+        out.append('步频 %d spm 超出常见 150–180' % c)
+    return out
 
 
 def _read_json(path: str, default=None):
@@ -2218,6 +2245,7 @@ class ReplicaApi:
                                daily_source=daily_source)
             return _ok({
                 'model': model,
+                'param_warnings': plausibility_warnings(pace, cadence),
                 'start': {'ms': start_ms,
                           'text': S.fmt_beijing(start_ms),
                           'days_ago': (S.to_beijing(S.now_ms()).date()
@@ -2431,7 +2459,8 @@ class ReplicaApi:
             bad = [c['label'] + ' ' + c['value'] for c in model['checks']
                    if c['status'] == 'fail']
             return _fail('合格模型未通过: %s' % '；'.join(bad),
-                         data={'model': model})
+                         data={'model': model,
+                               'param_warnings': plausibility_warnings(pace, cadence)})
 
         from ..application import policy as POL
         from ..application import riskcheck as RK
@@ -2565,6 +2594,7 @@ class ReplicaApi:
                         }
         except Exception as e:  # noqa: BLE001
             res['readback_error'] = str(e)
+        res['param_warnings'] = plausibility_warnings(pace, cadence)
         return _ok(res)
 
     # -- hardware-bound stubs (documented, need real env) ------------------------------

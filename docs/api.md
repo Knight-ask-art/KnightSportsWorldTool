@@ -273,8 +273,8 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 
 | 方法 | 新增参数 | 说明 |
 |---|---|---|
-| `real_preview_model` | `date`、`start_time`、`daily_runs`、`daily_source` | 用所选日期/时间造预览轨迹；`daily_runs` 是 UI 已知的服务器次数 |
-| `real_submit_run` | `date`、`start_time` | 用所选日期/时间造数并提交；每日次数在提交前重新查服务器 |
+| `real_preview_model` | `date`、`start_time`、`daily_runs`、`daily_source` | 用所选日期/时间造预览轨迹；`daily_runs` 是 UI 已知的服务器次数；返回 `param_warnings` |
+| `real_submit_run` | `date`、`start_time` | 用所选日期/时间造数并提交；每日次数在提交前重新查服务器；返回 `param_warnings` |
 | `real_daily_count` | `date` | 查该北京日期已有几条记录；读不到返回 `source=unknown` |
 | `real_daily_counts` | `dates`（可选数组） | 一次返回最近 4 天的次数，供日期日历标注；读不到时 `runs=null` |
 | `real_preflight` | `start_ms`、`campus_name`、`school_name` | 显式网络自检；会查询公网 IP，只在 UI 点击时调用 |
@@ -287,6 +287,10 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_profile` | — | 合并 `user/info` 资料与学期进度；`user/info` 失败时回落本地会话并返回 `errors` |
 | `real_violations` | `page`、`page_size` | **只读** `v78/cheat/cheatlist`；返回 `state`（`none_found`/`violations`/`unknown`/`failed`）、`records`、`stale` |
 | `real_fetch_school_rules` | `run_mode` | 只读 `runModePolicy.runRuleModel`，映射成设置页规则；不猜未返回字段 |
+
+> `real_preview_model` / `real_submit_run` 的 `param_warnings` 是产品级黄色提醒：
+> 配速 <4.5 或 >8.5 min/km、步频 <150 或 >180 spm 时各一条，**不阻止提交**。
+> 2026-10-25 已验证的 9'40"/117 spm 记录就在提醒区，服务器仍判为正常。
 | `get_saved_login` | — | 读取登录页「记住密码」的 DPAPI 密文；没有则 `saved=false` |
 | `save_login` | `account`、`password`、`remember` | 勾选时用 Windows DPAPI 加密保存；`remember=false` 立即删除 |
 | `clear_saved_login` | — | 删除 `data/saved_login.json` 和旧版明文 `account.json` |

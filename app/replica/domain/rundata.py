@@ -118,8 +118,8 @@ def _loop_start_for_waypoints(loop: list, target_m: float, rng,
 
     Start just *before* the first waypoint after the longest gap: the window
     then runs across the shortest span that still contains every waypoint.
-    Returns None when even that span is longer than the target (no feasible
-    window; the caller keeps the legacy snap behaviour).
+    Raises ValueError when even that span is longer than the target: snapping
+    the missing points would otherwise inflate the geometry or teleport.
     """
     if not loop or len(loop) < 3 or target_m <= 0:
         return None
@@ -140,7 +140,8 @@ def _loop_start_for_waypoints(loop: list, target_m: float, rng,
     span = lap - gaps[cut]
     slack = target_m - span
     if slack <= 1.0:
-        return None
+        raise ValueError('路线跨度 %.0fm 超过目标距离 %.0fm；请增大距离或缩小路线'
+                         % (span, target_m))
     base = pos[cut + 1] if cut + 1 < n else 0.0
     want = preferred_m if preferred_m > 0 else rng.uniform(20.0, 50.0)
     off = min(want, slack)
@@ -377,6 +378,12 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
         if waypoints and len(waypoints) >= 2:
             poly = (build_loop(waypoints, target_m or 0) if closed
                     else build_open(waypoints, target_m or 0))
+            if not closed and target_m:
+                route_len = _polyline_len(list(waypoints))
+                if float(target_m) + 1.0 < route_len:
+                    raise ValueError(
+                        '路线长度 %.0fm 超过目标距离 %.0fm；请增大距离或缩短路线'
+                        % (route_len, target_m))
             if closed:
                 one_lap = build_loop(waypoints, 0)
                 start = _loop_start_for_waypoints(
