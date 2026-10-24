@@ -1980,8 +1980,10 @@ function renderProfileEmpty(){
     ? '该会话已按用户要求停用'
     : (logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ')
                  || '登录后显示学校 / 校区') : '登录后显示学校 / 校区');
-  if($('#profUidChip')) $('#profUidChip').textContent = s.uid ? ('uid ' + s.uid) : 'uid —';
-  if($('#profUnidChip')) $('#profUnidChip').textContent = s.unid ? ('unid ' + s.unid) : 'unid —';
+  if($('#profUidChip')) $('#profUidChip').textContent =
+    (logged && s.uid) ? ('uid ' + s.uid) : 'uid —';
+  if($('#profUnidChip')) $('#profUnidChip').textContent =
+    (logged && s.unid) ? ('unid ' + s.unid) : 'unid —';
   if($('#profVerifiedChip')){
     $('#profVerifiedChip').textContent = s.disabled ? '账号已停用'
       : (logged ? '资料未加载' : '未验证');
@@ -2099,9 +2101,14 @@ function renderProfile(){
     p.verified ? 'user/info'
       : ((p.name || p.nickname || s.name || s.nickname) ? '本地会话' : '—');
 
+  const withUnit = (v, unit) => {
+    if(v == null || v === '') return '';
+    const text = String(v).trim();
+    return /^-?\d+(\.\d+)?$/.test(text) ? (text + ' ' + unit) : text;
+  };
   const body = [
-    p.height ? (p.height + ' cm') : '',
-    p.weight ? (p.weight + ' kg') : ''
+    withUnit(p.height, 'cm'),
+    withUnit(p.weight, 'kg')
   ].filter(Boolean).join(' · ');
   setText('profRealName', p.name || s.name);
   setText('profNickname', p.nickname || s.nickname);
