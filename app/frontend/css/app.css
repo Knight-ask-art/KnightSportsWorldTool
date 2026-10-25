@@ -1292,6 +1292,34 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .login-submit:active:not(:disabled){transform:translateY(1px)}
 .login-submit:disabled{cursor:progress;opacity:.55}
 .login-submit .arrow{font:15px/1 var(--sans);transform:translateY(-1px)}
+.login-manual{
+  align-self:flex-start;margin:2px 0 4px;padding:6px 13px;
+  border:1px dashed var(--rule);border-radius:999px;background:transparent;
+  color:var(--ink-blue);font-size:12.5px;
+}
+.login-manual:hover{background:rgba(242,210,92,.45);border-color:var(--ink-blue)}
+.login-manual[hidden]{display:none}
+.gt4-modal{
+  position:fixed;inset:0;z-index:120;display:flex;align-items:center;
+  justify-content:center;padding:24px;background:rgba(36,35,31,.42);
+}
+.gt4-modal[hidden]{display:none}
+.gt4-card{
+  width:min(420px,94vw);display:flex;flex-direction:column;gap:10px;
+  padding:20px 22px 16px;background:var(--paper-2);
+  border:1px solid var(--rule);border-radius:12px;box-shadow:var(--shadow);
+}
+.gt4-card h3{margin:0;font:600 16px/1.3 var(--sans)}
+.gt4-hint{margin:0;color:var(--pencil);font-size:12.5px}
+.gt4-mount{min-height:56px;display:flex;align-items:center;justify-content:center}
+.gt4-status{min-height:18px;font-size:12.5px;color:var(--pencil)}
+.gt4-status.error{color:var(--stamp)}
+.gt4-status.ok{color:var(--green)}
+.gt4-close{
+  align-self:flex-end;padding:6px 14px;border:1px solid var(--rule);
+  border-radius:8px;background:transparent;font-size:12.5px;
+}
+.gt4-close:hover{background:var(--paper-3)}
 .login-help{
   display:flex;flex-wrap:wrap;gap:5px 14px;margin-top:18px;padding-top:12px;
   border-top:1px dotted var(--rule);color:var(--faint);font-size:9.5px;line-height:1.6;

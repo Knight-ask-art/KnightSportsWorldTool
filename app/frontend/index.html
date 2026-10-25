@@ -65,6 +65,9 @@
         <em>仅保存在本机，使用系统加密</em>
       </label>
       <div class="login-error" id="loginError" role="alert" hidden></div>
+      <button class="login-manual" id="loginManual" type="button" hidden>
+        验证码过不去？手动滑一下
+      </button>
       <div class="login-status" id="loginStatus" role="status" aria-live="polite">正在读取本地会话…</div>
       <button class="login-submit" id="loginBtn" type="submit" disabled>
         <span id="loginBtnText">登录</span><span class="arrow" aria-hidden="true">→</span>
@@ -73,6 +76,19 @@
 
     <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.3</span></div>
   </section>
+</div>
+
+<!-- Manual captcha: GeeTest's own widget, inside the app's WebView.  This is
+     the fallback when the local solver is out of date; it never depends on our
+     reimplementation of `w`. -->
+<div class="gt4-modal" id="gt4Modal" hidden>
+  <div class="gt4-card" role="dialog" aria-modal="true" aria-labelledby="gt4Title">
+    <h3 id="gt4Title">手动完成验证</h3>
+    <p class="gt4-hint">这里是极验官方验证码。滑完会自动继续登录，不会再走本地解题。</p>
+    <div class="gt4-mount" id="gt4Mount"></div>
+    <div class="gt4-status" id="gt4Status" role="status" aria-live="polite"></div>
+    <button class="gt4-close" id="gt4Close" type="button">取消</button>
+  </div>
 </div>
 
 <div class="app" id="appShell" aria-hidden="true" inert>

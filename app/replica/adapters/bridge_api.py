@@ -1479,6 +1479,61 @@ class ReplicaApi:
                             device=device)
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录失败: {e}')
+        return self._persist_login(sess, device, raw_session)
+
+    def real_login_ticket(self, username, password, lotNumber='',
+                          captchaOutput='', passToken='', genTime=''):
+        """Finish a login with credentials from GeeTest's official widget.
+
+        The UI solves the slider inside the app's own WebView using the real
+        `gt4.js`.  Nothing here depends on our reimplementation of `w`, so this
+        path keeps working even when the solver is out of date.
+        """
+        try:
+            from ..application.login_flow import login_with_ticket
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'登录模块不可用: {e}')
+        ticket = {'lotNumber': lotNumber, 'captchaOutput': captchaOutput,
+                  'passToken': passToken, 'genTime': genTime}
+        if not all(ticket.values()):
+            return _fail('手动验证凭证不完整，请重新滑一次')
+        try:
+            raw_session = self._read_session()
+            device = self._effective_device(raw_session)
+            sess = login_with_ticket(username, password, ticket,
+                                     log=lambda *_: None, device=device)
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'登录失败: {e}')
+        return self._persist_login(sess, device, raw_session)
+
+    def real_gt4_config(self):
+        """Everything the manual-captcha widget needs, including its version."""
+        try:
+            from ..transport import gt4
+            return _ok({
+                'captcha_id': gt4.CAPTCHA_ID_CANDIDATES[0],
+                'candidates': list(gt4.CAPTCHA_ID_CANDIDATES),
+                'script': 'https://static.geetest.com/v4/gt4.js',
+                'rsa_bits': gt4.modulus_bits(),
+                'rsa_source': gt4.rsa_source(),
+            })
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'极验配置不可用: {e}')
+
+    def real_gt4_probe(self):
+        """Canary: solve one slider and stop before `geevalidate`.
+
+        Passing here plus a later 10003 means the business server scored the
+        ticket low; failing here means the solver or GeeTest changed.
+        """
+        try:
+            from ..transport import gt4
+            return _ok(gt4.probe(log=lambda *_: None))
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'极验自检失败: {e}')
+
+    def _persist_login(self, sess, device, raw_session):
+        """Write a successful login and return the sanitised profile."""
         profile = sess.get('profile') or {}
         # A manual per-account override (CLI/import) must survive the new
         # token write.  Copy only fields that were explicitly in the session;

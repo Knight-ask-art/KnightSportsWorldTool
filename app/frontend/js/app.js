@@ -1250,46 +1250,164 @@ async function ensureKeepalive(){
   }catch(e){}
   return false;
 }
+function clearLoginError(){
+  const err = $('#loginError');
+  if(err){ err.textContent = ''; err.hidden = true; }
+}
+
 async function gateLogin(){
   if(LOGIN.busy) return;
   const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
   const pass = $('#loginPass') ? $('#loginPass').value : '';
   if(!user){ loginFail('请输入手机号', '#loginUser'); return; }
   if(!pass){ loginFail('请输入密码', '#loginPass'); return; }
+  clearLoginError();
+  const manualBtn = $('#loginManual');
+  if(manualBtn) manualBtn.hidden = true;
   setLoginBusy(true, '正在登录… 通常 5–15 秒', 'busy');
   startLoginClock();
   liveLog('登录中', '正在验证账号', 'info');
   try{
     const profile = await requestLogin(user, pass);
-    const rememberBox = $('#loginRemember');
-    const wantedRemember = !!(rememberBox && rememberBox.checked);
-    const remembered = await rememberLoginChoice(user, pass);
-    const passEl = $('#loginPass');
-    if(passEl) passEl.value = '';
-    clearAccountActivity();
-    liveLog('登录成功', profile.name || profile.campusName || '会话已保存', 'ok');
-    stopLoginClock();
-    setLoginStatus('登录成功，正在读取你的账号…', 'ok');
-    const res = await liveInitSession();
-    if(!res || res.state !== 'app'){
-      throw new Error((res && res.message) || '登录后仍无法验证会话');
-    }
-    await loadRules();
-    ensureKeepalive();
-    fetchSchoolRules({silent: true});
-    setLoginStatus('已登录，正在进入工作台…', 'ok');
-    setLoginButton('正在进入…', true);
-    LOGIN.busy = true;
-    setTimeout(() => {
-      LOGIN.busy = false;
-      setLoginBusy(false);
-      enterApp(true);
-      if(wantedRemember && !remembered){
-        toast('已登录，但本地保存密码失败；下次需要重新输入');
-      }
-    }, 320);
+    await finishLogin(profile, user, pass);
   }catch(e){
-    loginFail(prettyLoginError(e && e.message ? e.message : e));
+    const raw = e && e.message ? e.message : String(e);
+    // Only offer the manual widget when the captcha is what actually failed;
+    // showing it after a wrong password would just confuse people.
+    if(manualBtn && /极验|gee|gt4|captcha|10003|滑块/i.test(raw)){
+      manualBtn.hidden = false;
+    }
+    loginFail(prettyLoginError(raw));
+  }
+}
+
+async function finishLogin(profile, user, pass){
+  const rememberBox = $('#loginRemember');
+  const wantedRemember = !!(rememberBox && rememberBox.checked);
+  const remembered = await rememberLoginChoice(user, pass);
+  const passEl = $('#loginPass');
+  if(passEl) passEl.value = '';
+  clearAccountActivity();
+  liveLog('登录成功', profile.name || profile.campusName || '会话已保存', 'ok');
+  stopLoginClock();
+  setLoginStatus('登录成功，正在读取你的账号…', 'ok');
+  const res = await liveInitSession();
+  if(!res || res.state !== 'app'){
+    throw new Error((res && res.message) || '登录后仍无法验证会话');
+  }
+  await loadRules();
+  ensureKeepalive();
+  fetchSchoolRules({silent: true});
+  setLoginStatus('已登录，正在进入工作台…', 'ok');
+  setLoginButton('正在进入…', true);
+  LOGIN.busy = true;
+  setTimeout(() => {
+    LOGIN.busy = false;
+    setLoginBusy(false);
+    enterApp(true);
+    if(wantedRemember && !remembered){
+      toast('已登录，但本地保存密码失败；下次需要重新输入');
+    }
+  }, 320);
+}
+
+// ---- manual captcha: GeeTest's official widget in the app's own WebView ----
+const GT4 = { loading: null, captcha: null, busy: false, config: null };
+
+function setGt4Status(msg, kind){
+  const el = $('#gt4Status');
+  if(!el) return;
+  el.textContent = msg || '';
+  el.className = 'gt4-status' + (kind ? ' ' + kind : '');
+}
+
+function loadGt4Script(src){
+  if(window.initGeetest4) return Promise.resolve();
+  if(GT4.loading) return GT4.loading;
+  GT4.loading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src || 'https://static.geetest.com/v4/gt4.js';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('加载极验组件失败，请检查网络'));
+    document.head.appendChild(s);
+  });
+  GT4.loading.catch(() => { GT4.loading = null; });
+  return GT4.loading;
+}
+
+function closeManualCaptcha(){
+  const modal = $('#gt4Modal');
+  if(modal) modal.hidden = true;
+  const mount = $('#gt4Mount');
+  if(mount) mount.innerHTML = '';
+  GT4.captcha = null;
+  GT4.busy = false;
+  setGt4Status('', '');
+}
+
+async function openManualCaptcha(){
+  if(GT4.busy) return;
+  const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
+  const pass = $('#loginPass') ? $('#loginPass').value : '';
+  if(!user || !pass){ loginFail('请先填好手机号和密码，再手动验证'); return; }
+  const cfgRes = await liveApi('real_gt4_config');
+  if(!liveOk(cfgRes)){ loginFail((cfgRes && cfgRes.message) || '极验配置读取失败'); return; }
+  GT4.config = cfgRes.data || {};
+  const modal = $('#gt4Modal');
+  if(!modal) return;
+  modal.hidden = false;
+  setGt4Status('正在加载验证码…', '');
+  try{
+    await loadGt4Script(GT4.config.script);
+  }catch(e){
+    setGt4Status(e.message || '加载失败', 'error');
+    return;
+  }
+  const mount = $('#gt4Mount');
+  if(mount) mount.innerHTML = '';
+  try{
+    window.initGeetest4({captchaId: GT4.config.captcha_id, product: 'embed'}, captcha => {
+      GT4.captcha = captcha;
+      if(mount && captcha.appendTo) captcha.appendTo(mount);
+      else if(captcha.showCaptcha) captcha.showCaptcha();
+      if(captcha.onSuccess) captcha.onSuccess(res => submitManualTicket(res));
+      if(captcha.onError) captcha.onError(() => {
+        setGt4Status('验证码加载失败，请取消后重试', 'error');
+      });
+      setGt4Status('拖动滑块完成拼图', '');
+    });
+  }catch(e){
+    setGt4Status('验证码初始化失败：' + (e.message || e), 'error');
+  }
+}
+
+async function submitManualTicket(res){
+  if(GT4.busy) return;
+  GT4.busy = true;
+  const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
+  const pass = $('#loginPass') ? $('#loginPass').value : '';
+  setGt4Status('验证通过，正在登录…', 'ok');
+  try{
+    const j = await liveApi('real_login_ticket', {
+      username: user, password: pass,
+      lotNumber: res.lotNumber,
+      captchaOutput: res.captchaOutput,
+      passToken: res.passToken,
+      genTime: res.genTime
+    }, 120000);
+    if(!liveOk(j)){
+      GT4.busy = false;
+      setGt4Status((j && j.message) || '登录失败', 'error');
+      try{ if(GT4.captcha && GT4.captcha.reset) GT4.captcha.reset(); }catch(e){}
+      return;
+    }
+    closeManualCaptcha();
+    clearLoginError();
+    await finishLogin(j.data || {}, user, pass);
+  }catch(e){
+    GT4.busy = false;
+    setGt4Status('登录失败：' + (e.message || e), 'error');
   }
 }
 
@@ -4799,6 +4917,19 @@ function liveWire(){
   if(loginForm){
     loginForm.addEventListener('submit', ev => { ev.preventDefault(); gateLogin(); });
   }
+  const manualBtn = $('#loginManual');
+  if(manualBtn) manualBtn.addEventListener('click', openManualCaptcha);
+  const gt4Close = $('#gt4Close');
+  if(gt4Close) gt4Close.addEventListener('click', closeManualCaptcha);
+  const gt4Modal = $('#gt4Modal');
+  if(gt4Modal){
+    gt4Modal.addEventListener('click', ev => {
+      if(ev.target === gt4Modal) closeManualCaptcha();
+    });
+  }
+  document.addEventListener('keydown', ev => {
+    if(ev.key === 'Escape' && gt4Modal && !gt4Modal.hidden) closeManualCaptcha();
+  });
   const loginUser = $('#loginUser');
   if(loginUser){
     loginUser.addEventListener('keydown', e => {

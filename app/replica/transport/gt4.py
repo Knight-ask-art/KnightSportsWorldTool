@@ -1,38 +1,49 @@
-"""GeeTest v4 slider solver — pure Python, no browser, no emulator.
+"""GeeTest v4 slider — orchestration only.
 
-Ported from YanamiNeko/NekoSportsWorldTool (`src/api/gt4.rs` +
-`src/api/gt4image.rs`).  The whole flow runs locally:
+The heavy lifting lives in two sibling modules, deliberately split:
 
-    GET  /load      -> bg/slice images + lot_number/payload/process_token/pow_detail
-    (image)         -> gap x  (gray -> gaussian 5x5 sigma 1.1 -> Canny(100,200)
-                              -> zero-mean normalised cross correlation)
-    (PoW)           -> nonce so that sha256(pow_msg_base + nonce) starts with "00"
-    (get_w)         -> hex(AES-128-CBC(plaintext, key=str16, iv=ascii"0"*16))
-                       || hex(RSA-PKCS1v15(str16))
-    GET  /verify    -> {lotNumber, captchaOutput, passToken, genTime}
+    gt4_image.py    PNG -> gap x  (Canny + ZNCC)
+    gt4_payload.py  gap -> `w`    (PoW, dynamic key, AES)
+    gt4_rsa.py      the RSA half of `w`, refreshable
 
-Those four credentials are then POSTed to `api/v70270/security/geevalidate`.
+Upstream changes the field set far more often than the image pipeline, so a
+field-only update must not require re-validating CV — and a CV change must not
+be able to silently reshape the payload.
 
-The `w` plaintext contains an anti-forgery *dynamic key* derived from
-lot_number — omitting it yields a low-trust ticket that the app server rejects
-with 10003 even though GeeTest itself answered success.  That was the real
-reason our earlier hand-rolled attempts failed.
+The flow is the same as before:
+
+    GET  /load    -> bg/slice images + lot_number/payload/process_token/pow_detail
+    (image)       -> gap x
+    (PoW)         -> nonce so that sha256(pow_msg_base + nonce) starts with "00"
+    (w)           -> hex(AES-128-CBC(payload)) || hex(RSA-PKCS1v15(str16))
+    GET  /verify  -> {lotNumber, captchaOutput, passToken, genTime}
+
+What is new here is **evidence**.  GeeTest answering ``success`` only means the
+ticket is well formed; the app server scores it and may still reject with
+10003.  When something fails, this module can now leave behind the `/load`
+JSON (including the JS version), both images, the exact `w` plaintext and the
+`/verify` reply — so the next incident is a diff, not another 49 rounds.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import random
-import string
+import os
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 
-import cv2
-import numpy as np
+from .gt4_image import gap_distance, locate_gap
+from .gt4_image import self_test as _image_self_test
+from .gt4_payload import (build_payload, build_w, dynamic_key, passtime_for,
+                          pow_msg, str16)
+from .gt4_payload import self_test as _payload_self_test
+from .gt4_rsa import (active_source as rsa_source, modulus_bits,
+                      refresh as refresh_rsa)
+from .gt4_rsa import self_test as _rsa_self_test
 
 GEE_HOST = 'https://gcaptcha4.geetest.com'
 STATIC_HOST = 'https://static.geetest.com/'
@@ -49,258 +60,262 @@ CAPTCHA_ID_CANDIDATES = [
     '3b02ad39bd099fd3a8336d9347a189ab',
 ]
 
-#: GeeTest's jsbn-style RSA public key for the web widget (e = 65537).
-_RSA_LIMBS = [
-    134982529, 254232810, 164556709, 234907349, 134685994, 35463984, 258277946,
-    12518857, 44638621, 93783641, 212253739, 62792472, 186688352, 109500232,
-    182488077, 261196188, 26354094, 103248217, 106891695, 165771045, 41530993,
-    263704736, 111785174, 12753611, 232116673, 155524985, 218291229, 122452343,
-    248250238, 118739550, 251169095, 129059733, 149835464, 5498868, 71719731,
-    154456417, 49635,
-]
-_RSA_E = 65537
-
-
-def _gee_rsa_n() -> int:
-    n = 0
-    for limb in reversed(_RSA_LIMBS):
-        n = n * (1 << 28) + limb
-    return n
-
-
-def _rsa_encrypt_hex(data: bytes) -> str:
-    """PKCS#1 v1.5 type-2 (encryption) padding, then raw RSA."""
-    n = _gee_rsa_n()
-    k = (n.bit_length() + 7) // 8
-    if len(data) > k - 11:
-        raise ValueError('RSA payload too long')
-    ps = bytes(random.randint(1, 255) for _ in range(k - 3 - len(data)))
-    em = b'\x00\x02' + ps + b'\x00' + data
-    c = pow(int.from_bytes(em, 'big'), _RSA_E, n)
-    return c.to_bytes(k, 'big').hex()
+LOAD_FIELDS = ('bg', 'slice', 'lot_number', 'payload', 'process_token',
+               'pow_detail')
 
 
 # --------------------------------------------------------------------------
-# image: locate the gap
+# error taxonomy
 # --------------------------------------------------------------------------
 
-def _decode_gray(png: bytes) -> np.ndarray:
-    arr = np.frombuffer(png, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise ValueError('PNG decode failed')
-    if img.ndim == 3 and img.shape[2] == 4:
-        b, g, r, a = (img[:, :, i].astype(np.uint32) for i in range(4))
-        a = a // 255
-        b, g, r = b * a, g * a, r * a
-        gray = (r * 299 + g * 587 + b * 114) // 1000
-    elif img.ndim == 3:
-        b, g, r = (img[:, :, i].astype(np.uint32) for i in range(3))
-        gray = (r * 299 + g * 587 + b * 114) // 1000
-    else:
-        gray = img.astype(np.uint32)
-    return np.clip(gray, 0, 255).astype(np.uint8)
+class GeeError(RuntimeError):
+    """Base class: anything that stopped us from producing a ticket."""
 
 
-def _gaussian_blur(src: np.ndarray) -> np.ndarray:
-    """Separable 5-tap gaussian, sigma = 1.1, clamped edges (matches upstream)."""
-    sigma = 1.1
-    xs = np.arange(5, dtype=np.float64) - 2.0
-    kernel = np.exp(-(xs * xs) / (2 * sigma * sigma))
-    kernel /= kernel.sum()
-    f = src.astype(np.float64)
-    # horizontal then vertical, edge-clamped
-    pad = np.pad(f, ((0, 0), (2, 2)), mode='edge')
-    tmp = sum(kernel[i] * pad[:, i:i + f.shape[1]] for i in range(5))
-    pad = np.pad(tmp, ((2, 2), (0, 0)), mode='edge')
-    out = sum(kernel[i] * pad[i:i + f.shape[0], :] for i in range(5))
-    return out
+class GeeUnavailable(GeeError):
+    """Network/HTTP problem.  Retrying the same captcha id may help."""
 
 
-def _canny(img: np.ndarray, low: float = 100.0, high: float = 200.0) -> np.ndarray:
-    """Sobel -> magnitude/angle -> non-maximum suppression -> hysteresis."""
-    f = img.astype(np.float64)
-    # 3x3 Sobel with edge clamping
-    p = np.pad(f, 1, mode='edge')
-    gx = (-p[:-2, :-2] + p[:-2, 2:]
-          - 2 * p[1:-1, :-2] + 2 * p[1:-1, 2:]
-          - p[2:, :-2] + p[2:, 2:])
-    gy = (-p[:-2, :-2] - 2 * p[:-2, 1:-1] - p[:-2, 2:]
-          + p[2:, :-2] + 2 * p[2:, 1:-1] + p[2:, 2:])
-    mag = np.hypot(gx, gy)
-    ang = np.arctan2(gy, gx) % np.pi
+class GeeSchemaChanged(GeeError):
+    """``/load`` no longer looks like the schema we ship for."""
 
-    h, w = mag.shape
-    nms = np.zeros_like(mag)
-    # quantise to 4 directions exactly like the reference implementation
-    pad = np.pad(mag, 1, mode='edge')
-    for y in range(h):
-        for x in range(w):
-            a = ang[y, x]
-            if a < np.pi / 8 or a >= 7 * np.pi / 8:
-                (dx, dy) = (1, 0)
-            elif a < 3 * np.pi / 8:
-                (dx, dy) = (1, 1)
-            elif a < 5 * np.pi / 8:
-                (dx, dy) = (0, 1)
+
+class GeeRejected(GeeError):
+    """GeeTest itself said no (``status != success`` or ``forbidden``).
+
+    Retrying the same captcha id is pointless; try the next id, then fall back
+    to a human.  Deliberately distinct from :class:`GeeUnavailable` so the
+    retry policy does not hammer a server that already refused us.
+    """
+
+    def __init__(self, message: str, *, status: str = '', code=''):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+
+
+class GeeImageError(GeeError):
+    """Local CV failed (blank slice, unexpected size)."""
+
+
+# --------------------------------------------------------------------------
+# diagnostics
+# --------------------------------------------------------------------------
+
+def data_root() -> str:
+    """Same rule as ``device_profile.default_store_dir``, without the layering."""
+    env = os.environ.get('JHP_DATA_DIR')
+    if env:
+        return env
+    from ..build_info import app_root
+    return os.path.join(app_root(), 'data')
+
+
+def dump_dir() -> str:
+    return os.environ.get('JHP_GT4_DUMP_DIR') or os.path.join(
+        data_root(), 'diagnostics', 'gt4')
+
+
+def dump_policy() -> str:
+    return str(os.environ.get('JHP_GT4_DUMP', 'fail')).strip().lower() or 'fail'
+
+
+def _redact(value):
+    """Shorten anything that is a credential, keep everything else intact."""
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            low = key.lower()
+            if low in ('pass_token', 'passtoken', 'captcha_output',
+                       'captchaoutput'):
+                out[key] = (str(item)[:8] + '…') if item else ''
             else:
-                (dx, dy) = (-1, 1)
-            m = pad[y + 1, x + 1]
-            if m >= pad[y + 1 + dy, x + 1 + dx] and m >= pad[y + 1 - dy, x + 1 - dx]:
-                nms[y, x] = m
-
-    out = np.zeros(img.shape, np.uint8)
-    strong = nms >= high
-    weak = nms >= low
-    out[strong] = 255
-    # hysteresis: BFS from strong pixels through weak ones
-    stack = list(zip(*np.nonzero(strong)))
-    while stack:
-        y, x = stack.pop()
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                ny, nx = y + dy, x + dx
-                if 0 <= ny < h and 0 <= nx < w and out[ny, nx] == 0 and weak[ny, nx]:
-                    out[ny, nx] = 255
-                    stack.append((ny, nx))
-    return out
+                out[key] = _redact(item)
+        return out
+    if isinstance(value, list):
+        return [_redact(v) for v in value]
+    return value
 
 
-def gap_distance(bg_png: bytes, slice_png: bytes) -> int:
-    """Return the gap x offset (left edge of the best match)."""
-    bg_gray = _decode_gray(bg_png)
-    sl_gray = _decode_gray(slice_png)
-    bg_edges = _canny(_gaussian_blur(bg_gray))
-    sl_edges = _canny(_gaussian_blur(sl_gray))
-    if int((sl_edges == 255).sum()) < 10:
-        raise ValueError('slice has too few edge pixels (recognition failed)')
-    if (sl_edges.shape[0] > bg_edges.shape[0]
-            or sl_edges.shape[1] > bg_edges.shape[1]):
-        raise ValueError('slice larger than background')
-    res = cv2.matchTemplate(bg_edges, sl_edges, cv2.TM_CCOEFF_NORMED)
-    _, _, _, max_loc = cv2.minMaxLoc(res)
-    return int(max_loc[0])
+def write_dump(trace: dict, policy: str | None = None) -> str:
+    """Persist one attempt under ``data/diagnostics/gt4/<stamp>/``."""
+    policy = policy or dump_policy()
+    ok = bool(trace.get('ok'))
+    if policy == 'off' or (policy != 'always' and ok):
+        return ''
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    base = os.path.join(dump_dir(), stamp)
+    try:
+        os.makedirs(base, exist_ok=True)
+        meta = _redact({k: v for k, v in trace.items()
+                        if k not in ('bg', 'slice')})
+        with open(os.path.join(base, 'attempt.json'), 'w',
+                  encoding='utf-8') as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=1)
+        for name in ('bg', 'slice'):
+            blob = trace.get(name)
+            if isinstance(blob, bytes) and blob:
+                with open(os.path.join(base, name + '.png'), 'wb') as fh:
+                    fh.write(blob)
+    except OSError:
+        return ''
+    return base
 
 
 # --------------------------------------------------------------------------
-# proof of work
-# --------------------------------------------------------------------------
-
-def _pow_msg(pow_detail: dict, captcha_id: str, lot_number: str) -> str:
-    base = '%s|%s|%s|%s|%s|%s||' % (
-        pow_detail.get('version', ''),
-        pow_detail.get('bits'),
-        pow_detail.get('hashfunc', ''),
-        pow_detail.get('datetime', ''),
-        captcha_id,
-        lot_number,
-    )
-    while True:
-        nonce = ''.join(random.choice('0123456789abcdef') for _ in range(16))
-        if hashlib.sha256((base + nonce).encode()).hexdigest().startswith('00'):
-            return base + nonce
-
-
-def _str16() -> str:
-    out = []
-    for _ in range(4):
-        v = int(65536.0 * (1.0 + random.random()))
-        out.append(format(v, 'x')[1:5])
-    return ''.join(out)
-
-
-# --------------------------------------------------------------------------
-# w construction
-# --------------------------------------------------------------------------
-
-def _aes_hex(plaintext: str, key: str) -> str:
-    from Crypto.Cipher import AES
-    from Crypto.Util.Padding import pad
-    ct = AES.new(key.encode(), AES.MODE_CBC,
-                 iv=b'0000000000000000').encrypt(
-        pad(plaintext.encode(), 16))
-    return ct.hex()
-
-
-def build_w(set_left: int, lot_number: str, pow_msg: str, pow_sign: str,
-            str16: str) -> str:
-    userresponse = set_left / 1.0059466666666665 + 2.0
-    dyn_key = lot_number[26:30] + lot_number[7:11]
-    dyn_val = lot_number[6:14]
-    plaintext = (
-        '{"setLeft":%d,"passtime":1887,"userresponse":%s,"device_id":"",'
-        '"lot_number":"%s","pow_msg":"%s","pow_sign":"%s","geetest":"captcha",'
-        '"lang":"zh","ep":"123","biht":"1426265548","gee_guard":{"roe":{'
-        '"aup":"3","sep":"3","egp":"3","auh":"3","rew":"3","snh":"3",'
-        '"res":"3","cdc":"3"}},"YciC":"P3Vn","%s":"%s","em":{'
-        '"ph":0,"cp":0,"ek":"11","wd":1,"nt":0,"si":0,"sc":0}}'
-    ) % (set_left, repr(userresponse), lot_number, pow_msg, pow_sign,
-         dyn_key, dyn_val)
-    return _aes_hex(plaintext, str16) + _rsa_encrypt_hex(str16.encode())
-
-
-# --------------------------------------------------------------------------
-# HTTP helpers
+# HTTP
 # --------------------------------------------------------------------------
 
 def _get(url: str, timeout: float = 30.0) -> bytes:
     req = urllib.request.Request(url, headers={'User-Agent': UA_WEB})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+    except urllib.error.HTTPError as exc:
+        raise GeeUnavailable('HTTP %s from %s' % (exc.code, url.split('?')[0])) from exc
+    except urllib.error.URLError as exc:
+        raise GeeUnavailable('网络错误: %s' % exc.reason) from exc
+    except OSError as exc:
+        raise GeeUnavailable('网络错误: %s' % exc) from exc
 
 
 def _jsonp(text: str) -> dict:
     start, end = text.find('('), text.rfind(')')
     if start < 0 or end <= start:
-        raise ValueError('JSONP malformed: %s' % text[:120])
-    return json.loads(text[start + 1:end])
+        raise GeeSchemaChanged('JSONP 格式变了: %s' % text[:120])
+    try:
+        return json.loads(text[start + 1:end])
+    except ValueError as exc:
+        raise GeeSchemaChanged('JSONP 解析失败: %s' % text[:120]) from exc
+
+
+def _summarise(root: dict) -> tuple[str, object]:
+    status = str(root.get('status') or '')
+    code = root.get('code')
+    if code is None and isinstance(root.get('data'), dict):
+        code = root['data'].get('code')
+    return status, code
 
 
 # --------------------------------------------------------------------------
 # main entry
 # --------------------------------------------------------------------------
 
-def solve_gt4(captcha_id: str | None = None, attempts: int = 3,
-              log=None) -> dict:
-    """Return {'lotNumber','captchaOutput','passToken','genTime'}."""
+def solve_gt4(captcha_id: str | None = None, attempts: int = 1,
+              log=None, dump: bool = True,
+              trace_out: dict | None = None) -> dict:
+    """Return ``{'lotNumber','captchaOutput','passToken','genTime', ...}``.
+
+    Retry policy (deliberately boring): try each captcha id once by default.
+    A ``GeeRejected`` moves straight to the next id; only a transport error
+    earns a re-try.  Hammering the same id is both useless and noisy — the
+    caller is expected to fall back to a human after this returns.
+    """
     log = log or (lambda *_: None)
-    ids = [captcha_id] if captcha_id else CAPTCHA_ID_CANDIDATES
+    ids = [captcha_id] if captcha_id else list(CAPTCHA_ID_CANDIDATES)
+    attempts = max(1, int(attempts))
     last = None
     for cid in ids:
         for attempt in range(1, attempts + 1):
+            trace = trace_out if trace_out is not None else {}
+            trace.clear()
+            trace.update({'captcha_id': cid, 'attempt': attempt, 'ok': False})
             try:
-                return _solve_once(cid, log)
-            except Exception as exc:  # noqa: BLE001
+                return _solve_once(cid, log, trace, dump)
+            except GeeRejected as exc:
                 last = exc
+                trace.update({'error': str(exc),
+                              'error_type': type(exc).__name__})
+                log('[gt4] cid=%s rejected (%s); next id' % (cid[:8], exc))
+                if dump:
+                    write_dump(trace)
+                break
+            except GeeError as exc:
+                last = exc
+                trace['error'] = str(exc)
+                trace['error_type'] = type(exc).__name__
                 log('[gt4] cid=%s attempt %d/%d failed: %s'
                     % (cid[:8], attempt, attempts, exc))
-                time.sleep(2)
-    raise RuntimeError('GT4 failed on all captcha ids: %s' % last)
+                if dump:
+                    write_dump(trace)
+                if attempt < attempts:
+                    time.sleep(1.5)
+    raise last or GeeError('GT4 failed')
 
 
-def _solve_once(cid: str, log) -> dict:
+def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
+    started = time.time()
     challenge = uuid.uuid4().hex
     cb = 'geetest_%d' % int(time.time() * 1000)
     load_url = ('%s/load?callback=%s&captcha_id=%s&challenge=%s'
                 '&client_type=web&risk_type=slide&lang=zh'
                 % (GEE_HOST, cb, cid, challenge))
-    data = _jsonp(_get(load_url).decode())['data']
+    root = _jsonp(_get(load_url).decode())
+    data = root.get('data')
+    if not isinstance(data, dict):
+        raise GeeSchemaChanged('/load 没有 data 对象: %s'
+                               % json.dumps(root, ensure_ascii=False)[:160])
 
-    for field in ('bg', 'slice', 'lot_number', 'payload',
-                  'process_token', 'pow_detail'):
-        if field not in data:
-            raise ValueError('GT4 /load missing %s' % field)
+    missing = [f for f in LOAD_FIELDS if f not in data]
+    if missing:
+        raise GeeSchemaChanged(
+            '/load 缺少字段 %s（新版本可能改了协议）；现有字段：%s'
+            % (missing, sorted(data.keys())[:12]))
+
+    # Version signals.  These are the cheapest upgrade detector GeeTest gives
+    # us, and the old code threw them away.
+    static_path = str(data.get('static_path') or '')
+    trace.update({
+        'static_path': static_path,
+        'captcha_mode': data.get('captcha_mode'),
+        'check_device': data.get('check_device'),
+        'load_keys': sorted(data.keys()),
+        'lot_number': data['lot_number'],
+        'load': root,
+    })
+    if static_path:
+        log('[gt4] js=%s mode=%s check_device=%s'
+            % (static_path, data.get('captcha_mode'), data.get('check_device')))
+        try:
+            info = refresh_rsa(static_path, os.path.join(data_root(), 'cache', 'gt4'),
+                               log=log)
+            trace['rsa'] = info
+        except Exception as exc:  # noqa: BLE001 - never fatal
+            trace['rsa'] = {'error': str(exc)[:120]}
+    trace['rsa_bits'] = modulus_bits()
+    trace['rsa_source'] = rsa_source()
 
     bg = _get(STATIC_HOST + data['bg'])
     sl = _get(STATIC_HOST + data['slice'])
-    dist = gap_distance(bg, sl)
-    log('[gt4] gap distance = %d px' % dist)
+    trace['bg'], trace['slice'] = bg, sl
 
-    pow_detail = data['pow_detail']
-    pow_msg = _pow_msg(pow_detail, cid, data['lot_number'])
-    pow_sign = hashlib.sha256(pow_msg.encode()).hexdigest()
-    str16 = _str16()
-    w = build_w(dist, data['lot_number'], pow_msg, pow_sign, str16)
+    try:
+        gap = locate_gap(bg, sl)
+    except ValueError as exc:
+        raise GeeImageError('缺口识别失败: %s' % exc) from exc
+    dist = gap['x']
+    trace.update({'gap': dist, 'bg_width': gap['bg_width'],
+                  'bg_height': gap['bg_height']})
+    log('[gt4] gap distance = %d px (bg %dx%d)'
+        % (dist, gap['bg_width'], gap['bg_height']))
+
+    pmsg = pow_msg(data['pow_detail'], cid, data['lot_number'])
+    psign = hashlib.sha256(pmsg.encode()).hexdigest()
+    key16 = str16()
+    # Build the plaintext once.  `build_w` would otherwise re-derive a random
+    # passtime and the dumped payload would not be the one we actually sent.
+    passtime = passtime_for(dist)
+    try:
+        plaintext = build_payload(dist, lot_number=data['lot_number'],
+                                  pow_msg=pmsg, pow_sign=psign,
+                                  bg_width=gap['bg_width'],
+                                  passtime=passtime)
+        w = build_w(dist, data['lot_number'], pmsg, psign, key16,
+                    bg_width=gap['bg_width'], passtime=passtime)
+    except ValueError as exc:
+        raise GeeSchemaChanged('w 字段构造失败: %s' % exc) from exc
+    trace['payload'] = plaintext
+    trace['payload_keys'] = list(json.loads(plaintext).keys())
 
     cb2 = 'geetest_%d' % int(time.time() * 1000)
     verify_url = ('%s/verify?callback=%s&captcha_id=%s&client_type=web'
@@ -311,18 +326,67 @@ def _solve_once(cid: str, log) -> dict:
                      urllib.parse.quote(data['payload']),
                      urllib.parse.quote(data['process_token']),
                      urllib.parse.quote(w)))
-    root = _jsonp(_get(verify_url).decode())
-    if root.get('status') != 'success':
-        raise RuntimeError('GT4 /verify failed: %s'
-                           % json.dumps(root, ensure_ascii=False)[:200])
+    vroot = _jsonp(_get(verify_url).decode())
+    trace['verify'] = vroot
+    status, code = _summarise(vroot)
+    if status != 'success':
+        raise GeeRejected(
+            'GT4 /verify 拒绝: status=%s code=%s' % (status, code),
+            status=status, code=code)
 
-    sec = root['data']['seccode']
-    return {
-        'lotNumber': sec['lot_number'],
-        'captchaOutput': sec['captcha_output'],
-        'passToken': sec['pass_token'],
-        'genTime': sec['gen_time'],
+    sec = (vroot.get('data') or {}).get('seccode') or {}
+    creds = {
+        'lotNumber': sec.get('lot_number'),
+        'captchaOutput': sec.get('captcha_output'),
+        'passToken': sec.get('pass_token'),
+        'genTime': sec.get('gen_time'),
     }
+    if not all(creds.values()):
+        raise GeeSchemaChanged('/verify 成功但凭证缺字段: %s'
+                               % sorted(sec.keys()))
+    trace.update({'ok': True, 'elapsed_ms': int((time.time() - started) * 1000),
+                  'captcha_output': creds['captchaOutput'],
+                  'pass_token': creds['passToken']})
+    if dump:
+        write_dump(trace)
+    return creds
+
+
+# --------------------------------------------------------------------------
+# canary: is GeeTest still willing to talk to us?
+# --------------------------------------------------------------------------
+
+def probe(captcha_id: str | None = None, log=None) -> dict:
+    """Solve a slider and stop before ``geevalidate``.
+
+    This never touches the account, so a failure here means "the solver or
+    GeeTest changed", while a pass here plus a 10003 later means "the business
+    server scored our ticket low".  That distinction is what rounds 44-49 were
+    missing.
+    """
+    started = time.time()
+    trace: dict = {}
+    try:
+        creds = solve_gt4(captcha_id, log=log, dump=False, trace_out=trace)
+        return {
+            'ok': True, 'stage': 'verify',
+            'captcha_id': captcha_id or CAPTCHA_ID_CANDIDATES[0],
+            'lot_number': creds['lotNumber'],
+            'static_path': trace.get('static_path', ''),
+            'bg_width': trace.get('bg_width'),
+            'gap': trace.get('gap'),
+            'elapsed_ms': int((time.time() - started) * 1000),
+            'rsa_source': rsa_source(), 'rsa_bits': modulus_bits(),
+        }
+    except GeeError as exc:
+        return {
+            'ok': False, 'stage': type(exc).__name__,
+            'captcha_id': captcha_id or CAPTCHA_ID_CANDIDATES[0],
+            'static_path': trace.get('static_path', ''),
+            'error': str(exc),
+            'elapsed_ms': int((time.time() - started) * 1000),
+            'rsa_source': rsa_source(), 'rsa_bits': modulus_bits(),
+        }
 
 
 # --------------------------------------------------------------------------
@@ -331,47 +395,85 @@ def _solve_once(cid: str, log) -> dict:
 
 def self_test() -> list[tuple[str, bool, str]]:
     out = []
+    out.extend(_image_self_test())
+    out.extend(_payload_self_test())
+    out.extend(_rsa_self_test())
 
-    # w plaintext shape (no network, fixed lot_number)
+    # The dynamic key is the field that caused months of 10003.
     lot = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6'
-    s16 = '0123456789abcdef'
-    w = build_w(123, lot, 'pow|msg||nonce1234567890ab', 'sign', s16)
-    out.append(('w is hex', all(c in string.hexdigits.lower() for c in w), '%d chars' % len(w)))
-    out.append(('w longer than RSA blob', len(w) > 260, '%d chars' % len(w)))
+    out.append(('dynamic key is 8 chars', len(dynamic_key(lot)) == 8,
+                dynamic_key(lot)))
 
-    # dynamic key derivation
-    dyn = lot[26:30] + lot[7:11]
-    out.append(('dynamic key slice', len(dyn) == 8, dyn))
+    # Error classes must stay distinguishable: the retry policy keys off them.
+    out.append(('rejected carries status',
+                getattr(GeeRejected('x', status='fail'), 'status') == 'fail', ''))
+    out.append(('schema error is not rejected',
+                not issubclass(GeeSchemaChanged, GeeRejected), ''))
 
-    # RSA modulus size (37 jsbn limbs of 28 bits -> 1024-bit key, 128 bytes)
-    bits = _gee_rsa_n().bit_length()
-    out.append(('GeeTest RSA 1024 bit', bits == 1024, '%d bits' % bits))
+    # A dump must be able to run without touching the real data directory.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.environ.get('JHP_GT4_DUMP_DIR')
+        os.environ['JHP_GT4_DUMP_DIR'] = tmp
+        try:
+            path = write_dump({'ok': False, 'error': 'x',
+                               'pass_token': 'secret-value'},
+                              policy='fail')
+            wrote = bool(path) and os.path.isfile(
+                os.path.join(path, 'attempt.json'))
+            body = ''
+            if wrote:
+                with open(os.path.join(path, 'attempt.json'),
+                          encoding='utf-8') as fh:
+                    body = fh.read()
+        finally:
+            if old is None:
+                os.environ.pop('JHP_GT4_DUMP_DIR', None)
+            else:
+                os.environ['JHP_GT4_DUMP_DIR'] = old
+    out.append(('failure leaves a dump', wrote, path or 'none'))
+    out.append(('credentials redacted', 'secret-value' not in body, ''))
 
-    # pow settles quickly
-    msg = _pow_msg({'version': 'v1', 'bits': 5, 'hashfunc': 'sha256',
-                    'datetime': '2026-09-09T00:00:00'}, 'cid', 'lot')
-    out.append(('pow_msg prefix', msg.startswith('v1|5|sha256|2026-09-09T00:00:00|cid|lot||'), msg[:40]))
-    out.append(('pow_msg tail is 16 hex', len(msg.rsplit('|', 1)[-1]) == 16, msg[-16:]))
-
-    # image pipeline on a synthetic pair: crop a slice from a known x and check
-    # the matcher recovers exactly that x.
-    bg = np.zeros((60, 200), np.uint8)
-    bg[:] = 40
-    cv2.rectangle(bg, (120, 20), (160, 55), 220, -1)
-    cut_x = 100
-    slice_img = bg[20:56, cut_x:cut_x + 41].copy()
-    ok, bg_png = cv2.imencode('.png', bg)
-    ok2, sl_png = cv2.imencode('.png', slice_img)
-    dist = gap_distance(bg_png.tobytes(), sl_png.tobytes())
-    out.append(('image gap localised', abs(dist - cut_x) <= 3,
-                'x=%d (want %d)' % (dist, cut_x)))
+    # Success must not dump unless asked to.
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.environ.get('JHP_GT4_DUMP_DIR')
+        os.environ['JHP_GT4_DUMP_DIR'] = tmp
+        try:
+            path = write_dump({'ok': True}, policy='fail')
+        finally:
+            if old is None:
+                os.environ.pop('JHP_GT4_DUMP_DIR', None)
+            else:
+                os.environ['JHP_GT4_DUMP_DIR'] = old
+    out.append(('success is silent by default', path == '', path))
     return out
 
 
 if __name__ == '__main__':
+    import argparse
+
+    ap = argparse.ArgumentParser(description='GeeTest v4 solver')
+    ap.add_argument('--canary', action='store_true',
+                    help='solve one slider and stop before geevalidate')
+    ap.add_argument('--json', action='store_true', help='machine-readable')
+    ap.add_argument('--captcha-id', default=None)
+    args = ap.parse_args()
+
+    if args.canary:
+        report = probe(args.captcha_id, log=lambda m: None)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=1))
+        else:
+            print('RESULT:', 'PASS' if report['ok'] else 'FAIL')
+            for key in ('stage', 'captcha_id', 'static_path', 'rsa_source',
+                        'rsa_bits', 'elapsed_ms', 'error'):
+                if report.get(key) not in (None, ''):
+                    print('  %-12s %s' % (key, report[key]))
+        raise SystemExit(0 if report['ok'] else 1)
+
     ok = True
     for name, passed, detail in self_test():
-        print('%-28s %s   %s' % (name, 'PASS' if passed else 'FAIL', detail))
+        print('%-34s %s   %s' % (name, 'PASS' if passed else 'FAIL', detail))
         ok = ok and passed
     print('\nRESULT:', 'PASS' if ok else 'FAIL')
     raise SystemExit(0 if ok else 1)
