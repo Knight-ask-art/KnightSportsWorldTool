@@ -27,6 +27,7 @@ JSON (including the JS version), both images, the exact `w` plaintext and the
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import os
@@ -143,8 +144,11 @@ def write_dump(trace: dict, policy: str | None = None) -> str:
     ok = bool(trace.get('ok'))
     if policy == 'off' or (policy != 'always' and ok):
         return ''
-    stamp = time.strftime('%Y%m%d-%H%M%S')
-    base = os.path.join(dump_dir(), stamp)
+    # Microseconds + captcha id: two ids can fail inside the same second, and a
+    # second-resolution stamp would silently overwrite the first attempt.
+    stamp = _dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    cid = str(trace.get('captcha_id') or '')[:8]
+    base = os.path.join(dump_dir(), stamp + ('-' + cid if cid else ''))
     try:
         os.makedirs(base, exist_ok=True)
         meta = _redact({k: v for k, v in trace.items()
@@ -177,6 +181,11 @@ def _get(url: str, timeout: float = 30.0) -> bytes:
         raise GeeUnavailable('网络错误: %s' % exc.reason) from exc
     except OSError as exc:
         raise GeeUnavailable('网络错误: %s' % exc) from exc
+
+
+def _text(url: str, timeout: float = 30.0) -> str:
+    """Never let a stray byte turn a protocol error into a UnicodeDecodeError."""
+    return _get(url, timeout).decode('utf-8', 'replace')
 
 
 def _jsonp(text: str) -> dict:
@@ -250,7 +259,7 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
     load_url = ('%s/load?callback=%s&captcha_id=%s&challenge=%s'
                 '&client_type=web&risk_type=slide&lang=zh'
                 % (GEE_HOST, cb, cid, challenge))
-    root = _jsonp(_get(load_url).decode())
+    root = _jsonp(_text(load_url))
     data = root.get('data')
     if not isinstance(data, dict):
         raise GeeSchemaChanged('/load 没有 data 对象: %s'
@@ -299,7 +308,11 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
     log('[gt4] gap distance = %d px (bg %dx%d)'
         % (dist, gap['bg_width'], gap['bg_height']))
 
-    pmsg = pow_msg(data['pow_detail'], cid, data['lot_number'])
+    pow_detail = data.get('pow_detail')
+    if not isinstance(pow_detail, dict):
+        raise GeeSchemaChanged('/load 的 pow_detail 不是对象（%s）'
+                               % type(pow_detail).__name__)
+    pmsg = pow_msg(pow_detail, cid, data['lot_number'])
     psign = hashlib.sha256(pmsg.encode()).hexdigest()
     key16 = str16()
     # Build the plaintext once.  `build_w` would otherwise re-derive a random
@@ -326,7 +339,7 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
                      urllib.parse.quote(data['payload']),
                      urllib.parse.quote(data['process_token']),
                      urllib.parse.quote(w)))
-    vroot = _jsonp(_get(verify_url).decode())
+    vroot = _jsonp(_text(verify_url))
     trace['verify'] = vroot
     status, code = _summarise(vroot)
     if status != 'success':
@@ -334,7 +347,11 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
             'GT4 /verify 拒绝: status=%s code=%s' % (status, code),
             status=status, code=code)
 
-    sec = (vroot.get('data') or {}).get('seccode') or {}
+    vdata = vroot.get('data')
+    sec = vdata.get('seccode') if isinstance(vdata, dict) else None
+    if not isinstance(sec, dict):
+        raise GeeSchemaChanged('/verify 成功但 seccode 不是对象: %s'
+                               % json.dumps(vroot, ensure_ascii=False)[:160])
     creds = {
         'lotNumber': sec.get('lot_number'),
         'captchaOutput': sec.get('captcha_output'),

@@ -58,7 +58,7 @@ python -m replica.selfcheck
 
 ```
 23/23 模块自测     PASS
-pytest（tests/）   309 passed
+pytest（tests/）   312 passed
 私有 corpus tests   3 passed
 legacy_bridge_suite  38 checks passed
 legacy_http_suite    23 checks passed

@@ -1293,14 +1293,15 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .login-submit:disabled{cursor:progress;opacity:.55}
 .login-submit .arrow{font:15px/1 var(--sans);transform:translateY(-1px)}
 .login-manual{
-  align-self:flex-start;margin:2px 0 4px;padding:6px 13px;
+  justify-self:start;margin:2px 0 4px;padding:6px 13px;
   border:1px dashed var(--rule);border-radius:999px;background:transparent;
   color:var(--ink-blue);font-size:12.5px;
 }
 .login-manual:hover{background:rgba(242,210,92,.45);border-color:var(--ink-blue)}
 .login-manual[hidden]{display:none}
 .gt4-modal{
-  position:fixed;inset:0;z-index:120;display:flex;align-items:center;
+  /* The login gate is z-index 200; this dialog must sit above it. */
+  position:fixed;inset:0;z-index:300;display:flex;align-items:center;
   justify-content:center;padding:24px;background:rgba(36,35,31,.42);
 }
 .gt4-modal[hidden]{display:none}

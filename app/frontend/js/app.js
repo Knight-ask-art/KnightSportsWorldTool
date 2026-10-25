@@ -1138,6 +1138,7 @@ function prettyLoginError(raw){
   msg = msg.replace(/^登录失败\s*[:：]\s*/, '').replace(/^Error:\s*/, '');
   if(/10121/.test(msg)) return '这个账号还在手机端登录。请先在手机上退出，再回来登录。';
   if(/超时|timed out|timeout|bridge 超时/i.test(msg)) return '登录等待超时了。后台可能仍在处理，请稍等几秒再试。';
+  if(/手动滑一下|手动验证/.test(msg)) return '自动验证没通过，请点下面的「手动滑一下」用官方验证码登录。';
   if(/极验|gee|gt4|captcha/i.test(msg)) return '验证没有通过，请重试。';
   if(/bridge 不可用|Failed to fetch|NetworkError|ECONN|连接/i.test(msg)) return '连不上本地服务，请重启好想跑后再试。';
   return msg || '登录失败，请重试。';
@@ -1337,33 +1338,51 @@ function loadGt4Script(src){
 }
 
 function closeManualCaptcha(){
+  // A submit is in flight: closing now would hide the only place the result
+  // can be shown, and the request would still finish in the background.
+  if(GT4.busy) return;
   const modal = $('#gt4Modal');
   if(modal) modal.hidden = true;
   const mount = $('#gt4Mount');
   if(mount) mount.innerHTML = '';
   GT4.captcha = null;
-  GT4.busy = false;
   setGt4Status('', '');
 }
 
 async function openManualCaptcha(){
   if(GT4.busy) return;
+  const modal = $('#gt4Modal');
+  if(!modal) return;
+  if(!modal.hidden) return;
   const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
   const pass = $('#loginPass') ? $('#loginPass').value : '';
   if(!user || !pass){ loginFail('请先填好手机号和密码，再手动验证'); return; }
-  const cfgRes = await liveApi('real_gt4_config');
-  if(!liveOk(cfgRes)){ loginFail((cfgRes && cfgRes.message) || '极验配置读取失败'); return; }
-  GT4.config = cfgRes.data || {};
-  const modal = $('#gt4Modal');
-  if(!modal) return;
+  // Open before awaiting the bridge: a second click must see the modal and
+  // bail out instead of initialising a second widget on the same mount.
   modal.hidden = false;
   setGt4Status('正在加载验证码…', '');
+  let cfgRes;
+  try{
+    cfgRes = await liveApi('real_gt4_config');
+  }catch(e){
+    closeManualCaptcha();
+    loginFail('读取极验配置失败：' + (e.message || e));
+    return;
+  }
+  if(!liveOk(cfgRes)){
+    closeManualCaptcha();
+    loginFail((cfgRes && cfgRes.message) || '极验配置读取失败');
+    return;
+  }
+  GT4.config = cfgRes.data || {};
+  if(modal.hidden) return;          // user cancelled while the bridge replied
   try{
     await loadGt4Script(GT4.config.script);
   }catch(e){
     setGt4Status(e.message || '加载失败', 'error');
     return;
   }
+  if(modal.hidden) return;          // cancelled while the script was loading
   const mount = $('#gt4Mount');
   if(mount) mount.innerHTML = '';
   try{
@@ -1384,6 +1403,13 @@ async function openManualCaptcha(){
 
 async function submitManualTicket(res){
   if(GT4.busy) return;
+  const modal = $('#gt4Modal');
+  // The widget can fire after the dialog was dismissed; do not log in then.
+  if(!modal || modal.hidden) return;
+  if(!res || !res.lotNumber || !res.captchaOutput || !res.passToken){
+    setGt4Status('验证结果不完整，请重新滑一次', 'error');
+    return;
+  }
   GT4.busy = true;
   const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
   const pass = $('#loginPass') ? $('#loginPass').value : '';
@@ -1402,9 +1428,19 @@ async function submitManualTicket(res){
       try{ if(GT4.captcha && GT4.captcha.reset) GT4.captcha.reset(); }catch(e){}
       return;
     }
+    // Keep the modal open until the session is verified.  Closing first would
+    // swallow a failure here: finishLogin can still throw on liveInitSession.
+    try{
+      await finishLogin(j.data || {}, user, pass);
+    }catch(e){
+      GT4.busy = false;
+      closeManualCaptcha();
+      loginFail(prettyLoginError(e && e.message ? e.message : e));
+      return;
+    }
+    GT4.busy = false;
     closeManualCaptcha();
     clearLoginError();
-    await finishLogin(j.data || {}, user, pass);
   }catch(e){
     GT4.busy = false;
     setGt4Status('登录失败：' + (e.message || e), 'error');

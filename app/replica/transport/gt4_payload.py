@@ -36,9 +36,12 @@ TRACK_WIDTH = 340.0
 #: ``IMG_REF_WIDTH / TRACK_WIDTH`` for the standard render.
 USERRESPONSE_RATIO = 1.0059466666666665
 
-#: Image width the ratio above assumes (~342px).  Images wider than this are a
-#: scaled render (retina / a different widget size) and must be rescaled.
+#: Image width the ratio above assumes (~342px).  Images inside the normal
+#: band keep the exact expression that has already worked online; only a
+#: genuinely different render (retina, a resized widget) is rescaled.
 IMG_REF_WIDTH = TRACK_WIDTH * USERRESPONSE_RATIO
+NORMAL_WIDTH_MIN = 280.0
+NORMAL_WIDTH_MAX = 420.0
 
 
 class PayloadError(ValueError):
@@ -91,13 +94,17 @@ def expected_keys(lot_number: str) -> tuple[str, ...]:
 def userresponse(set_left_px: int, bg_width: int | None = None) -> float:
     """Image-pixel gap -> slider-track coordinate.
 
-    ``bg_width`` is the width returned by ``gt4_image.locate_gap``.  Normal
-    renders (``IMG_REF_WIDTH`` +/- 2px) keep the exact expression that has
-    already worked online; only a genuinely scaled image gets rescaled, so
-    this cannot shift the behaviour of the tested path.
+    ``bg_width`` is the width returned by ``gt4_image.locate_gap``.  A normal
+    render keeps the exact expression that has already worked online; only a
+    genuinely scaled image is rescaled.
+
+    The band matters: ``IMG_REF_WIDTH`` is ~342, so a plain ``abs(diff) > 2``
+    test would have rescaled a 340px render too and silently moved every
+    coordinate by 0.6%.  Do not tighten this without a live sample.
     """
     x = float(set_left_px)
-    if bg_width and bg_width > 0 and abs(bg_width - IMG_REF_WIDTH) > 2:
+    if bg_width and (bg_width < NORMAL_WIDTH_MIN
+                     or bg_width > NORMAL_WIDTH_MAX):
         x *= IMG_REF_WIDTH / float(bg_width)
     return x / USERRESPONSE_RATIO + 2.0
 

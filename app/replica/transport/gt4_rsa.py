@@ -80,6 +80,11 @@ def active_source() -> str:
     return 'js' if _ACTIVE_LIMBS else 'builtin'
 
 
+def active_limbs() -> list[int] | None:
+    """A copy of the installed modulus limbs, or ``None`` for the builtin."""
+    return list(_ACTIVE_LIMBS) if _ACTIVE_LIMBS else None
+
+
 def set_modulus(limbs: list[int] | None) -> bool:
     """Install a modulus after validating it.  ``None`` restores the builtin."""
     global _ACTIVE_LIMBS
@@ -235,6 +240,15 @@ def rsa_encrypt_hex(data: bytes) -> str:
 
 
 def self_test() -> list[tuple[str, bool, str]]:
+    # self_test must not change the modulus a live login is using.
+    saved = active_limbs()
+    try:
+        return _self_test()
+    finally:
+        set_modulus(saved)
+
+
+def _self_test() -> list[tuple[str, bool, str]]:
     out = []
     builtin = builtin_modulus()
     out.append(('builtin is 1024 bit', builtin.bit_length() == 1024,

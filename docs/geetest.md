@@ -151,7 +151,7 @@ python -m replica.transport.gt4 --canary
 | 常量 | 位置 | 失效症状 | 现状 |
 |---|---|---|---|
 | `_RSA_LIMBS` | `gt4_rsa.py` | `/verify` 直接 `fail` | 启动时尝试从 `static_path` 指向的 `gcaptcha4.js` 现取并缓存；失败回退内置值 |
-| `1.0059466666666665` | `gt4_payload.py` | 缺口找对了但 `userresponse` 错 | 正常图宽保持原式；图变宽（retina）按 `bg_width` 自动换算 |
+| `1.0059466666666665` | `gt4_payload.py` | 缺口找对了但 `userresponse` 错 | 图宽落在 280–420px 区间时保持原式；超出这个区间（retina / 改过控件尺寸）才按 `bg_width` 换算 |
 | `passtime: 1887` | `gt4_payload.py` | 长期固定值可能被判脚本 | 按滑动距离生成 0.9–3.4s 的合理值 |
 | `YciC` / `gee_guard` / `em` | `gt4_payload.py` | 低信任票 → 10003 | 字段基线校验，改动会抛 `PayloadError` |
 | `CAPTCHA_ID_CANDIDATES` | `gt4.py` | `/load` 直接报错 | 两个 id 依次尝试 |

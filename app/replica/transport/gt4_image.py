@@ -45,7 +45,8 @@ def decode_gray(png: bytes) -> np.ndarray:
 
 def dimensions(png: bytes) -> tuple[int, int]:
     """``(width, height)`` of a PNG, without running the whole pipeline."""
-    return int(decode_gray(png).shape[1]), int(decode_gray(png).shape[0])
+    gray = decode_gray(png)
+    return int(gray.shape[1]), int(gray.shape[0])
 
 
 def gaussian_blur(src: np.ndarray) -> np.ndarray:

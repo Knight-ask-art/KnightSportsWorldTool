@@ -95,6 +95,15 @@ def test_normal_render_keeps_the_tested_ratio():
     assert gt4_payload.userresponse(181, None) == pytest.approx(legacy, abs=1e-9)
 
 
+def test_the_whole_normal_width_band_is_left_alone():
+    # 342 is IMG_REF_WIDTH; 340 is a very common render.  A tolerance of
+    # "+/- 2px" would have rescaled 340 and moved every coordinate by 0.6%.
+    legacy = 181 / gt4_payload.USERRESPONSE_RATIO + 2.0
+    for width in (280, 340, 342, 344, 360, 400, 420):
+        assert gt4_payload.userresponse(181, width) == pytest.approx(
+            legacy, abs=1e-9), width
+
+
 def test_a_scaled_render_is_rescaled():
     # A 2x image reports the gap in image pixels; the track has not moved.
     normal = gt4_payload.userresponse(181, 342)
@@ -233,3 +242,25 @@ def test_dump_off_writes_nothing(monkeypatch, tmp_path):
     monkeypatch.setenv('JHP_GT4_DUMP_DIR', str(tmp_path))
     monkeypatch.setenv('JHP_GT4_DUMP', 'off')
     assert gt4.write_dump({'ok': False, 'error': 'x'}) == ''
+
+
+def test_two_failures_in_the_same_second_do_not_overwrite(monkeypatch,
+                                                          tmp_path):
+    monkeypatch.setenv('JHP_GT4_DUMP_DIR', str(tmp_path))
+    monkeypatch.setenv('JHP_GT4_DUMP', 'fail')
+    first = gt4.write_dump({'ok': False, 'captcha_id': 'aaaaaaaa'})
+    second = gt4.write_dump({'ok': False, 'captcha_id': 'bbbbbbbb'})
+    # Both captcha ids can fail inside one second; a second-resolution stamp
+    # would have hidden the first attempt.
+    assert first != second
+    assert len([p for p in tmp_path.iterdir() if p.is_dir()]) == 2
+
+
+def test_rsa_self_test_keeps_the_live_modulus():
+    gt4_rsa.set_modulus(list(gt4_rsa.BUILTIN_LIMBS))
+    try:
+        assert gt4_rsa.active_source() == 'js'
+        gt4_rsa.self_test()
+        assert gt4_rsa.active_source() == 'js'
+    finally:
+        gt4_rsa.set_modulus(None)
