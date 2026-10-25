@@ -630,29 +630,52 @@ def _segments(raw) -> list:
     return seg if isinstance(seg, list) else []
 
 
-def _fetch_obs_detail(client, acct, rrid) -> dict:
+def _fetch_obs_detail(client, acct, rrid, uuid=None, start_ms=0) -> dict:
     """Read the OBS object when the server row is only a stub.
 
     Records uploaded with ``jsonFromObs=1`` keep ``allLocJson`` and
     ``fivePointJson`` empty in the database; the full ``OutdoorDecoder`` JSON
     is at ``run_data/{rrid//1000000}/{rrid}.json``.  Without this fallback the
     detail page says "no track" even though the replay has one.
+
+    Older records (and the official client) only wrote the hour/uuid key
+    ``run_data/{YYYYMMDDHH}/{uuid}.json``; the rrid key 404s for them.  Try
+    both before giving up, otherwise an existing trail is reported as
+    "OBS 读取失败".
     """
+    from urllib.error import HTTPError
+
+    from ..domain import safety
     from ..transport import obs as OBS
 
-    signed = OBS.sign_url(client, acct, OBS.rrid_key(rrid), method='Get')
-    status, body = OBS.get_object_bytes(signed)
-    if status != 200:
-        raise QueryFailed('OBS GET HTTP %s' % status)
-    if not body:
-        raise QueryFailed('OBS 对象为空')
-    try:
-        raw = json.loads(body.decode('utf-8'))
-    except Exception as e:  # noqa: BLE001
-        raise QueryFailed('OBS JSON 解析失败: %s' % e)
-    if not isinstance(raw, dict):
-        raise QueryFailed('OBS 对象不是 JSON 对象')
-    return raw
+    keys = [OBS.rrid_key(rrid)]
+    if uuid and start_ms:
+        # Same key format as obs.obs_keys(): Beijing hour + record uuid.
+        keys.append('run_data/%s/%s.json' % (
+            safety.to_beijing(start_ms).strftime('%Y%m%d%H'), uuid))
+
+    for key in keys:
+        try:
+            signed = OBS.sign_url(client, acct, key, method='Get')
+            status, body = OBS.get_object_bytes(signed)
+        except HTTPError as e:
+            if e.code == 404:
+                continue
+            raise QueryFailed('OBS GET HTTP %s（%s）' % (e.code, key)) from e
+        except Exception as e:  # noqa: BLE001
+            raise QueryFailed('OBS 读取失败: %s（%s）' % (e, key)) from e
+        if status != 200:
+            raise QueryFailed('OBS GET HTTP %s（%s）' % (status, key))
+        if not body:
+            raise QueryFailed('OBS 对象为空（%s）' % key)
+        try:
+            raw = json.loads(body.decode('utf-8'))
+        except Exception as e:  # noqa: BLE001
+            raise QueryFailed('OBS JSON 解析失败: %s' % e) from e
+        if not isinstance(raw, dict):
+            raise QueryFailed('OBS 对象不是 JSON 对象')
+        return raw
+    raise QueryFailed('OBS 对象不存在（HTTP 404）')
 
 
 def record_detail(client, acct, rrid, uuid=None) -> dict:
@@ -693,17 +716,24 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
                         if isinstance(run_data, dict) else None)
     if not track:
         track = parse_track(obj.get('allLocJson'))
+    track_source = 'inline' if track else 'none'
 
     five = _five_list(obj.get('fixed_point_json'))
     segs = _segments(obj.get('segment_json'))
 
     # `jsonFromObs=1` means the row is only a summary and the real track lives
-    # in OBS.  Pull it on demand so the detail map is not empty.
+    # in OBS.  Pull it on demand so the detail map is not empty.  Fetch only
+    # when the inline track is missing: `segment_json` is empty by design, so
+    # treating that as a reason used to re-fetch OBS for every record and turn
+    # a missing/old object into a red "读取失败" even when the track was fine.
     json_from_obs = int(_num(obj.get('jsonFromObs')))
     obs_error = ''
-    if json_from_obs and (not track or not five or not segs):
+    if json_from_obs and not track:
         try:
-            obs_obj = _fetch_obs_detail(client, acct, rrid)
+            obs_obj = _fetch_obs_detail(
+                client, acct, rrid,
+                uuid=obj.get('uuid') or uuid,
+                start_ms=_start_ms(obj))
         except Exception as e:  # noqa: BLE001
             obs_obj, obs_error = None, str(e)
         if isinstance(obs_obj, dict):
@@ -711,6 +741,8 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
             if not track:
                 track = parse_track(obs_run.get('allLocJson')
                                     if isinstance(obs_run, dict) else None)
+                if track:
+                    track_source = 'obs'
             if not five:
                 five = _five_list(obs_obj.get('fixed_point_json'))
             if not segs:
@@ -766,6 +798,7 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
                                obj.get('status')),
         'reasons': reasons,
         'json_from_obs': bool(json_from_obs),
+        'track_source': track_source,
         'obs_error': obs_error,
     }
 
@@ -777,8 +810,9 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
         'has_altitude': bool(alts),
         'has_cadence': detail['avg_step_freq'] > 0 or detail['total_steps'] > 0,
         'has_track': bool(track),
-        'has_obs_track': bool(track and json_from_obs),
+        'has_obs_track': track_source == 'obs',
         'json_from_obs': bool(json_from_obs),
+        'track_source': track_source,
         'segments': len(segs),
         'five_points': len(five),
     }

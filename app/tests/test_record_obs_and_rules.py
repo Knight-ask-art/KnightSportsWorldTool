@@ -19,6 +19,8 @@ from replica.transport import obs  # noqa: E402
 from replica.adapters import bridge_api as RA  # noqa: E402
 from replica.transport import realclient  # noqa: E402
 
+from urllib.error import HTTPError  # noqa: E402
+
 
 class _Acct:
     uid = 15663170
@@ -104,6 +106,68 @@ def test_obs_failure_keeps_the_summary_instead_of_failing(monkeypatch):
     assert r['track'] == []
     assert r['detail']['json_from_obs'] is True
     assert 'network down' in r['detail']['obs_error']
+    assert r['stats']['track_source'] == 'none'
+
+
+def test_obs_falls_back_to_the_uuid_key(monkeypatch):
+    """Old rows only exist at the hour/uuid key; the rrid key 404s."""
+    keys = []
+    calls = {'n': 0}
+
+    def get(url, timeout=60):
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise HTTPError(url, 404, 'Not Found', None, None)
+        return 200, _obs_body()
+
+    monkeypatch.setattr(obs, 'get_object_bytes', get)
+    r = readonly.record_detail(_DetailClient(keys), _Acct(), 123)
+    assert r['ok'] is True
+    assert len(keys) == 2
+    assert keys[0] == 'run_data/0/123.json'
+    assert keys[1].startswith('run_data/') and keys[1].endswith('/u-123.json')
+    assert len(r['track']) == 1
+    assert r['detail']['obs_error'] == ''
+    assert r['stats']['track_source'] == 'obs'
+    assert r['stats']['has_obs_track'] is True
+
+
+def test_inline_track_does_not_fetch_obs(monkeypatch):
+    """An inline track is enough; an empty segment_json is not a reason."""
+    keys = []
+
+    def explode(url, timeout=60):
+        raise AssertionError('OBS must not be read when the row has a track')
+
+    class _Inline(_DetailClient):
+        def request(self, acct, path, payload=None, retries=2):
+            out = super().request(acct, path, payload, retries)
+            if path != obs.OBS_SIGN_PATH:
+                out['json']['data']['allLocJson'] = json.dumps([
+                    {'gLat': 22.4113343, 'gLng': 112.9410163, 'bdA': 25.0,
+                     'gainTime': '2026-10-21 20:00:00'},
+                ])
+            return out
+
+    monkeypatch.setattr(obs, 'get_object_bytes', explode)
+    r = readonly.record_detail(_Inline(keys), _Acct(), 123)
+    assert r['ok'] is True
+    assert keys == []
+    assert len(r['track']) == 1
+    assert r['detail']['obs_error'] == ''
+    assert r['stats']['track_source'] == 'inline'
+
+
+def test_missing_obs_object_is_reported_as_404(monkeypatch):
+    def missing(url, timeout=60):
+        raise HTTPError(url, 404, 'Not Found', None, None)
+
+    monkeypatch.setattr(obs, 'get_object_bytes', missing)
+    r = readonly.record_detail(_DetailClient([]), _Acct(), 123)
+    assert r['ok'] is True
+    assert r['track'] == []
+    assert '404' in r['detail']['obs_error']
+    assert r['stats']['track_source'] == 'none'
 
 
 class _RuleClient:

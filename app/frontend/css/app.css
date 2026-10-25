@@ -208,6 +208,7 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
 .tag.warn{color:var(--amber);border-color:rgba(168,120,44,.34)}
 .tag.red{color:var(--stamp);border-color:rgba(182,72,60,.3)}
 .risk-ok{color:var(--green)}
+.risk-warn{color:var(--amber);font-weight:600}
 .risk-bad{color:var(--stamp);font-weight:600}
 
 /* account */

@@ -2947,11 +2947,27 @@ async function selectRecord(i){
     (s.segments ? ` · ${s.segments} 段` : '');
   const fromObs = (s.json_from_obs != null ? s.json_from_obs : x.json_from_obs);
   const obsErr = x.obs_error || '';
-  $('#rdSource').textContent = obsErr ? 'OBS 读取失败'
-    : ((fromObs ? 'OBS' : '记录内联') +
-       ((s.points || 0) ? ` · ${s.points} 点` : ''));
-  $('#rdSource').className = obsErr ? 'risk-bad' : '';
-  $('#rdSource').title = obsErr;
+  const pts = s.points || 0;
+  const srcKind = s.track_source || (pts ? (fromObs ? 'obs' : 'inline') : 'none');
+  let srcText = '', srcCls = '', srcTitle = '';
+  if(srcKind === 'obs'){
+    srcText = 'OBS' + (pts ? ` · ${pts} 点` : '');
+  }else if(srcKind === 'inline'){
+    srcText = '记录内联' + (pts ? ` · ${pts} 点` : '');
+    if(obsErr) srcTitle = 'OBS 未读取，已使用记录内联轨迹：' + obsErr;
+  }else if(obsErr && /404|不存在/.test(obsErr)){
+    // Historical rows can point at an OBS object the server no longer keeps.
+    // That is not a read bug: only the summary survives.
+    srcText = '轨迹未保留（OBS 404）'; srcCls = 'risk-warn';
+    srcTitle = '记录标记为 jsonFromObs=1，但服务器上的 OBS 对象不存在（HTTP 404）；只能查看摘要，无法还原轨迹。';
+  }else if(obsErr){
+    srcText = 'OBS 读取失败'; srcCls = 'risk-bad'; srcTitle = obsErr;
+  }else{
+    srcText = '无轨迹';
+  }
+  $('#rdSource').textContent = srcText;
+  $('#rdSource').className = srcCls;
+  $('#rdSource').title = srcTitle;
   // The server's own anti-cheat fields, not normalRun (which it never sends).
   const risk = [];
   if(+x.is_cheat) risk.push('isCheat=1');

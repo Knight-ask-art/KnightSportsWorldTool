@@ -139,9 +139,15 @@
   `teleport-detected`/`geometry` 拒绝的坏数据。
 - **OBS 回读校验升级**：PUT 后重新签 GET，先比长度再比 **SHA-256**；同长度损坏不再误判成功，
   不一致会重试 3 次。汇总明确区分 `uploaded`（PUT 成功）与 `verified`（GET 哈希一致）。
-  记录详情新增「轨迹来源」：`OBS · N 点` / `记录内联 · N 点`；OBS 读取失败标红并保留错误文本。
-  已验证的 iOS 记录详情为 `json_from_obs=true`、`has_obs_track=true`、`obs_error=''`、466 点。
-- 回归：`pytest 203 passed`；`test_pipeline` 连跑通过；`node --check` / `app.py --check` 通过。
+  记录详情新增「轨迹来源」：`OBS · N 点` / `记录内联 · N 点`；只有真正没有轨迹时才提示
+  `轨迹未保留（OBS 404）`（黄色）或 `OBS 读取失败`（红色）。
+- **OBS 旧记录回读修复**：官方客户端/旧记录只写 `run_data/{YYYYMMDDHH}/{uuid}.json`，
+  不写 `run_data/{rrid//1e6}/{rrid}.json`。详情回读现在先试 rrid key，404 后再试 uuid key，
+  不再把“对象存在但 key 不同”误报成读取失败。已用 10/20–10/22、10/01–10/03 等 7 条历史
+  记录实测：全部取回轨迹（215–466 点）与 5 个点位。
+  只要记录内联已有轨迹，就不再为空的 `segment_json` 去请求 OBS，避免无谓的失败提示。
+  已验证的 iOS 记录详情为 `json_from_obs=true`、`track_source='obs'`、`obs_error=''`、466 点。
+- 回归：`pytest 206 passed`；`test_pipeline` 连跑通过；`node --check` / `app.py --check` 通过。
 
 ---
 

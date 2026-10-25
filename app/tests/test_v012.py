@@ -101,6 +101,8 @@ def test_record_detail_exposes_the_obs_source():
     js = (ROOT / 'frontend' / 'js' / 'app.js').read_text(encoding='utf-8')
     assert 'id="rdSource"' in html
     assert 'json_from_obs' in js and 'OBS 读取失败' in js
+    assert 'track_source' in js
+    assert '轨迹未保留（OBS 404）' in js
 
 
 def test_frontend_warning_constants_match_backend():
