@@ -156,6 +156,19 @@ def test_non_object_pow_detail_is_a_schema_error(monkeypatch):
         gt4.solve_gt4('cid', dump=False)
 
 
+def test_wrong_answer_is_a_rejection_not_a_schema_change(monkeypatch):
+    """Modern GeeTest says status=success + data.result=fail on a miss."""
+    fake = FakeGee(verify={'status': 'success', 'data': {
+        'lot_number': LOT, 'result': 'fail', 'fail_count': 1,
+        'payload': 'irrelevant'}})
+    _install(monkeypatch, fake)
+    with pytest.raises(gt4.GeeRejected) as exc:
+        gt4.solve_gt4('cid', dump=False)
+    assert exc.value.status == 'fail'
+    assert exc.value.code == 1
+    assert '判定未通过' in str(exc.value)
+
+
 def test_success_without_seccode_is_a_schema_error(monkeypatch):
     fake = FakeGee(verify={'status': 'success', 'data': {}})
     _install(monkeypatch, fake)
@@ -208,3 +221,165 @@ def test_bridge_gt4_config_is_offline_and_shaped_for_the_ui():
     assert data['captcha_id'] in gt4.CAPTCHA_ID_CANDIDATES
     assert data['script'].startswith('https://static.geetest.com/')
     assert data['rsa_bits'] == 1024
+
+
+# --------------------------------------------------------------------------
+# manual fallback: same protocol, human supplies the distance
+# --------------------------------------------------------------------------
+
+class _ManualApi:
+    """Only the surface the two manual methods actually touch."""
+
+    def __init__(self):
+        import threading
+        self._gt4_manual = {}
+        self._gt4_manual_lock = threading.Lock()
+        self.persisted = None
+
+    def _read_session(self):
+        return {}
+
+    def _prune_manual(self):
+        import time
+        from replica.adapters.bridge_api import GT4_MANUAL_TTL
+        now = time.time()
+        for key, item in list(self._gt4_manual.items()):
+            if now - item['ts'] > GT4_MANUAL_TTL:
+                self._gt4_manual.pop(key, None)
+
+    def _effective_device(self, session=None):
+        return {'DeviceId': 'dev', 'source': 'pool'}
+
+    def _persist_login(self, sess, device, raw_session):
+        self.persisted = sess
+        return {'code': 200, 'message': 'success', 'data': sess['profile']}
+
+
+def test_manual_start_returns_the_images_and_the_travel_range(monkeypatch):
+    _install(monkeypatch, FakeGee())
+    from replica.adapters.bridge_api import ReplicaApi
+
+    api = _ManualApi()
+    r = ReplicaApi.real_gt4_manual_start(api, None)
+
+    assert r['code'] == 200, r
+    data = r['data']
+    assert data['bg'].startswith('data:image/png;base64,')
+    assert data['slice'].startswith('data:image/png;base64,')
+    assert data['bg_width'] == 340 and data['bg_height'] == 212
+    assert data['slice_width'] == 60
+    # Where the slice may travel: the only numbers the UI needs to lay out.
+    assert data['max_left'] == 340 - 60
+    # The row the piece is drawn on: the gap in the fixture is cut at y=40.
+    assert data['slice_top'] == 40
+    assert data['expires_in'] > 0
+    assert data['token'] in api._gt4_manual
+
+
+def test_manual_finish_converts_the_slider_position_to_image_pixels(monkeypatch):
+    _install(monkeypatch, FakeGee())
+    from replica.adapters.bridge_api import ReplicaApi
+    from replica.application import login_flow
+
+    seen = []
+
+    def fake_submit(challenge, distance, **kw):
+        seen.append(distance)
+        return {'lotNumber': LOT, 'captchaOutput': 'co',
+                'passToken': 'pt', 'genTime': '1'}
+
+    monkeypatch.setattr(gt4, 'submit_distance', fake_submit)
+    monkeypatch.setattr(
+        login_flow, 'login_with_ticket',
+        lambda u, p, t, **kw: {'uid': '1', 'token': 'tk', 'unid': 3,
+                               'profile': {'name': 'n'}})
+
+    api = _ManualApi()
+    start = ReplicaApi.real_gt4_manual_start(api, None)['data']
+    r = ReplicaApi.real_gt4_manual_finish(
+        api, start['token'], start['max_left'], '13800000000', 'pw')
+
+    assert r['code'] == 200, r
+    # The distance is image pixels, i.e. the same unit `locate_gap` returns.
+    assert seen == [start['max_left']]
+    assert api.persisted['uid'] == '1'
+    # One-shot: the same token must not be usable twice.
+    again = ReplicaApi.real_gt4_manual_finish(
+        api, start['token'], 10, '13800000000', 'pw')
+    assert again['code'] == 500
+    assert '过期' in again['message']
+
+
+def test_manual_finish_keeps_the_challenge_when_credentials_are_missing(
+        monkeypatch):
+    _install(monkeypatch, FakeGee())
+    from replica.adapters.bridge_api import ReplicaApi
+
+    api = _ManualApi()
+    start = ReplicaApi.real_gt4_manual_start(api, None)['data']
+
+    r = ReplicaApi.real_gt4_manual_finish(api, start['token'], 40, '', '')
+    assert r['code'] == 500
+    assert '手机号' in r['message']
+    # The operator can fix the field and retry instead of solving a new puzzle.
+    assert start['token'] in api._gt4_manual
+
+
+def test_manual_finish_reports_a_rejected_ticket_and_drops_the_token(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv('JHP_GT4_DUMP_DIR', str(tmp_path))
+    _install(monkeypatch, FakeGee())
+    monkeypatch.setenv('JHP_GT4_DUMP', 'fail')
+    from replica.adapters.bridge_api import ReplicaApi
+
+    def reject(challenge, distance, **kw):
+        raise gt4.GeeRejected('GT4 /verify 拒绝: status=fail code=-1',
+                              status='fail', code='-1')
+
+    monkeypatch.setattr(gt4, 'submit_distance', reject)
+    api = _ManualApi()
+    start = ReplicaApi.real_gt4_manual_start(api, None)['data']
+
+    r = ReplicaApi.real_gt4_manual_finish(
+        api, start['token'], 40, '13800000000', 'pw')
+    assert r['code'] == 500
+    # A miss is normal for a hand-dragged slider: one short sentence, no JSON.
+    assert r['message'] == '这次没对上缺口，换一张再来'
+    assert start['token'] not in api._gt4_manual
+    # A rejected manual attempt must leave the same evidence a solver run does.
+    dirs = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert len(dirs) == 1, dirs
+    assert (dirs[0] / 'bg.png').stat().st_size > 0
+
+
+def test_manual_cancel_frees_the_challenge(monkeypatch):
+    _install(monkeypatch, FakeGee())
+    from replica.adapters.bridge_api import ReplicaApi
+
+    api = _ManualApi()
+    start = ReplicaApi.real_gt4_manual_start(api, None)['data']
+    assert ReplicaApi.real_gt4_manual_cancel(api, start['token'])['code'] == 200
+    assert api._gt4_manual == {}
+
+
+def test_manual_finish_clamps_a_position_past_the_right_edge(monkeypatch):
+    _install(monkeypatch, FakeGee())
+    from replica.adapters.bridge_api import ReplicaApi
+    from replica.application import login_flow
+
+    seen = []
+    monkeypatch.setattr(gt4, 'submit_distance',
+                        lambda ch, d, **kw: seen.append(d) or {
+                            'lotNumber': LOT, 'captchaOutput': 'co',
+                            'passToken': 'pt', 'genTime': '1'})
+    monkeypatch.setattr(login_flow, 'login_with_ticket',
+                        lambda u, p, t, **kw: {'uid': '1', 'token': 'tk',
+                                               'unid': 3, 'profile': {}})
+
+    api = _ManualApi()
+    start = ReplicaApi.real_gt4_manual_start(api, None)['data']
+    ReplicaApi.real_gt4_manual_finish(api, start['token'], 99999,
+                                      '13800000000', 'pw')
+    # Clamped to the last column of the image, never out of range.
+    assert seen == [start['bg_width'] - 1]
+

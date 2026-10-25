@@ -37,7 +37,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from .gt4_image import gap_distance, locate_gap
+from .gt4_image import dimensions, gap_distance, locate_gap
 from .gt4_image import self_test as _image_self_test
 from .gt4_payload import (build_payload, build_w, dynamic_key, passtime_for,
                           pow_msg, str16)
@@ -252,8 +252,19 @@ def solve_gt4(captcha_id: str | None = None, attempts: int = 1,
     raise last or GeeError('GT4 failed')
 
 
-def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
-    started = time.time()
+def load_challenge(captcha_id: str | None = None, log=None,
+                   trace: dict | None = None) -> dict:
+    """``GET /load`` + both images, in one record.
+
+    Split out of :func:`_solve_once` so the manual fallback can reuse the exact
+    same protocol step.  The manual path never runs the CV: a human looks at the
+    gap and reports the distance, and :func:`submit_distance` finishes the job
+    with the same ``w`` builder.  One protocol implementation, two ways to find
+    the number.
+    """
+    log = log or (lambda *_: None)
+    trace = trace if trace is not None else {}
+    cid = captcha_id or CAPTCHA_ID_CANDIDATES[0]
     challenge = uuid.uuid4().hex
     cb = 'geetest_%d' % int(time.time() * 1000)
     load_url = ('%s/load?callback=%s&captcha_id=%s&challenge=%s'
@@ -275,6 +286,7 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
     # us, and the old code threw them away.
     static_path = str(data.get('static_path') or '')
     trace.update({
+        'captcha_id': cid,
         'static_path': static_path,
         'captcha_mode': data.get('captcha_mode'),
         'check_device': data.get('check_device'),
@@ -294,37 +306,69 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
     trace['rsa_bits'] = modulus_bits()
     trace['rsa_source'] = rsa_source()
 
-    bg = _get(STATIC_HOST + data['bg'])
-    sl = _get(STATIC_HOST + data['slice'])
-    trace['bg'], trace['slice'] = bg, sl
-
-    try:
-        gap = locate_gap(bg, sl)
-    except ValueError as exc:
-        raise GeeImageError('缺口识别失败: %s' % exc) from exc
-    dist = gap['x']
-    trace.update({'gap': dist, 'bg_width': gap['bg_width'],
-                  'bg_height': gap['bg_height']})
-    log('[gt4] gap distance = %d px (bg %dx%d)'
-        % (dist, gap['bg_width'], gap['bg_height']))
-
     pow_detail = data.get('pow_detail')
     if not isinstance(pow_detail, dict):
         raise GeeSchemaChanged('/load 的 pow_detail 不是对象（%s）'
                                % type(pow_detail).__name__)
-    pmsg = pow_msg(pow_detail, cid, data['lot_number'])
+
+    bg = _get(STATIC_HOST + data['bg'])
+    sl = _get(STATIC_HOST + data['slice'])
+    trace['bg'], trace['slice'] = bg, sl
+    try:
+        width, height = dimensions(bg)
+    except ValueError as exc:
+        raise GeeImageError('背景图解码失败: %s' % exc) from exc
+
+    return {
+        'captcha_id': cid,
+        'lot_number': data['lot_number'],
+        'payload': data['payload'],
+        'process_token': data['process_token'],
+        'pow_detail': pow_detail,
+        'static_path': static_path,
+        'bg': bg,
+        'slice': sl,
+        'bg_width': width,
+        'bg_height': height,
+        'slice_width': dimensions(sl)[0],
+        'slice_height': dimensions(sl)[1],
+        '_started': time.time(),
+    }
+
+
+def submit_distance(challenge: dict, distance: int, log=None,
+                    trace: dict | None = None, dump: bool = True) -> dict:
+    """``GET /verify`` for a known distance; returns the four credentials.
+
+    ``distance`` is in **image pixels** (``setLeft``), exactly what
+    :func:`replica.transport.gt4_image.locate_gap` returns and exactly what the
+    manual UI reports after the human lines the slice up with the gap.
+    """
+    log = log or (lambda *_: None)
+    trace = trace if trace is not None else {}
+    cid = challenge['captcha_id']
+    lot = challenge['lot_number']
+    bg_width = int(challenge['bg_width'])
+    try:
+        dist = int(distance)
+    except (TypeError, ValueError) as exc:
+        raise GeeError('滑块距离不是整数: %r' % (distance,)) from exc
+    if dist < 0 or dist >= bg_width:
+        raise GeeError('滑块距离 %d 超出图片宽度 %d' % (dist, bg_width))
+
+    pow_detail = challenge['pow_detail']
+    pmsg = pow_msg(pow_detail, cid, lot)
     psign = hashlib.sha256(pmsg.encode()).hexdigest()
     key16 = str16()
     # Build the plaintext once.  `build_w` would otherwise re-derive a random
     # passtime and the dumped payload would not be the one we actually sent.
     passtime = passtime_for(dist)
     try:
-        plaintext = build_payload(dist, lot_number=data['lot_number'],
-                                  pow_msg=pmsg, pow_sign=psign,
-                                  bg_width=gap['bg_width'],
+        plaintext = build_payload(dist, lot_number=lot, pow_msg=pmsg,
+                                  pow_sign=psign, bg_width=bg_width,
                                   passtime=passtime)
-        w = build_w(dist, data['lot_number'], pmsg, psign, key16,
-                    bg_width=gap['bg_width'], passtime=passtime)
+        w = build_w(dist, lot, pmsg, psign, key16, bg_width=bg_width,
+                    passtime=passtime)
     except ValueError as exc:
         raise GeeSchemaChanged('w 字段构造失败: %s' % exc) from exc
     trace['payload'] = plaintext
@@ -335,9 +379,9 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
                   '&lot_number=%s&risk_type=slide&payload=%s'
                   '&process_token=%s&payload_protocol=1&pt=1&w=%s'
                   % (GEE_HOST, cb2, cid,
-                     urllib.parse.quote(data['lot_number']),
-                     urllib.parse.quote(data['payload']),
-                     urllib.parse.quote(data['process_token']),
+                     urllib.parse.quote(lot),
+                     urllib.parse.quote(challenge['payload']),
+                     urllib.parse.quote(challenge['process_token']),
                      urllib.parse.quote(w)))
     vroot = _jsonp(_text(verify_url))
     trace['verify'] = vroot
@@ -348,6 +392,18 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
             status=status, code=code)
 
     vdata = vroot.get('data')
+    # A wrong answer is reported as status="success" with
+    # data.result="fail" (plus fail_count) and no `seccode`.  Treating that as
+    # a schema change sent every miss down the "upstream changed the protocol"
+    # path, which is the one diagnosis that is almost always wrong.
+    verdict = ''
+    if isinstance(vdata, dict):
+        verdict = str(vdata.get('result') or '').strip().lower()
+    if verdict and verdict not in ('success', 'ok', 'pass'):
+        raise GeeRejected(
+            'GT4 /verify 判定未通过: result=%s fail_count=%s'
+            % (verdict, vdata.get('fail_count')),
+            status=verdict, code=vdata.get('fail_count'))
     sec = vdata.get('seccode') if isinstance(vdata, dict) else None
     if not isinstance(sec, dict):
         raise GeeSchemaChanged('/verify 成功但 seccode 不是对象: %s'
@@ -361,12 +417,31 @@ def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
     if not all(creds.values()):
         raise GeeSchemaChanged('/verify 成功但凭证缺字段: %s'
                                % sorted(sec.keys()))
+    started = trace.get('_started') or challenge.get('_started') or time.time()
     trace.update({'ok': True, 'elapsed_ms': int((time.time() - started) * 1000),
                   'captcha_output': creds['captchaOutput'],
                   'pass_token': creds['passToken']})
     if dump:
         write_dump(trace)
     return creds
+
+
+def _solve_once(cid: str, log, trace: dict, dump: bool) -> dict:
+    started = time.time()
+    ch = load_challenge(cid, log=log, trace=trace)
+    trace['_started'] = started
+
+    try:
+        gap = locate_gap(ch['bg'], ch['slice'])
+    except ValueError as exc:
+        raise GeeImageError('缺口识别失败: %s' % exc) from exc
+    dist = gap['x']
+    trace.update({'gap': dist, 'gap_y': gap['y'],
+                  'bg_width': gap['bg_width'],
+                  'bg_height': gap['bg_height'], 'source': 'solver'})
+    log('[gt4] gap distance = %d px (bg %dx%d)'
+        % (dist, gap['bg_width'], gap['bg_height']))
+    return submit_distance(ch, dist, log=log, trace=trace, dump=dump)
 
 
 # --------------------------------------------------------------------------

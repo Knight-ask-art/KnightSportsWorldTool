@@ -16,10 +16,11 @@ Order of operations (mirrors the official client):
   4. POST api/v70100/login  (Authorization: Basic + envelope body)
      -> uid / token / unid
 
-``login_with_ticket`` is the escape hatch: the UI solves the slider inside the
-app's own WebView with GeeTest's official JS and hands us the four credentials.
-That path cannot rot when GeeTest changes its payload, because it *is* the
-official client code.
+``login_with_ticket`` is the escape hatch: the UI shows the same GeeTest images
+and lets the operator place the slice, then hands us the four credentials.  That
+path never runs the local CV, so a stale matcher cannot block a login -- and it
+still builds ``w`` with the same payload module, so it is one protocol
+implementation with two ways to find the gap.
 """
 
 from __future__ import annotations
@@ -153,7 +154,7 @@ def _solve(solver, captcha_id, log) -> dict:
     except GT4.GeeRejected as exc:
         raise CaptchaFailed(
             '极验拒绝了本次滑块（%s）。这通常是解题器过期了，'
-            '可以点「手动滑一下」先用官方验证码通过。' % exc) from exc
+            '可以点「手动滑一下」自己把缺口对上。' % exc) from exc
     except GT4.GeeUnavailable as exc:
         raise CaptchaFailed('连不上极验服务器（%s），请检查网络后重试。'
                             % exc) from exc
@@ -223,10 +224,11 @@ def login(username: str, password: str, device_model: str = 'NCO-AL00',
 def login_with_ticket(username: str, password: str, ticket: dict,
                       device_model: str = 'NCO-AL00', os_version: str = '12',
                       log=_log, device: dict | None = None) -> dict:
-    """Login with credentials produced by the official widget.
+    """Login with credentials produced by the manual slider path.
 
-    The user solved the slider in the app's own WebView, so the ticket comes
-    from GeeTest's real client code.  We only do the two server round-trips.
+    The operator dragged the slice onto the gap; ``creds`` is what GeeTest's
+    ``/verify`` returned for that distance.  We only do the two server
+    round-trips, exactly like the automatic path does.
     """
     required = ('lotNumber', 'captchaOutput', 'passToken', 'genTime')
     missing = [k for k in required if not (ticket or {}).get(k)]

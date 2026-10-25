@@ -12,6 +12,7 @@ This is a clean-room reimplementation from observed wire behavior — no
 original code is copied.
 """
 import datetime as _dt
+import base64
 import json
 import os
 import tempfile
@@ -40,6 +41,18 @@ from ..transport.realclient import as_dict
 # route through any extra required point.
 CAMPUS_POINTS_DISTANCE_M = 2500
 AMAP_KEY = os.environ.get('JHP_AMAP_KEY', '')
+
+#: How long a manual slider challenge stays solvable, and how many may be
+#: parked at once.  GeeTest's ticket is short lived too; this only exists so a
+#: slow operator does not stare at an image the server already forgot.
+GT4_MANUAL_TTL = 180.0
+GT4_MANUAL_MAX = 8
+
+
+def _png_data_url(blob: bytes) -> str:
+    """Inline PNG for the manual slider: no extra route, no temp files."""
+    return 'data:image/png;base64,' + base64.b64encode(blob).decode('ascii')
+
 APPLE_DB = {
     'models': [row[0] for row in DP.IOS_MODELS],
     'ios': sorted({v for row in DP.IOS_MODELS for v in row[1]}),
@@ -463,6 +476,8 @@ class ReplicaApi:
         self._sport: dict[str, dict] = {}
         self._tasks: dict[str, dict] = {}
         self._geetokens: list[dict] = []
+        self._gt4_manual: dict[str, dict] = {}
+        self._gt4_manual_lock = threading.Lock()
         self._keeper = None
         self._keeper_lock = threading.Lock()
         self._device_lock = threading.RLock()
@@ -1483,11 +1498,12 @@ class ReplicaApi:
 
     def real_login_ticket(self, username, password, lotNumber='',
                           captchaOutput='', passToken='', genTime=''):
-        """Finish a login with credentials from GeeTest's official widget.
+        """Finish a login from four GeeTest credentials.
 
-        The UI solves the slider inside the app's own WebView using the real
-        `gt4.js`.  Nothing here depends on our reimplementation of `w`, so this
-        path keeps working even when the solver is out of date.
+        Kept as a separate entry point for external callers and for the
+        two-step debugging flow; the in-app manual slider now does both halves
+        in one call (`real_gt4_manual_finish`), because there the challenge is
+        already in memory and must be consumed exactly once.
         """
         try:
             from ..application.login_flow import login_with_ticket
@@ -1507,7 +1523,12 @@ class ReplicaApi:
         return self._persist_login(sess, device, raw_session)
 
     def real_gt4_config(self):
-        """Everything the manual-captcha widget needs, including its version."""
+        """GeeTest constants and the active RSA key's provenance.
+
+        The manual fallback no longer loads `gt4.js` (it does not render in this
+        WebView -- see `real_gt4_manual_start`), but these values are what a
+        bug report needs to identify the served build, so they stay exposed.
+        """
         try:
             from ..transport import gt4
             return _ok({
@@ -1531,6 +1552,149 @@ class ReplicaApi:
             return _ok(gt4.probe(log=lambda *_: None))
         except Exception as e:  # noqa: BLE001
             return _fail(f'极验自检失败: {e}')
+
+    # -- manual slider fallback ------------------------------------------------
+    #
+    # Why this is not the official `gt4.js` widget any more: on
+    # gcaptcha4.js v1.9.8-0d53fd the `product:'embed'` path throws inside
+    # slide.init (`TypeError: ... is not a function`) and never calls back,
+    # while `product:'float'` does call `onReady` but inserts zero nodes --
+    # measured in both the automation Chromium and the app's own WebView2
+    # (15 elements total, 0 canvas, 0 img) even though /load, bg and slice all
+    # return 200.  A button that opens an empty box is worse than no button.
+    #
+    # So the fallback runs at the protocol level instead: we fetch the same
+    # /load, show the same two images, and let the human do the one thing the
+    # solver does -- say where the gap is.  The `w` is then built by the exact
+    # same code as the automatic path, which keeps one implementation of the
+    # protocol and makes the manual route a true fallback rather than a second
+    # client that can rot on its own.
+
+    def _prune_manual(self):
+        """Drop expired challenges.  Called under the lock by the callers."""
+        now = time.time()
+        for key, item in list(self._gt4_manual.items()):
+            if now - item['ts'] > GT4_MANUAL_TTL:
+                self._gt4_manual.pop(key, None)
+
+    def real_gt4_manual_start(self, captcha_id=None):
+        """Fetch one challenge and hand the operator the two images.
+
+        One-shot token, 3-minute TTL: the ticket GeeTest hands back is short
+        lived too, and keeping PNGs in RAM indefinitely buys nothing.
+        """
+        from ..transport import gt4
+        trace: dict = {}
+        try:
+            ch = gt4.load_challenge(captcha_id, log=lambda *_: None,
+                                    trace=trace)
+        except gt4.GeeError as e:
+            trace.update({'ok': False, 'source': 'manual',
+                          'error': str(e), 'error_type': type(e).__name__})
+            gt4.write_dump(trace)
+            return _fail(f'读取极验题目失败：{e}')
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'读取极验题目失败：{e}')
+
+        # The slice only moves horizontally, but it still has to be drawn on the
+        # right row: painting it at `top: 0` puts the piece nowhere near the
+        # notch, which is exactly what the first manual build did.  The match
+        # already knows the row; this is the only reason the manual path touches
+        # the CV at all -- `set_left` itself is the operator's number.
+        try:
+            gap = gt4.locate_gap(ch['bg'], ch['slice'])
+            top = int(gap['y'])
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'这张图定位不到缺口（{e}），换一张试试')
+
+        token = uuid.uuid4().hex
+        with self._gt4_manual_lock:
+            self._prune_manual()
+            # A stuck dialog must not be able to grow this without bound.
+            while len(self._gt4_manual) >= GT4_MANUAL_MAX:
+                self._gt4_manual.pop(next(iter(self._gt4_manual)))
+            self._gt4_manual[token] = {'challenge': ch, 'trace': trace,
+                                       'ts': time.time()}
+        max_left = max(0, int(ch['bg_width']) - int(ch['slice_width']))
+        return _ok({
+            'token': token,
+            'captcha_id': ch['captcha_id'],
+            'bg': _png_data_url(ch['bg']),
+            'slice': _png_data_url(ch['slice']),
+            'bg_width': int(ch['bg_width']),
+            'bg_height': int(ch['bg_height']),
+            'slice_width': int(ch['slice_width']),
+            'slice_height': int(ch['slice_height']),
+            'slice_top': top,
+            'max_left': max_left,
+            'expires_in': int(GT4_MANUAL_TTL),
+            'static_path': ch['static_path'],
+        })
+
+    def real_gt4_manual_finish(self, token, set_left, username='',
+                               password=''):
+        """Turn the operator's slider position into a ticket, then log in.
+
+        ``set_left`` is the slice's x offset in **image pixels** -- the same
+        number the automatic solver gets from `gt4_image.locate_gap`, so the
+        payload builder cannot tell the two paths apart.
+        """
+        username = str(username or '').strip()
+        if not username or not password:
+            return _fail('请先填好手机号和密码，再完成手动验证')
+        with self._gt4_manual_lock:
+            self._prune_manual()
+            entry = self._gt4_manual.pop(str(token or ''), None)
+        if entry is None:
+            return _fail('这次验证已过期，请关掉重新来一次')
+
+        from ..transport import gt4
+        ch = entry['challenge']
+        trace = entry['trace']
+        try:
+            distance = int(round(float(set_left)))
+        except (TypeError, ValueError):
+            return _fail('滑块位置无效，请重新拖动')
+        distance = max(0, min(int(ch['bg_width']) - 1, distance))
+        trace.update({'source': 'manual', 'gap': distance})
+
+        try:
+            creds = gt4.submit_distance(ch, distance, log=lambda *_: None,
+                                        trace=trace, dump=True)
+        except gt4.GeeRejected as e:
+            # A miss is the normal outcome of a hand-dragged slider.  The
+            # evidence still goes to disk, but the operator gets one short
+            # sentence instead of a JSON blob.
+            trace.update({'ok': False, 'error': str(e),
+                          'error_type': type(e).__name__})
+            gt4.write_dump(trace)
+            return _fail('这次没对上缺口，换一张再来')
+        except gt4.GeeError as e:
+            trace.update({'ok': False, 'error': str(e),
+                          'error_type': type(e).__name__})
+            gt4.write_dump(trace)
+            return _fail(f'手动验证没有通过：{e}')
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'手动验证失败：{e}')
+
+        try:
+            from ..application.login_flow import login_with_ticket
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'登录模块不可用: {e}')
+        try:
+            raw_session = self._read_session()
+            device = self._effective_device(raw_session)
+            sess = login_with_ticket(username, password, creds,
+                                     log=lambda *_: None, device=device)
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'登录失败: {e}')
+        return self._persist_login(sess, device, raw_session)
+
+    def real_gt4_manual_cancel(self, token):
+        """Forget a challenge the operator abandoned."""
+        with self._gt4_manual_lock:
+            self._gt4_manual.pop(str(token or ''), None)
+        return _ok(True)
 
     def _persist_login(self, sess, device, raw_session):
         """Write a successful login and return the sanitised profile."""

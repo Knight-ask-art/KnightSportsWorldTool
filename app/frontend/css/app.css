@@ -1312,15 +1312,46 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 }
 .gt4-card h3{margin:0;font:600 16px/1.3 var(--sans)}
 .gt4-hint{margin:0;color:var(--pencil);font-size:12.5px}
-.gt4-mount{min-height:56px;display:flex;align-items:center;justify-content:center}
+.gt4-stage{
+  position:relative;width:100%;overflow:hidden;border-radius:8px;
+  border:1px solid var(--rule);background:#ded9cc;touch-action:none;
+}
+.gt4-stage.is-empty{aspect-ratio:3/2}
+.gt4-bg{
+  position:absolute;inset:0;width:100%;height:100%;display:block;
+  object-fit:fill;user-select:none;-webkit-user-drag:none;
+}
+.gt4-slice{
+  position:absolute;left:0;top:0;pointer-events:none;opacity:0;
+  filter:drop-shadow(0 1px 3px rgba(0,0,0,.45));will-change:transform;
+}
+.gt4-stage:not(.is-empty) .gt4-slice{opacity:1}
+.gt4-track{
+  position:relative;height:40px;border-radius:8px;background:var(--paper-3);
+  border:1px solid var(--rule);touch-action:none;user-select:none;cursor:grab;
+}
+.gt4-track.is-disabled{opacity:.45;cursor:default}
+.gt4-fill{
+  position:absolute;left:0;top:0;bottom:0;width:22px;
+  border-radius:7px 0 0 7px;background:rgba(242,210,92,.5);
+}
+.gt4-knob{
+  position:absolute;left:0;top:0;width:44px;height:100%;
+  display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--rule);border-radius:8px;background:var(--paper-2);
+  color:var(--pencil);font:18px/1 var(--sans);
+}
+.gt4-track:focus-visible{outline:2px solid var(--ink-blue);outline-offset:2px}
 .gt4-status{min-height:18px;font-size:12.5px;color:var(--pencil)}
 .gt4-status.error{color:var(--stamp)}
 .gt4-status.ok{color:var(--green)}
-.gt4-close{
-  align-self:flex-end;padding:6px 14px;border:1px solid var(--rule);
-  border-radius:8px;background:transparent;font-size:12.5px;
+.gt4-actions{display:flex;justify-content:flex-end;gap:8px}
+.gt4-retry,.gt4-close{
+  padding:6px 14px;border:1px solid var(--rule);border-radius:8px;
+  background:transparent;font-size:12.5px;
 }
-.gt4-close:hover{background:var(--paper-3)}
+.gt4-retry:hover,.gt4-close:hover{background:var(--paper-3)}
+.gt4-retry[hidden]{display:none}
 .login-help{
   display:flex;flex-wrap:wrap;gap:5px 14px;margin-top:18px;padding-top:12px;
   border-top:1px dotted var(--rule);color:var(--faint);font-size:9.5px;line-height:1.6;

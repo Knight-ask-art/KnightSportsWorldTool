@@ -160,9 +160,16 @@
 | 失败**落盘**且脱敏 | `data/diagnostics/gt4/<时间戳>/`，含 `static_path`、`w` 明文、两张图 | 没有 ground truth 才需要 49 轮；有的话是一个 diff |
 | canary **不碰账号** | `python -m replica.transport.gt4 --canary` 只跑 `/load → /verify` | 能干净区分「解题器坏了」和「账号被风控了」 |
 | 重试收敛到 **2 个 id × 1 次** | `solve_gt4(attempts=1)`，`GeeRejected` 不重试 | 旧逻辑最多解 18 次；同一 IP 连续失败本身就触发风控 |
-| 手动兜底用**官方 JS** | 登录框里加载 `gt4.js`，凭证回传 `real_login_ticket` | 唯一不会随字段变更失效的路径；复用已有 WebView2，不引入 Playwright 或新 Chromium |
+| 手动兜底**下沉到协议层** | 前端只画图 + 给偏移量，`real_gt4_manual_start/finish` 走和解题器**同一份** `build_payload` | 官方 `gt4.js` 在本应用的 Chromium/WebView2 里渲染不出来（实测 0 canvas / 0 img），点开是空框；协议层兜底不依赖第三方 JS，也不会变成第二套 `w` 实现 |
+| 手动兜底的**纵向位置仍需匹配** | `locate_gap` 一并返回 `y`，前端把滑块画在缺口那一行 | 首版把滑块画在 `top:0`，横坐标再准也永远对不上；`y` 本来就在 `minMaxLoc` 里，之前被丢掉了 |
+| `/verify` 的 **`data.result=fail`** 算拒绝 | `submit_distance` 先看 `data.result`，再找 `seccode` | 答错时极验返回的是 `status:"success"` + `result:"fail"`；旧代码会报「成功但 seccode 不是对象」，把「答错」误诊成「协议改了」 |
 | RSA 模数**留了刷新钩子** | `gt4_rsa.refresh` 默认关闭，`JHP_GT4_RSA=on` 才去抓 | 实测线上 `gcaptcha4.js` 里没有公钥；默认开着只会每次登录白下 728KB |
 | 缩放 / 时序**去硬编码** | `userresponse` 按 `bg_width` 换算；`passtime` 按距离生成 | 图从 340 变 600（retina）时，旧公式会算错但不会报错 |
 
-**没做的**：没有引入 Playwright，没有把 unidbg 请回来。前者是 150MB 只为一条兜底路径，
-后者解决不了 `w` 字段问题——这两条在 `docs/geetest.md` §7 都有说明。
+**没做的**：没有引入 Playwright，没有把 unidbg 请回来，也没有为了兜底去打包第二个
+Chromium。前者是 150MB 只为一条路径，后者解决不了 `w` 字段问题——这两条在
+`docs/geetest.md` §7 都有说明。
+
+**手动兜底的边界**：它兜的是「答案不对」（CV 认错缺口、或认对了但被判低信任），
+不兜「协议变了」——两条路共用 `build_payload`，字段集一变会一起失败、一起落盘。
+这是刻意的：兜底路径如果自带第二套协议实现，它自己就会腐烂，而且坏了没人知道。

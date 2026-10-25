@@ -109,7 +109,13 @@ def canny(img: np.ndarray, low: float = 100.0, high: float = 200.0) -> np.ndarra
 
 
 def locate_gap(bg_png: bytes, slice_png: bytes) -> dict:
-    """Return ``{'x', 'bg_width', 'bg_height'}``; ``x`` is in image pixels.
+    """Return ``{'x', 'y', 'bg_width', 'bg_height'}``; in image pixels.
+
+    ``x`` is what the payload needs (``setLeft``).  ``y`` is not part of the
+    protocol -- the slice only moves horizontally -- but the manual fallback
+    draws the piece over the background, and painting it at ``top: 0`` puts it
+    nowhere near the notch.  The template match already locates both axes, so
+    the old code was throwing away a number it had.
 
     ``bg_width`` is what the payload module needs to decide whether the image
     is a normal-size render or a scaled one (retina / different widget width).
@@ -127,6 +133,7 @@ def locate_gap(bg_png: bytes, slice_png: bytes) -> dict:
     _, _, _, max_loc = cv2.minMaxLoc(res)
     return {
         'x': int(max_loc[0]),
+        'y': int(max_loc[1]),
         'bg_width': int(bg_edges.shape[1]),
         'bg_height': int(bg_edges.shape[0]),
     }
@@ -150,6 +157,8 @@ def self_test() -> list[tuple[str, bool, str]]:
     found = locate_gap(bg_png.tobytes(), sl_png.tobytes())
     out.append(('gap localised', abs(found['x'] - cut_x) <= 3,
                 'x=%d (want %d)' % (found['x'], cut_x)))
+    out.append(('gap row localised', abs(found['y'] - 20) <= 2,
+                'y=%d (want 20)' % (found['y'],)))
     out.append(('bg width reported', found['bg_width'] == 200,
                 '%d px' % found['bg_width']))
     out.append(('dimensions helper', dimensions(bg_png.tobytes()) == (200, 60),

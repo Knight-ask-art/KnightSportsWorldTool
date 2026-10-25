@@ -78,16 +78,35 @@
   </section>
 </div>
 
-<!-- Manual captcha: GeeTest's own widget, inside the app's WebView.  This is
-     the fallback when the local solver is out of date; it never depends on our
-     reimplementation of `w`. -->
+<!-- Manual captcha: protocol-level slider drawn by the app itself.
+
+     GeeTest's own `gt4.js` does not render in this environment.  On the
+     gcaptcha4.js build 1.9.8-0d53fd the `embed` product throws inside
+     slide.init
+     and `float` reports onReady without inserting a single node -- measured in
+     both the automation Chromium and the app's own WebView2 (15 elements, 0
+     canvas, 0 img) while /load, bg and slice all returned 200.  So the
+     fallback fetches the same challenge through the bridge and asks the
+     operator for the one thing the solver computes: where the gap is. -->
 <div class="gt4-modal" id="gt4Modal" hidden>
   <div class="gt4-card" role="dialog" aria-modal="true" aria-labelledby="gt4Title">
     <h3 id="gt4Title">手动完成验证</h3>
-    <p class="gt4-hint">这里是极验官方验证码。滑完会自动继续登录，不会再走本地解题。</p>
-    <div class="gt4-mount" id="gt4Mount"></div>
+    <p class="gt4-hint">把小图拖到缺口上，松手就会自动登录。</p>
+    <div class="gt4-stage is-empty" id="gt4Stage">
+      <img class="gt4-bg" id="gt4Bg" alt="验证码背景图">
+      <img class="gt4-slice" id="gt4Slice" alt="">
+    </div>
+    <div class="gt4-track is-disabled" id="gt4Track" role="slider" tabindex="0"
+         aria-label="拖动滑块对齐缺口" aria-valuemin="0" aria-valuemax="100"
+         aria-valuenow="0">
+      <div class="gt4-fill" id="gt4Fill"></div>
+      <div class="gt4-knob" id="gt4Knob" aria-hidden="true">›</div>
+    </div>
     <div class="gt4-status" id="gt4Status" role="status" aria-live="polite"></div>
-    <button class="gt4-close" id="gt4Close" type="button">取消</button>
+    <div class="gt4-actions">
+      <button class="gt4-retry" id="gt4Retry" type="button" hidden>换一张</button>
+      <button class="gt4-close" id="gt4Close" type="button">取消</button>
+    </div>
   </div>
 </div>
 

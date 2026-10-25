@@ -1138,7 +1138,7 @@ function prettyLoginError(raw){
   msg = msg.replace(/^登录失败\s*[:：]\s*/, '').replace(/^Error:\s*/, '');
   if(/10121/.test(msg)) return '这个账号还在手机端登录。请先在手机上退出，再回来登录。';
   if(/超时|timed out|timeout|bridge 超时/i.test(msg)) return '登录等待超时了。后台可能仍在处理，请稍等几秒再试。';
-  if(/手动滑一下|手动验证/.test(msg)) return '自动验证没通过，请点下面的「手动滑一下」用官方验证码登录。';
+  if(/手动滑一下|手动验证/.test(msg)) return '自动验证没通过，请点下面的「手动滑一下」，自己把缺口对上。';
   if(/极验|gee|gt4|captcha/i.test(msg)) return '验证没有通过，请重试。';
   if(/bridge 不可用|Failed to fetch|NetworkError|ECONN|连接/i.test(msg)) return '连不上本地服务，请重启好想跑后再试。';
   return msg || '登录失败，请重试。';
@@ -1312,8 +1312,25 @@ async function finishLogin(profile, user, pass){
   }, 320);
 }
 
-// ---- manual captcha: GeeTest's official widget in the app's own WebView ----
-const GT4 = { loading: null, captcha: null, busy: false, config: null };
+// ---- manual captcha: protocol-level slider drawn by the app itself ----
+//
+// GeeTest's own `gt4.js` cannot be used here.  On the gcaptcha4.js build
+// 1.9.8-0d53fd the `embed` product throws inside slide.init (TypeError: ...
+// is not a function) and `float` does call back and reach onReady, yet inserts
+// zero nodes -- measured in both the automation Chromium and the app's own
+// WebView2: 15 elements total, 0 canvas, 0 img, while /load, bg and slice all
+// returned 200.  A button that opens an empty box is not a fallback.
+//
+// So the fallback works one level lower.  The bridge fetches the same /load
+// and hands us the same two PNGs; the operator drags the slice onto the gap;
+// the offset goes back and the bridge builds the same `w` the solver would
+// have built.  Nothing here depends on GeeTest's JS, so it cannot break the
+// way the widget did, and a failure still leaves the usual diagnostics.
+const GT4 = {
+  token: '', busy: false, ready: false, dragging: false, pointerId: null,
+  ratio: 0, bgWidth: 0, bgHeight: 0, sliceWidth: 0, sliceHeight: 0,
+  gapTop: 0, maxLeft: 0, scale: 1
+};
 
 function setGt4Status(msg, kind){
   const el = $('#gt4Status');
@@ -1322,19 +1339,68 @@ function setGt4Status(msg, kind){
   el.className = 'gt4-status' + (kind ? ' ' + kind : '');
 }
 
-function loadGt4Script(src){
-  if(window.initGeetest4) return Promise.resolve();
-  if(GT4.loading) return GT4.loading;
-  GT4.loading = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src || 'https://static.geetest.com/v4/gt4.js';
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('加载极验组件失败，请检查网络'));
-    document.head.appendChild(s);
-  });
-  GT4.loading.catch(() => { GT4.loading = null; });
-  return GT4.loading;
+function gt4SetEnabled(on){
+  GT4.ready = !!on;
+  const track = $('#gt4Track');
+  if(!track) return;
+  track.classList.toggle('is-disabled', !on);
+  track.setAttribute('aria-disabled', on ? 'false' : 'true');
+}
+
+// Park the slice at `ratio` of its travel and mirror that on the track.
+// Both are driven from the same number, so what the operator sees aligned is
+// exactly what gets sent: the ratio is only ever converted once, at commit.
+function gt4Place(r){
+  GT4.ratio = Math.min(1, Math.max(0, +r || 0));
+  const sl = $('#gt4Slice');
+  const track = $('#gt4Track'), knob = $('#gt4Knob'), fill = $('#gt4Fill');
+  if(sl && GT4.maxLeft > 0){
+    sl.style.transform =
+      'translateX(' + (GT4.ratio * GT4.maxLeft * GT4.scale).toFixed(2) + 'px)';
+  }
+  if(track && knob){
+    const travel = Math.max(0, track.clientWidth - knob.offsetWidth);
+    const x = GT4.ratio * travel;
+    knob.style.transform = 'translateX(' + x.toFixed(2) + 'px)';
+    if(fill) fill.style.width = (knob.offsetWidth / 2 + x).toFixed(2) + 'px';
+    track.setAttribute('aria-valuenow', String(Math.round(GT4.ratio * 100)));
+  }
+}
+
+// Size the slice in display pixels using the background's own scale, so the
+// overlay stays pixel-accurate at any card width.  `top` is the row the gap
+// sits on: the piece only travels horizontally, but drawing it at 0 leaves it
+// visually nowhere near the notch even when the x is perfect.
+function gt4Layout(){
+  const stage = $('#gt4Stage'), sl = $('#gt4Slice');
+  if(!stage || !sl || !GT4.bgWidth) return;
+  GT4.scale = stage.clientWidth / GT4.bgWidth;
+  sl.style.width = (GT4.sliceWidth * GT4.scale).toFixed(2) + 'px';
+  sl.style.height = (GT4.sliceHeight * GT4.scale).toFixed(2) + 'px';
+  sl.style.top = (GT4.gapTop * GT4.scale).toFixed(2) + 'px';
+  gt4Place(GT4.ratio);
+}
+
+function gt4Reset(){
+  GT4.token = '';
+  GT4.ratio = 0;
+  GT4.dragging = false;
+  GT4.pointerId = null;
+  GT4.bgWidth = GT4.bgHeight = 0;
+  GT4.sliceWidth = GT4.sliceHeight = 0;
+  GT4.gapTop = 0;
+  GT4.maxLeft = 0;
+  const bg = $('#gt4Bg'), sl = $('#gt4Slice'), stage = $('#gt4Stage');
+  if(bg) bg.removeAttribute('src');
+  if(sl){ sl.removeAttribute('src'); sl.style.top = '0px'; }
+  if(stage){
+    stage.classList.add('is-empty');
+    stage.style.aspectRatio = '';
+  }
+  gt4SetEnabled(false);
+  gt4Place(0);
+  const retry = $('#gt4Retry');
+  if(retry) retry.hidden = true;
 }
 
 function closeManualCaptcha(){
@@ -1343,93 +1409,158 @@ function closeManualCaptcha(){
   if(GT4.busy) return;
   const modal = $('#gt4Modal');
   if(modal) modal.hidden = true;
-  const mount = $('#gt4Mount');
-  if(mount) mount.innerHTML = '';
-  GT4.captcha = null;
+  const token = GT4.token;
+  GT4.token = '';
+  // Free the cached challenge instead of leaving two PNGs parked in RAM
+  // until the TTL fires.
+  if(token) liveApi('real_gt4_manual_cancel', {token: token}, 5000).catch(() => {});
+  gt4Reset();
   setGt4Status('', '');
 }
 
 async function openManualCaptcha(){
   if(GT4.busy) return;
   const modal = $('#gt4Modal');
-  if(!modal) return;
-  if(!modal.hidden) return;
+  if(!modal || !modal.hidden) return;
   const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
   const pass = $('#loginPass') ? $('#loginPass').value : '';
   if(!user || !pass){ loginFail('请先填好手机号和密码，再手动验证'); return; }
   // Open before awaiting the bridge: a second click must see the modal and
-  // bail out instead of initialising a second widget on the same mount.
+  // bail out instead of fetching a second challenge.
   modal.hidden = false;
-  setGt4Status('正在加载验证码…', '');
-  let cfgRes;
-  try{
-    cfgRes = await liveApi('real_gt4_config');
-  }catch(e){
-    closeManualCaptcha();
-    loginFail('读取极验配置失败：' + (e.message || e));
+  gt4Reset();
+  setGt4Status('正在读取题目…', 'busy');
+  await gt4LoadChallenge();
+}
+
+async function gt4LoadChallenge(){
+  const retry = $('#gt4Retry');
+  if(retry) retry.hidden = true;
+  const j = await liveApi('real_gt4_manual_start', {}, 40000);
+  const modal = $('#gt4Modal');
+  if(!modal || modal.hidden){
+    // Cancelled while the bridge was fetching: do not leak the challenge.
+    if(liveOk(j) && j.data && j.data.token){
+      liveApi('real_gt4_manual_cancel', {token: j.data.token}, 5000).catch(() => {});
+    }
     return;
   }
-  if(!liveOk(cfgRes)){
-    closeManualCaptcha();
-    loginFail((cfgRes && cfgRes.message) || '极验配置读取失败');
+  if(!liveOk(j)){
+    setGt4Status((j && j.message) || '题目读取失败', 'error');
+    if(retry) retry.hidden = false;
     return;
   }
-  GT4.config = cfgRes.data || {};
-  if(modal.hidden) return;          // user cancelled while the bridge replied
-  try{
-    await loadGt4Script(GT4.config.script);
-  }catch(e){
-    setGt4Status(e.message || '加载失败', 'error');
+  const d = j.data || {};
+  GT4.token = d.token || '';
+  GT4.bgWidth = +d.bg_width || 0;
+  GT4.bgHeight = +d.bg_height || 0;
+  GT4.sliceWidth = +d.slice_width || 0;
+  GT4.sliceHeight = +d.slice_height || 0;
+  GT4.gapTop = +d.slice_top || 0;
+  GT4.maxLeft = Math.max(0, +d.max_left || 0);
+  const bg = $('#gt4Bg'), sl = $('#gt4Slice'), stage = $('#gt4Stage');
+  if(!bg || !sl || !stage){ setGt4Status('页面缺少验证码容器', 'error'); return; }
+  bg.src = d.bg || '';
+  sl.src = d.slice || '';
+  if(GT4.bgWidth > 0 && GT4.bgHeight > 0){
+    stage.style.aspectRatio = GT4.bgWidth + ' / ' + GT4.bgHeight;
+  }
+  stage.classList.remove('is-empty');
+  gt4Place(0);
+  try{ await bg.decode(); }catch(e){}
+  gt4Layout();
+  if(GT4.maxLeft <= 0){
+    setGt4Status('这张图没有可用的缺口，换一张试试', 'error');
+    if(retry) retry.hidden = false;
     return;
   }
-  if(modal.hidden) return;          // cancelled while the script was loading
-  const mount = $('#gt4Mount');
-  if(mount) mount.innerHTML = '';
-  try{
-    window.initGeetest4({captchaId: GT4.config.captcha_id, product: 'embed'}, captcha => {
-      GT4.captcha = captcha;
-      if(mount && captcha.appendTo) captcha.appendTo(mount);
-      else if(captcha.showCaptcha) captcha.showCaptcha();
-      if(captcha.onSuccess) captcha.onSuccess(res => submitManualTicket(res));
-      if(captcha.onError) captcha.onError(() => {
-        setGt4Status('验证码加载失败，请取消后重试', 'error');
-      });
-      setGt4Status('拖动滑块完成拼图', '');
-    });
-  }catch(e){
-    setGt4Status('验证码初始化失败：' + (e.message || e), 'error');
+  gt4SetEnabled(true);
+  setGt4Status('把小图拖到缺口上，松手就提交', '');
+}
+
+// The pointer position -> travel ratio.  The knob's centre is the handle, so
+// a click at the track's left edge lands on 0 and at the right edge on 1.
+function gt4RatioFromEvent(ev){
+  const track = $('#gt4Track'), knob = $('#gt4Knob');
+  if(!track || !knob) return GT4.ratio;
+  const rect = track.getBoundingClientRect();
+  const travel = Math.max(1, rect.width - knob.offsetWidth);
+  return Math.min(1, Math.max(0,
+    (ev.clientX - rect.left - knob.offsetWidth / 2) / travel));
+}
+
+function gt4PointerDown(ev){
+  if(!GT4.ready || GT4.busy) return;
+  if(ev.button !== undefined && ev.button !== 0) return;
+  ev.preventDefault();
+  GT4.dragging = true;
+  GT4.pointerId = ev.pointerId;
+  const track = $('#gt4Track');
+  try{ track.setPointerCapture(ev.pointerId); }catch(e){}
+  gt4Place(gt4RatioFromEvent(ev));
+}
+
+function gt4PointerMove(ev){
+  if(!GT4.dragging || ev.pointerId !== GT4.pointerId) return;
+  ev.preventDefault();
+  gt4Place(gt4RatioFromEvent(ev));
+}
+
+function gt4PointerUp(ev){
+  if(!GT4.dragging) return;
+  if(ev.pointerId !== undefined && ev.pointerId !== GT4.pointerId) return;
+  GT4.dragging = false;
+  const track = $('#gt4Track');
+  try{ track.releasePointerCapture(GT4.pointerId); }catch(e){}
+  GT4.pointerId = null;
+  // pointercancel has no usable coordinates; keep the last good ratio.
+  if(typeof ev.clientX === 'number' && ev.type !== 'pointercancel'){
+    gt4Place(gt4RatioFromEvent(ev));
+  }
+  gt4Commit();
+}
+
+function gt4KeyDown(ev){
+  if(!GT4.ready || GT4.busy) return;
+  const step = ev.shiftKey ? 0.02 : 0.005;
+  if(ev.key === 'ArrowLeft'){
+    ev.preventDefault(); gt4Place(GT4.ratio - step);
+  }else if(ev.key === 'ArrowRight'){
+    ev.preventDefault(); gt4Place(GT4.ratio + step);
+  }else if(ev.key === 'Enter' || ev.key === ' '){
+    ev.preventDefault(); gt4Commit();
   }
 }
 
-async function submitManualTicket(res){
-  if(GT4.busy) return;
-  const modal = $('#gt4Modal');
-  // The widget can fire after the dialog was dismissed; do not log in then.
-  if(!modal || modal.hidden) return;
-  if(!res || !res.lotNumber || !res.captchaOutput || !res.passToken){
-    setGt4Status('验证结果不完整，请重新滑一次', 'error');
-    return;
-  }
-  GT4.busy = true;
+async function gt4Commit(){
+  if(GT4.busy || !GT4.ready || !GT4.token) return;
   const user = ($('#loginUser') ? $('#loginUser').value : '').trim();
   const pass = $('#loginPass') ? $('#loginPass').value : '';
-  setGt4Status('验证通过，正在登录…', 'ok');
+  if(!user || !pass){
+    setGt4Status('手机号或密码空了，请取消后重新填写', 'error');
+    return;
+  }
+  // One conversion, in image pixels: the same unit `locate_gap` returns, so
+  // the payload builder cannot tell this from a solver run.
+  const setLeft = Math.round(GT4.ratio * GT4.maxLeft);
+  GT4.busy = true;
+  gt4SetEnabled(false);
+  setGt4Status('验证中…', 'busy');
   try{
-    const j = await liveApi('real_login_ticket', {
-      username: user, password: pass,
-      lotNumber: res.lotNumber,
-      captchaOutput: res.captchaOutput,
-      passToken: res.passToken,
-      genTime: res.genTime
+    const j = await liveApi('real_gt4_manual_finish', {
+      token: GT4.token, set_left: setLeft,
+      username: user, password: pass
     }, 120000);
+    GT4.token = '';                 // the bridge consumed it either way
     if(!liveOk(j)){
       GT4.busy = false;
-      setGt4Status((j && j.message) || '登录失败', 'error');
-      try{ if(GT4.captcha && GT4.captcha.reset) GT4.captcha.reset(); }catch(e){}
+      setGt4Status((j && j.message) || '验证没有通过', 'error');
+      const retry = $('#gt4Retry');
+      if(retry) retry.hidden = false;
       return;
     }
-    // Keep the modal open until the session is verified.  Closing first would
-    // swallow a failure here: finishLogin can still throw on liveInitSession.
+    // Keep the dialog open until the session is verified: finishLogin can
+    // still fail on liveInitSession, and closing first would swallow that.
     try{
       await finishLogin(j.data || {}, user, pass);
     }catch(e){
@@ -1444,6 +1575,7 @@ async function submitManualTicket(res){
   }catch(e){
     GT4.busy = false;
     setGt4Status('登录失败：' + (e.message || e), 'error');
+    gt4SetEnabled(true);
   }
 }
 
@@ -4957,6 +5089,25 @@ function liveWire(){
   if(manualBtn) manualBtn.addEventListener('click', openManualCaptcha);
   const gt4Close = $('#gt4Close');
   if(gt4Close) gt4Close.addEventListener('click', closeManualCaptcha);
+  const gt4Retry = $('#gt4Retry');
+  if(gt4Retry) gt4Retry.addEventListener('click', () => {
+    if(GT4.busy) return;
+    gt4Reset();
+    setGt4Status('正在重新读取题目…', 'busy');
+    gt4LoadChallenge();
+  });
+  const gt4Track = $('#gt4Track');
+  if(gt4Track){
+    gt4Track.addEventListener('pointerdown', gt4PointerDown);
+    gt4Track.addEventListener('pointermove', gt4PointerMove);
+    gt4Track.addEventListener('pointerup', gt4PointerUp);
+    gt4Track.addEventListener('pointercancel', gt4PointerUp);
+    gt4Track.addEventListener('keydown', gt4KeyDown);
+  }
+  window.addEventListener('resize', () => {
+    const modal = $('#gt4Modal');
+    if(modal && !modal.hidden) gt4Layout();
+  });
   const gt4Modal = $('#gt4Modal');
   if(gt4Modal){
     gt4Modal.addEventListener('click', ev => {
