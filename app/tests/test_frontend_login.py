@@ -81,7 +81,7 @@ def test_update_icon_is_quiet_until_the_manifest_has_a_newer_build():
     assert 'btn.hidden = !avail' in SOURCE
     # The package is verified locally and then swapped after the app exits.
     assert 'sha256 已校验' in SOURCE
-    assert '更新会自动解压并重启程序' in SOURCE
+    assert '更新会关闭程序、自动安装并重启；data 文件夹保留。' in SOURCE
 
 
 def test_partial_school_rules_and_issue_records_are_visible():

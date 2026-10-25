@@ -6,6 +6,7 @@ app/dist/
 app/build/
 app/build_tmp/
 app/build_stage/
+app/build_tools/
 app/build_nuitka*/
 app/build_target_backup_*/
 app/.cache/

@@ -29,6 +29,13 @@ DEFAULT_ENTRY = '好想跑.exe'
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.1.3': [
+        '提交坐标改为读取账号真实校区围栏，不再使用内置坐标',
+        '切换校区会自动清空旧坐标；拿不到围栏时拒绝提交',
+        '新增 NSIS 安装包：开始菜单快捷方式、卸载项、静默升级',
+        '安装版与便携版分开更新：安装版走安装包，便携版原地替换',
+        '发布资产改用 ASCII 文件名，避免 GitHub 改写下载地址',
+    ],
     '0.1.2': [
         '新增应用内检查更新：下载校验后自动解压并重启安装',
         '新增海拔来源：自动 / 固定 / 区间 / 本机 GPX/JSON 模板',
@@ -70,14 +77,15 @@ def asset_url(name: str, base_url: str = '') -> str:
     return f'{base}/{quoted}' if base else quoted
 
 
-def _asset(path: Path, base_url: str, version: str,
-           layout: str = 'onedir', entry: str = DEFAULT_ENTRY) -> dict:
+def _asset(path: Path, base_url: str, version: str, *,
+           fmt: str = 'zip', layout: str = 'onedir',
+           entry: str = DEFAULT_ENTRY) -> dict:
     return {
         'file': path.name,
         'url': asset_url(path.name, base_url),
         'size': path.stat().st_size,
         'sha256': sha256_file(path),
-        'format': 'zip',
+        'format': fmt,
         'layout': layout,
         'entry': entry,
         'version': version,
@@ -92,6 +100,7 @@ def build_manifest(version: str, zip_path: Path, *,
                    notes: list[str] | None = None,
                    rollback_version: str | None = None,
                    rollback_zip: Path | None = None,
+                   setup_path: Path | None = None,
                    entry: str = DEFAULT_ENTRY) -> dict:
     zip_path = Path(zip_path)
     if not zip_path.is_file():
@@ -102,6 +111,20 @@ def build_manifest(version: str, zip_path: Path, *,
         now = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8)))
         released_at = now.replace(microsecond=0).isoformat()
 
+    assets = {'windows-x64': _asset(zip_path, base_url, version, entry=entry)}
+    # The installer is the primary asset for new installs and for updating an
+    # installed copy.  `windows-x64` stays a zip so that v0.1.2 clients (whose
+    # updater only understands zip) can still auto-update instead of failing
+    # with "更新包不是有效 zip".
+    if setup_path:
+        setup_path = Path(setup_path)
+        if setup_path.is_file():
+            assets['windows-x64-setup'] = _asset(
+                setup_path, base_url, version,
+                fmt='installer', layout='installer', entry=entry)
+        else:
+            print(f'warning: setup not found: {setup_path}', file=sys.stderr)
+
     manifest = {
         'schema': 1,
         'app': 'haoxiangpao',
@@ -111,9 +134,7 @@ def build_manifest(version: str, zip_path: Path, *,
         'min_version': min_version,
         'released_at': released_at,
         'notes': notes,
-        'assets': {
-            'windows-x64': _asset(zip_path, base_url, version, entry=entry),
-        },
+        'assets': assets,
         'generated_by': 'packaging/make_latest.py',
     }
 
@@ -129,7 +150,18 @@ def build_manifest(version: str, zip_path: Path, *,
 
 
 def find_zip(dist: Path, version: str) -> Path:
-    return dist / f'好想跑_v{version}_win64.zip'
+    """ASCII name first; the Chinese name is the pre-0.1.3 convention."""
+    for name in (f'haoxiangpao_v{version}_win64.zip',
+                 f'好想跑_v{version}_win64.zip'):
+        candidate = dist / name
+        if candidate.is_file():
+            return candidate
+    return dist / f'haoxiangpao_v{version}_win64.zip'
+
+
+def find_setup(dist: Path, version: str) -> Path | None:
+    candidate = dist / f'haoxiangpao_v{version}_win64_setup.exe'
+    return candidate if candidate.is_file() else None
 
 
 def find_rollback(dist: Path, version: str | None) -> Path | None:
@@ -154,6 +186,8 @@ def main(argv=None) -> int:
     ap.add_argument('--version', default=None,
                     help='defaults to replica/build_info.py VERSION')
     ap.add_argument('--zip', default=None, help='asset zip path')
+    ap.add_argument('--setup', default=None,
+                    help='NSIS installer path; auto-detected when omitted')
     ap.add_argument('--out', default=None, help='defaults to <dist>/latest.json')
     ap.add_argument('--base-url', default='',
                     help='absolute download base; omit for relative URLs')
@@ -163,7 +197,7 @@ def main(argv=None) -> int:
                     help='ISO-8601; defaults to now in Beijing time')
     ap.add_argument('--notes-file', default=None,
                     help='JSON array of release notes; defaults to built-in notes')
-    ap.add_argument('--rollback-version', default='0.1.1',
+    ap.add_argument('--rollback-version', default='0.1.2',
                     help='include this older zip as rollback; empty disables')
     args = ap.parse_args(argv)
 
@@ -172,6 +206,13 @@ def main(argv=None) -> int:
     zip_path = Path(args.zip) if args.zip else find_zip(dist, version)
     if not zip_path.is_absolute():
         zip_path = (Path.cwd() / zip_path).resolve()
+
+    if args.setup:
+        setup_path = Path(args.setup)
+        if not setup_path.is_absolute():
+            setup_path = (Path.cwd() / setup_path).resolve()
+    else:
+        setup_path = find_setup(dist, version)
 
     notes = None
     if args.notes_file:
@@ -190,6 +231,7 @@ def main(argv=None) -> int:
         notes=notes,
         rollback_version=rollback_version,
         rollback_zip=rollback_zip,
+        setup_path=setup_path,
     )
     out = Path(args.out) if args.out else dist / 'latest.json'
     write_manifest(manifest, out)
@@ -199,6 +241,10 @@ def main(argv=None) -> int:
     print(f'version:     {manifest["version"]} ({manifest["channel"]})')
     print(f'asset:       {asset["file"]} · {asset["size"]} bytes')
     print(f'sha256:      {asset["sha256"]}')
+    setup = manifest['assets'].get('windows-x64-setup')
+    if setup:
+        print(f'installer:   {setup["file"]} · {setup["size"]} bytes')
+        print(f'             {setup["sha256"]}')
     if manifest.get('rollback'):
         print(f'rollback:    {manifest["rollback"]["version"]} · '
               f'{manifest["rollback"]["file"]}')

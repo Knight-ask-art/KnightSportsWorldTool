@@ -92,3 +92,37 @@ def test_cli_writes_the_manifest_next_to_the_zip(tmp_path):
     m = json.loads((tmp_path / 'latest.json').read_text(encoding='utf-8'))
     assert m['assets']['windows-x64']['size'] == zip_path.stat().st_size
     assert 'rollback' not in m
+
+
+def test_installer_asset_is_added_when_present(tmp_path):
+    version = '0.1.3'
+    zip_path = _fake_zip(tmp_path / f'haoxiangpao_v{version}_win64.zip')
+    setup = _fake_zip(
+        tmp_path / f'haoxiangpao_v{version}_win64_setup.exe', b'MZsetup')
+    m = make_latest.build_manifest(version, zip_path, setup_path=setup)
+
+    # windows-x64 must stay the zip: v0.1.2 clients only understand that key.
+    assert m['assets']['windows-x64']['format'] == 'zip'
+    assert m['assets']['windows-x64']['file'].endswith('.zip')
+
+    installer = m['assets']['windows-x64-setup']
+    assert installer['format'] == 'installer'
+    assert installer['layout'] == 'installer'
+    assert installer['file'] == f'haoxiangpao_v{version}_win64_setup.exe'
+    assert installer['size'] == setup.stat().st_size
+    assert installer['sha256'] == hashlib.sha256(setup.read_bytes()).hexdigest()
+
+
+def test_installer_asset_is_skipped_when_missing(tmp_path):
+    zip_path = _fake_zip(tmp_path / 'haoxiangpao_v0.1.3_win64.zip')
+    m = make_latest.build_manifest('0.1.3', zip_path)
+    assert 'windows-x64-setup' not in m['assets']
+
+
+def test_ascii_asset_names_need_no_percent_encoding(tmp_path):
+    version = '0.1.3'
+    zip_path = _fake_zip(tmp_path / f'haoxiangpao_v{version}_win64.zip')
+    m = make_latest.build_manifest(version, zip_path,
+                                   base_url='https://example.com/r')
+    assert m['assets']['windows-x64']['url'] == (
+        f'https://example.com/r/haoxiangpao_v{version}_win64.zip')

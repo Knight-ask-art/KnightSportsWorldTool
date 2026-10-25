@@ -202,7 +202,10 @@ def test_raw_record_detail_raises_on_business_error():
 # --------------------------------------------------------------------------
 
 def test_version_has_a_single_source():
-    assert APP_VERSION == VERSION == '0.1.2'
+    import re
+    assert APP_VERSION == VERSION
+    # Do not pin the literal here: every release would break this test.
+    assert re.fullmatch(r'\d+\.\d+\.\d+', VERSION), VERSION
     info = build_info()
     assert info['version'] == VERSION
     assert set(info) >= {'version', 'commit', 'dirty', 'built_at', 'frozen'}

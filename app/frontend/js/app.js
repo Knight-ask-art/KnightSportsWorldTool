@@ -4694,7 +4694,7 @@ function openUpdateDialog(){
   const tip = $('#updateTip');
   tip.hidden = !downloaded;
   tip.textContent = downloaded
-    ? '更新会自动解压并重启程序；data 文件夹保留。' : '';
+    ? '更新会关闭程序、自动安装并重启；data 文件夹保留。' : '';
   $('#updateDlg').hidden = false;
   go.focus();
 }
@@ -4736,7 +4736,7 @@ async function downloadUpdate(){
     $('#updateHint').textContent = '已下载并校验：' + (info.file || '');
     const tip = $('#updateTip');
     tip.hidden = false;
-    tip.textContent = '更新会自动解压并重启程序；data 文件夹保留。';
+    tip.textContent = '更新会关闭程序、自动安装并重启；data 文件夹保留。';
     toast('更新包已下载');
     liveLog('更新包已下载', (info.file || '') + ' · sha256 已校验', 'ok');
   }finally{
@@ -4765,7 +4765,7 @@ async function applyUpdate(){
   const go = $('#updateGo');
   go.disabled = true;
   go.textContent = '正在更新…';
-  $('#updateHint').textContent = '正在解压并准备重启，请不要关闭窗口';
+  $('#updateHint').textContent = '正在准备安装并重启，请不要关闭窗口';
   try{
     const j = await liveApi('real_apply_update', {file: UPDATE.package}, 180000);
     if(!liveOk(j)){

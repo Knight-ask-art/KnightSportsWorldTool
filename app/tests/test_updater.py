@@ -86,6 +86,48 @@ class NormalizeTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 updater.normalize(manifest, 'https://example.com/latest.json')
 
+    def test_installer_asset_is_selected_when_asked(self):
+        manifest = _manifest()
+        manifest['assets']['windows-x64-setup'] = {
+            'file': 'haoxiangpao_v9.9.9_win64_setup.exe',
+            'url': 'setup.exe', 'size': 1, 'sha256': 'b' * 64,
+            'format': 'installer', 'layout': 'installer',
+        }
+        result = updater.normalize(manifest,
+                                   'https://example.com/latest.json',
+                                   prefer='installer')
+        self.assertEqual(result['format'], 'installer')
+        self.assertEqual(result['layout'], 'installer')
+        self.assertEqual(result['url'], 'https://example.com/setup.exe')
+
+    def test_installer_falls_back_to_the_zip(self):
+        result = updater.normalize(_manifest(),
+                                   'https://example.com/latest.json',
+                                   prefer='installer')
+        self.assertEqual(result['format'], 'zip')
+
+    def test_installer_without_sha256_is_refused(self):
+        manifest = _manifest()
+        manifest['assets']['windows-x64-setup'] = {
+            'file': 'setup.exe', 'url': 'setup.exe', 'format': 'installer'}
+        with self.assertRaises(ValueError):
+            updater.normalize(manifest, 'https://example.com/latest.json',
+                              prefer='installer')
+
+
+class InstallStateTest(unittest.TestCase):
+    def test_source_checkout_is_never_treated_as_installed(self):
+        with mock.patch.object(updater, 'is_compiled', return_value=False):
+            self.assertFalse(updater.is_installed())
+
+    def test_installed_copy_must_live_under_the_registry_dir(self):
+        with mock.patch.object(updater, 'is_compiled', return_value=True), \
+             mock.patch.object(updater, 'installed_dir',
+                               return_value=r'C:\Users\me\AppData\Local\Programs\好想跑'):
+            self.assertTrue(updater.is_installed(
+                r'C:\Users\me\AppData\Local\Programs\好想跑\current'))
+            self.assertFalse(updater.is_installed(r'D:\portable\好想跑_v0.1.2'))
+
 
 class CheckTest(unittest.TestCase):
     def test_falls_back_to_the_next_manifest_url(self):
@@ -286,4 +328,37 @@ class ApplyTest(unittest.TestCase):
         self.assertIn("$dst\\data", script)
         self.assertTrue(script.rstrip().endswith('}') or
                         'Remove-Item $MyInvocation' in script)
+
+    def test_apply_installer_runs_setup_silently(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            updates = os.path.join(tmp, 'updates')
+            os.makedirs(updates)
+            package = os.path.join(updates, 'setup.exe')
+            with open(package, 'wb') as fh:
+                fh.write(b'MZ' + b'\0' * 256)
+            spawn_calls = []
+            with mock.patch.object(updater, 'is_compiled', return_value=True), \
+                 mock.patch.object(updater, '_spawn',
+                                   side_effect=lambda s, c: spawn_calls.append(s)):
+                result = updater.apply(package, tmp,
+                                       install_dir=os.path.join(tmp, 'install'),
+                                       pid=4242)
+            script = open(result['script'], encoding='utf-8-sig').read()
+        self.assertEqual(result['format'], 'installer')
+        self.assertEqual(len(spawn_calls), 1)
+        self.assertIn('$appPid = 4242', script)
+        self.assertIn("'/S'", script)
+        self.assertIn('Start-Process', script)
+
+    def test_apply_installer_rejects_a_non_executable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            updates = os.path.join(tmp, 'updates')
+            os.makedirs(updates)
+            package = os.path.join(updates, 'setup.exe')
+            with open(package, 'wb') as fh:
+                fh.write(b'not-a-pe')
+            with mock.patch.object(updater, 'is_compiled', return_value=True):
+                with self.assertRaises(ValueError):
+                    updater.apply(package, tmp,
+                                  install_dir=os.path.join(tmp, 'install'))
 

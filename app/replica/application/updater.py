@@ -5,9 +5,15 @@ The manifest is published from the GitHub repo ``KnightSportsWorldTool``.
 same file works both on ``raw.githubusercontent.com`` and next to the zips.
 
 A running onedir build cannot overwrite its own exe/DLLs, so the swap is done
-by a detached PowerShell script: it waits for this process to exit, copies the
-staged files over the install directory (never ``data/``), and starts the new
-exe.  The UI only has to call ``apply`` and then quit.
+by a detached PowerShell script: it waits for this process to exit, then either
+
+* copies the staged zip over the install directory (portable layout, never
+  ``data/``), or
+* runs the downloaded NSIS installer with ``/S`` (installed layout, the
+  installer itself keeps ``data/``).
+
+The UI only has to call ``apply`` and then quit; the package extension decides
+which mode runs.
 """
 
 from __future__ import annotations
@@ -38,6 +44,19 @@ MAX_DOWNLOAD_BYTES = 400 * 1024 * 1024
 MAX_NOTES = 12
 USER_AGENT = 'haoxiangpao-updater'
 ENTRY_NAME = '好想跑.exe'
+
+#: Registry key the NSIS installer writes (HKCU).  Its presence is what tells
+#: the updater "this copy is installed", so the installer asset is used instead
+#: of the zip.  A portable copy keeps updating in place with the zip.
+INSTALL_REG_KEY = r'Software\好想跑'
+
+#: Asset keys per update format.  ``windows-x64`` must stay the zip: v0.1.2
+#: clients only know that key and only understand zip.
+ASSET_KEYS = {
+    'installer': ('windows-x64-setup', 'windows-setup'),
+    'zip': ('windows-x64', 'windows', 'win64'),
+}
+PACKAGE_SUFFIXES = ('.zip', '.exe')
 
 
 def manifest_urls() -> tuple[str, ...]:
@@ -91,15 +110,66 @@ def _clean_notes(value) -> list[str]:
     return out
 
 
-def _pick_asset(manifest: dict):
+def _pick_asset(manifest: dict, prefer: str = 'zip'):
     assets = manifest.get('assets')
     if not isinstance(assets, dict):
         return None
-    for key in ('windows-x64', 'windows', 'win64'):
+    if prefer == 'installer':
+        keys = list(ASSET_KEYS['installer']) + list(ASSET_KEYS['zip'])
+    else:
+        keys = list(ASSET_KEYS['zip'])
+    for key in keys:
         item = assets.get(key)
         if isinstance(item, dict):
             return item
     return None
+
+
+def _asset_format(asset: dict, url: str) -> str:
+    fmt = str(asset.get('format') or '').strip().lower()
+    if fmt in ('zip', 'installer'):
+        return fmt
+    return 'installer' if urlparse(url).path.lower().endswith('.exe') else 'zip'
+
+
+def installed_dir() -> str:
+    """Install directory recorded by the NSIS installer ('' when absent).
+
+    Named ``installed_dir`` rather than ``install_dir`` because ``apply``
+    takes an ``install_dir`` parameter; shadowing the two would be a trap.
+    """
+    if os.name != 'nt':
+        return ''
+    try:
+        import winreg
+    except ImportError:  # pragma: no cover - non-Windows
+        return ''
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, INSTALL_REG_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, 'InstallDir')
+    except OSError:
+        return ''
+    return str(value or '').strip()
+
+
+def is_installed(install: str | None = None) -> bool:
+    """True when this process runs from the NSIS install directory.
+
+    A portable copy must keep using the zip: installing over it would leave
+    the old folder behind and start a second copy with an empty ``data/``.
+    """
+    if not is_compiled():
+        return False
+    known = installed_dir()
+    if not known:
+        return False
+    from ..build_info import app_root
+    root = os.path.realpath(install or app_root())
+    known = os.path.realpath(known)
+    try:
+        return os.path.commonpath([known, root]) == known
+    except ValueError:  # different drives
+        return False
 
 
 def _int_or_zero(value) -> int:
@@ -110,8 +180,13 @@ def _int_or_zero(value) -> int:
 
 
 def normalize(manifest, source: str, current: str = VERSION,
-              checked_at: int | None = None) -> dict:
-    """Validate one manifest.  Raises ``ValueError`` when it is unusable."""
+              checked_at: int | None = None, prefer: str = 'zip') -> dict:
+    """Validate one manifest.  Raises ``ValueError`` when it is unusable.
+
+    ``prefer='installer'`` picks ``windows-x64-setup`` and falls back to the
+    zip when the manifest has no installer.  An installer without a sha256 is
+    refused outright: the updater is about to execute it.
+    """
     if not isinstance(manifest, dict):
         raise ValueError('清单不是 JSON 对象')
     if str(manifest.get('schema', 1)) != '1':
@@ -124,7 +199,7 @@ def normalize(manifest, source: str, current: str = VERSION,
     if parse_version(latest) is None:
         raise ValueError('清单缺少有效版本号')
 
-    asset = _pick_asset(manifest)
+    asset = _pick_asset(manifest, prefer)
     if asset is None:
         raise ValueError('清单缺少 Windows 下载项')
     raw_url = str(asset.get('url') or '').strip()
@@ -143,6 +218,12 @@ def normalize(manifest, source: str, current: str = VERSION,
     if sha and not re.fullmatch(r'[0-9a-f]{64}', sha):
         sha = ''
 
+    fmt = _asset_format(asset, url)
+    if fmt == 'installer' and not sha:
+        raise ValueError('安装包缺少 sha256，拒绝自动执行')
+    layout = str(asset.get('layout') or
+                 ('installer' if fmt == 'installer' else 'onedir'))
+
     if is_newer(latest, current):
         state, message = 'available', '发现新版本 v%s' % latest
     elif same_version(latest, current):
@@ -159,6 +240,8 @@ def normalize(manifest, source: str, current: str = VERSION,
         'url': url,
         'size': _int_or_zero(asset.get('size')),
         'sha256': sha,
+        'format': fmt,
+        'layout': layout,
         'notes': _clean_notes(manifest.get('notes')),
         'checked_at': int(checked_at if checked_at is not None
                           else time.time() * 1000),
@@ -179,8 +262,16 @@ def fetch_manifest(url: str) -> dict:
     return data
 
 
-def check(current: str = VERSION, manifest_url: str | None = None) -> dict:
-    """Try every manifest URL; return one honest state, never raise."""
+def check(current: str = VERSION, manifest_url: str | None = None,
+          prefer: str | None = None) -> dict:
+    """Try every manifest URL; return one honest state, never raise.
+
+    Without an explicit ``prefer``, an installed copy asks for the NSIS
+    installer and a portable copy asks for the zip.  Both stay on their own
+    track, so nobody has to move their ``data/`` directory.
+    """
+    if prefer is None:
+        prefer = 'installer' if is_installed() else 'zip'
     urls = (manifest_url,) if manifest_url else manifest_urls()
     errors: list[str] = []
     checked_at = int(time.time() * 1000)
@@ -192,7 +283,7 @@ def check(current: str = VERSION, manifest_url: str | None = None) -> dict:
             continue
         try:
             return normalize(data, source=url, current=current,
-                             checked_at=checked_at)
+                             checked_at=checked_at, prefer=prefer)
         except ValueError as e:
             errors.append('%s: %s' % (url, e))
     detail = errors[-1] if errors else '没有配置清单地址'
@@ -204,6 +295,8 @@ def check(current: str = VERSION, manifest_url: str | None = None) -> dict:
         'url': '',
         'size': 0,
         'sha256': '',
+        'format': '',
+        'layout': '',
         'notes': [],
         'checked_at': checked_at,
         'source': '',
@@ -270,7 +363,7 @@ def _updates_dir(store_dir: str) -> str:
 
 
 def locate_package(store_dir: str, name: str = '') -> str:
-    """Return a zip inside ``data/updates`` (named, or the newest one)."""
+    """Return a package inside ``data/updates`` (named, or the newest one)."""
     updates = _updates_dir(store_dir)
     if not os.path.isdir(updates):
         raise ValueError('还没有下载更新包')
@@ -283,7 +376,7 @@ def locate_package(store_dir: str, name: str = '') -> str:
             raise ValueError('更新包不存在: %s' % base)
         return path
     candidates = [os.path.join(updates, f) for f in os.listdir(updates)
-                  if f.lower().endswith('.zip')]
+                  if f.lower().endswith(PACKAGE_SUFFIXES)]
     if not candidates:
         raise ValueError('还没有下载更新包')
     return max(candidates, key=os.path.getmtime)
@@ -335,7 +428,7 @@ def stage(zip_path: str, store_dir: str) -> dict:
     return {'path': staging, 'entry': entry, 'files': files}
 
 
-_SCRIPT_TEMPLATE = r"""$ErrorActionPreference = 'Stop'
+_ZIP_SCRIPT_TEMPLATE = r"""$ErrorActionPreference = 'Stop'
 $appPid = %(pid)d
 $src = %(src)s
 $dst = %(dst)s
@@ -374,6 +467,49 @@ Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 """
 
 
+#: Installer mode: the NSIS package already knows how to install, keep data\
+#: and register itself.  The script only waits for this process to exit, runs
+#: it silently, then starts the new exe.
+_INSTALLER_SCRIPT_TEMPLATE = r"""$ErrorActionPreference = 'Stop'
+$appPid = %(pid)d
+$setup = %(setup)s
+$exe = %(exe)s
+$log = %(log)s
+function Write-Log($m) {
+  try {
+    ('[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) |
+      Out-File -FilePath $log -Append -Encoding utf8
+  } catch {}
+}
+Write-Log "installer: wait for pid $appPid"
+$gone = $false
+for ($i = 0; $i -lt 120; $i++) {
+  if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) { $gone = $true; break }
+  Start-Sleep -Milliseconds 500
+}
+if (-not $gone) { Write-Log 'still running; abort'; exit 2 }
+Start-Sleep -Milliseconds 800
+try {
+  $proc = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru -Wait
+  Write-Log ("setup exit " + $proc.ExitCode)
+  if ($proc.ExitCode -ne 0) { exit 1 }
+  for ($i = 0; $i -lt 80; $i++) {
+    if (Test-Path $exe) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not (Test-Path $exe)) { Write-Log 'new exe missing'; exit 1 }
+  Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
+  Remove-Item $setup -Force -ErrorAction SilentlyContinue
+  Write-Log 'ok'
+} catch {
+  Write-Log ('failed: ' + $_.Exception.Message)
+  exit 1
+}
+Start-Sleep -Milliseconds 300
+Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+"""
+
+
 def _quote(path: str) -> str:
     return "'" + str(path).replace("'", "''") + "'"
 
@@ -392,9 +528,14 @@ def _spawn(script: str, cwd: str) -> None:
         stderr=subprocess.DEVNULL)
 
 
-def apply(zip_path: str, store_dir: str, install_dir: str | None = None,
+def apply(package: str, store_dir: str, install_dir: str | None = None,
           pid: int | None = None) -> dict:
-    """Stage the package and hand the swap to a detached PowerShell script."""
+    """Hand the swap to a detached PowerShell script.
+
+    ``package`` is either the release zip (portable copy) or the NSIS
+    installer (installed copy).  The extension decides; the caller does not
+    have to pass the format around.
+    """
     if os.name != 'nt':
         raise RuntimeError('自动更新只支持 Windows')
     if not is_compiled():
@@ -402,12 +543,15 @@ def apply(zip_path: str, store_dir: str, install_dir: str | None = None,
 
     from ..build_info import app_root
     install = os.path.realpath(install_dir or app_root())
-    staged = stage(zip_path, store_dir)
+    if str(package).lower().endswith('.exe'):
+        return _apply_installer(package, store_dir, install, pid)
+
+    staged = stage(package, store_dir)
     updates = _updates_dir(store_dir)
     script = os.path.join(updates, 'apply-update.ps1')
     log = os.path.join(updates, 'apply-update.log')
     app_pid = int(pid if pid is not None else os.getpid())
-    text = _SCRIPT_TEMPLATE % {
+    text = _ZIP_SCRIPT_TEMPLATE % {
         'pid': app_pid,
         'src': _quote(staged['path']),
         'dst': _quote(install),
@@ -417,9 +561,38 @@ def apply(zip_path: str, store_dir: str, install_dir: str | None = None,
     with open(script, 'w', encoding='utf-8-sig', newline='\r\n') as fh:
         fh.write(text)
     _spawn(script, updates)
-    return {'staging': staged['path'], 'files': staged['files'],
-            'install': install, 'script': script, 'log': log,
-            'pid': app_pid}
+    return {'format': 'zip', 'staging': staged['path'],
+            'files': staged['files'], 'install': install,
+            'script': script, 'log': log, 'pid': app_pid}
+
+
+def _apply_installer(package: str, store_dir: str, install: str,
+                     pid: int | None = None) -> dict:
+    """Run the NSIS installer silently after this process exits."""
+    updates = _updates_dir(store_dir)
+    real = os.path.realpath(package)
+    if os.path.commonpath([updates, real]) != updates:
+        raise ValueError('更新包不在 data/updates 目录')
+    if not os.path.isfile(real):
+        raise ValueError('更新包不存在')
+    with open(real, 'rb') as fh:
+        if fh.read(2) != b'MZ':
+            raise ValueError('安装包不是有效的 Windows 程序')
+
+    script = os.path.join(updates, 'apply-installer.ps1')
+    log = os.path.join(updates, 'apply-update.log')
+    app_pid = int(pid if pid is not None else os.getpid())
+    text = _INSTALLER_SCRIPT_TEMPLATE % {
+        'pid': app_pid,
+        'setup': _quote(real),
+        'exe': _quote(os.path.join(install, ENTRY_NAME)),
+        'log': _quote(log),
+    }
+    with open(script, 'w', encoding='utf-8-sig', newline='\r\n') as fh:
+        fh.write(text)
+    _spawn(script, updates)
+    return {'format': 'installer', 'package': real, 'install': install,
+            'script': script, 'log': log, 'pid': app_pid}
 
 
 def self_test() -> list[tuple[str, bool, str]]:
@@ -432,5 +605,16 @@ def self_test() -> list[tuple[str, bool, str]]:
                     'assets': {'windows-x64': {'url': 'a.zip'}}},
                    'https://example.com/latest.json')['url']
          == 'https://example.com/a.zip', ''),
+        ('installer asset chosen',
+         normalize({'schema': 1, 'version': '9.9.9',
+                    'assets': {'windows-x64-setup': {
+                        'url': 'a.exe', 'sha256': 'a' * 64}}},
+                   'https://example.com/latest.json',
+                   prefer='installer')['format'] == 'installer', ''),
+        ('zip still chosen for portable',
+         normalize({'schema': 1, 'version': '9.9.9',
+                    'assets': {'windows-x64': {'url': 'a.zip'}}},
+                   'https://example.com/latest.json',
+                   prefer='installer')['format'] == 'zip', ''),
     ]
     return out

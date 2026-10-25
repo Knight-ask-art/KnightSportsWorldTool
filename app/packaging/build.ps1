@@ -5,9 +5,17 @@
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -MigrateDataFrom dist\好想跑_v0.1.1
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -NoDataMigration
 # Output: dist/好想跑_v<version>/好想跑.exe
-#         dist/好想跑_v<version>_win64.zip
-#         dist/好想跑_v<version>_win64.sha256
+#         dist/haoxiangpao_v<version>_win64.zip
+#         dist/haoxiangpao_v<version>_win64.sha256
+#         dist/haoxiangpao_v<version>_win64_setup.exe        (NSIS, release standard)
+#         dist/haoxiangpao_v<version>_win64_setup.sha256
 #         dist/latest.json                  (auto-update manifest)
+#
+# Release assets use ASCII names on purpose: GitHub rewrites non-ASCII asset
+# names, which breaks the URL recorded in latest.json.
+#
+# The installer is the release standard since v0.1.3.  Use -NoInstaller only
+# for a quick local smoke build; a release without it is incomplete.
 #
 # Default backend is Nuitka standalone: modules are compiled to C and no
 # replica/*.py source ships.  -Backend pyinstaller is the compatibility
@@ -30,9 +38,11 @@ param(
     [switch]$NoDataMigration,
     [string]$DownloadBaseUrl = '',
     [string]$Channel = 'stable',
-    [string]$RollbackVersion = '0.1.1',
+    [string]$RollbackVersion = '0.1.2',
     [ValidateSet('nuitka', 'pyinstaller')]
-    [string]$Backend = 'nuitka'
+    [string]$Backend = 'nuitka',
+    [switch]$NoInstaller,
+    [string]$Makensis = ''
 )
 $ErrorActionPreference = 'Stop'
 $ROOT = Split-Path $PSScriptRoot -Parent
@@ -51,7 +61,9 @@ if (-not $Version) {
 }
 $NAME = '好想跑_v' + $Version
 $TARGET = Join-Path $DIST $NAME
-$ZIP = Join-Path $DIST ($NAME + '_win64.zip')
+$ARTIFACT = 'haoxiangpao_v' + $Version
+$ZIP = Join-Path $DIST ($ARTIFACT + '_win64.zip')
+$SETUP = Join-Path $DIST ($ARTIFACT + '_win64_setup.exe')
 
 # Build identifier: written into replica/_build_info.py immediately before
 # PyInstaller and removed afterwards.  A frozen build must not run git.
@@ -211,13 +223,81 @@ try {
 } finally {
     $zipCheck.Dispose()
 }
-$HASH = Join-Path $DIST ($NAME + '_win64.sha256')
+$HASH = Join-Path $DIST ($ARTIFACT + '_win64.sha256')
 if (Test-Path $HASH) { Remove-Item $HASH -Force }
 $hashValue = (Get-FileHash $ZIP -Algorithm SHA256).Hash.ToLowerInvariant()
 $hashLine = $hashValue + '  ' + (Split-Path $ZIP -Leaf)
 [System.IO.File]::WriteAllText(
     $HASH, $hashLine + "`r`n",
     (New-Object System.Text.UTF8Encoding($false)))
+
+# ---- 4/5 NSIS installer -------------------------------------------------
+# Release standard since v0.1.3.  NSIS is not installed permanently: point
+# -Makensis at the portable makensis.exe, or unpack nsis-3.13.zip to
+# app\build_tools\nsis and delete it after the build.
+$setupBuilt = ''
+if (-not $NoInstaller) {
+    Write-Host '== 4/5 NSIS installer =='
+    $maker = $Makensis
+    if (-not $maker) {
+        $candidates = @(
+            (Join-Path $PSScriptRoot '..\build_tools\nsis\makensis.exe'),
+            (Join-Path $PSScriptRoot '..\build_tools\nsis\Bin\makensis.exe')
+        )
+        if (${env:ProgramFiles(x86)}) {
+            $candidates += (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe')
+        }
+        if ($env:ProgramFiles) {
+            $candidates += (Join-Path $env:ProgramFiles 'NSIS\makensis.exe')
+        }
+        if ($env:LOCALAPPDATA) {
+            $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\NSIS\makensis.exe')
+        }
+        $maker = $candidates | Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -First 1
+    }
+    if (-not $maker) {
+        throw @'
+makensis not found.
+
+NSIS is the release standard, but it does NOT have to be installed:
+  https://nsis.sourceforge.io/Download   -> download nsis-3.13.zip
+  Expand it to  app\build_tools\nsis  (or anywhere)
+  Pass  -Makensis <path-to-makensis.exe>
+  Delete the folder after the build if you want zero footprint.
+
+Use -NoInstaller only for a local smoke build.
+'@
+    }
+    Write-Host ('   makensis: ' + $maker)
+    # OutFile is a relative ASCII filename on purpose: makensis command-line
+    # /D values are not reliably Unicode, and both this repo path and some
+    # Windows profiles contain Chinese.  cwd = packaging\, so the file is
+    # created next to the script either way and never travels through /D.
+    $setupName = 'hxp_setup_' + [Guid]::NewGuid().ToString('N') + '.exe'
+    Push-Location $PSScriptRoot
+    try {
+        & $maker "/DVERSION=$Version" "/DOUTFILE=$setupName" 'installer.nsi'
+        if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+    $setupTmp = Join-Path $PSScriptRoot $setupName
+    if (-not (Test-Path $setupTmp)) { throw 'makensis produced no output file' }
+    if (Test-Path $SETUP) { Remove-Item $SETUP -Force }
+    Move-Item $setupTmp $SETUP
+    $setupHash = (Get-FileHash $SETUP -Algorithm SHA256).Hash.ToLowerInvariant()
+    $setupHashFile = Join-Path $DIST ($ARTIFACT + '_win64_setup.sha256')
+    [System.IO.File]::WriteAllText(
+        $setupHashFile,
+        ($setupHash + '  ' + (Split-Path $SETUP -Leaf) + "`r`n"),
+        (New-Object System.Text.UTF8Encoding($false)))
+    $setupBuilt = $SETUP
+    Write-Host ('   安装包: {0} ({1:N1} MB)' -f $SETUP,
+        ((Get-Item $SETUP).Length / 1MB))
+} else {
+    Write-Host '== 4/5 NSIS installer skipped (-NoInstaller) =='
+}
 
 Write-Host '== latest.json (auto-update manifest) =='
 $makeLatest = Join-Path $PSScriptRoot 'make_latest.py'
@@ -226,6 +306,9 @@ $latestArgs = @($makeLatest, '--dist', $DIST, '--version', $Version,
                 '--rollback-version', $RollbackVersion)
 if ($DownloadBaseUrl) {
     $latestArgs += @('--base-url', $DownloadBaseUrl)
+}
+if ($setupBuilt) {
+    $latestArgs += @('--setup', $setupBuilt)
 }
 & python @latestArgs
 if ($LASTEXITCODE -ne 0) {
@@ -305,5 +388,6 @@ if (Test-Path $WORK) { Remove-Item $WORK -Recurse -Force }
 $size = (Get-ChildItem $TARGET -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ('完成: {0}' -f (Join-Path $TARGET '好想跑.exe'))
 Write-Host ('压缩包: {0}' -f $ZIP)
+if ($setupBuilt) { Write-Host ('安装包: {0}' -f $setupBuilt) }
 Write-Host ('总体积: {0:N1} MB' -f $size)
 Write-Host '旧 dist/好想跑/ 未改动；本次版本目录的 data/ 已保留（同版本重建）或从旧版本迁移。'
