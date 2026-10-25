@@ -75,13 +75,13 @@ def main():
     check('imei rejects bad', not C.luhn_valid('123456789012345'))
 
     # 4. run data structure
-    d = R.generate_run_data(2.5)
+    d = R.generate_run_data(2.5, center_lat=22.4108, center_lng=112.9408)
     check('25 pts', len(d['allLocJson']) >= 25)
     check('90 speed segs', len(d['speed_json']) == 90)
     check('90 step segs', len(d['step_freq_json']) == 90)
     check('5 fivePoint', len(d['fivePoint']) == 5)
     check('validate clean', R.validate_run_data(d) == [])
-    d2 = R.generate_run_data(2.5)
+    d2 = R.generate_run_data(2.5, center_lat=22.4108, center_lng=112.9408)
     d2['allLocJson'][5]['ts'] = d2['allLocJson'][4]['ts']
     check('non-monotonic caught',
           'timestamps-not-monotonic' in R.validate_run_data(d2))

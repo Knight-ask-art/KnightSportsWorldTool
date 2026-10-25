@@ -743,6 +743,19 @@ def main(argv=None, client_factory=None):
     if args.record_json is not None:
         return _raw_record(client, acct, args)
 
+    # Resolve the campus centre before planning anything.  There is no
+    # built-in campus default: submitting from a guessed coordinate writes a
+    # record for the wrong campus and cannot be undone.
+    try:
+        from ..application import points as P
+        fence = P.fetch_fence(client, acct)
+        acct.center_lat, acct.center_lng = fence['center']
+        log('   校区围栏中心 %.6f, %.6f'
+            % (acct.center_lat, acct.center_lng))
+    except Exception as e:  # noqa: BLE001
+        return _fail('无法获取校区围栏中心，已停止（不会使用默认坐标）: %s'
+                     % e, 1)
+
     # ---- variation: pick this run's shape ------------------------------
     from ..application import variation as V
 

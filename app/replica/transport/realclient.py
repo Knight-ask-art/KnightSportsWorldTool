@@ -59,13 +59,13 @@ class Account:
     # answers `11019 ERROR:版本过低，请更新至7.3.10版本` for anything older, and
     # the official CDN ships sw_7.3.11.apk as the current build.
     appVersion: str = '7.3.11'
-    # run area. Centre of the real geofence polygon returned by
-    #   POST api/v1/getGeoFenceForRun
-    # for 广州软件学院 江门校区 (unid 47203, fence id 1939, 10 points):
-    #   lon 112.939998..112.941630   lat 22.409870..22.411670
-    # (the old 24.87845/118.673878 was Xiamen and is outside every fence.)
-    center_lat: float = 22.410787
-    center_lng: float = 112.940804
+    # Run area centre (GCJ).  0/0 means "not resolved yet": the caller must
+    # ask the server for this account's geofence and use its centre.  There is
+    # deliberately no built-in campus default — the old 24.87845/118.673878
+    # (Xiamen) and the 22.410787/112.940804 (江门) constants both ended up
+    # submitting for the wrong campus when the session had no coordinates.
+    center_lat: float = 0.0
+    center_lng: float = 0.0
 
     def to_dict(self):
         return asdict(self)

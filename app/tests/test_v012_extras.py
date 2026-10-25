@@ -30,7 +30,8 @@ def test_fixed_altitude_has_no_climb():
     rng = random.Random(3)
     alts = make_altitudes(120, rng, base=88.0, mode='fixed')
     assert set(alts) == {88.0}
-    run = generate_run_data(2.5, 6.0, 172, altitude_mode='fixed',
+    run = generate_run_data(2.5, 6.0, 172, center_lat=22.4108,
+                            center_lng=112.9408, altitude_mode='fixed',
                             altitude_base=88.0, run_uuid='fixed-test')
     assert run['totalAscent'] == 0
     assert {p['alt'] for p in run['allLocJson']} == {88.0}

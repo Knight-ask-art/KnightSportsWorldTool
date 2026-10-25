@@ -35,7 +35,9 @@ def validate(km, pace, cadence=172, seed=0):
         km, fmt_pace(pace), cadence))
     rng = random.Random(1000 + seed)
     run = rundata.generate_run_data(distance_km=km, pace_min_per_km=pace,
-                                    cadence=cadence, rng=rng)
+                                    cadence=cadence,
+                                    center_lat=22.4108, center_lng=112.9408,
+                                    rng=rng)
     ctx = {"uid": 99999999, "selectedUnid": 47203, "sportType": 1,
            "policy": 0, "uuid": run['sportunid']}
     ent = rundata.build_upload_entity(run, ctx)
@@ -163,7 +165,8 @@ def validator_negative():
     import copy
     from replica.domain.rundata import generate_run_data, validate_run_data
 
-    base = generate_run_data(distance_km=2.5, pace_min_per_km=6.0)
+    base = generate_run_data(distance_km=2.5, pace_min_per_km=6.0,
+                             center_lat=22.4108, center_lng=112.9408)
     ok = []
 
     def probe(name, needle, mutate):

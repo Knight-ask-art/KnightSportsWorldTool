@@ -443,7 +443,11 @@ def self_test() -> list[tuple[str, bool, str]]:
     from ..domain.rundata import generate_run_data
 
     out = []
-    run = generate_run_data(distance_km=2.5, pace_min_per_km=6.0)
+    # Self-test only.  Production passes the account's fence centre; there is
+    # no built-in campus in generate_run_data any more.
+    test_lat, test_lng = 22.4108, 112.9408
+    run = generate_run_data(distance_km=2.5, pace_min_per_km=6.0,
+                            center_lat=test_lat, center_lng=test_lng)
     obj = build_obs_object(run, 1333336472, 'UUID-TEST', 99999999, '{"a":1}')
 
     out.append(('10 keys', len(obj) == 10, str(sorted(obj.keys()))[:80]))
@@ -496,7 +500,8 @@ def self_test() -> list[tuple[str, bool, str]]:
     # A duration that is not a multiple of 10 s leaves a short final window.
     # The old code kept a full 10 s distance/steps there, so the replay showed
     # 300+ spm.  Use 2.54 km @ 6'00" = 914 s (last window 4 s).
-    run2 = generate_run_data(distance_km=2.54, pace_min_per_km=6.0)
+    run2 = generate_run_data(distance_km=2.54, pace_min_per_km=6.0,
+                             center_lat=test_lat, center_lng=test_lng)
     obj2 = build_obs_object(run2, 1333336473, 'UUID-TEST-2', 99999999, '')
     st2 = json.loads(gzip.decompress(base64.b64decode(obj2['step_freq_json'])))
     sp2 = json.loads(gzip.decompress(base64.b64decode(obj2['speed_json'])))

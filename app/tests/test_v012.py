@@ -59,7 +59,8 @@ def test_open_route_longer_than_target_is_rejected():
 
 
 def _fake_obs(monkeypatch, corrupt=False):
-    run = generate_run_data(2.5, 6.0, 172, rng=random.Random(1))
+    run = generate_run_data(2.5, 6.0, 172, center_lat=22.4108,
+                            center_lng=112.9408, rng=random.Random(1))
     acct = types.SimpleNamespace(uid='42')
     seen = {}
 

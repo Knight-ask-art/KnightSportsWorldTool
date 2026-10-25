@@ -40,6 +40,14 @@ def biz(error, data=None, message=''):
             'json': {'error': error, 'message': message, 'data': data}}
 
 
+#: Every pipeline run resolves its centre from the fence, so the fake needs a
+#: usable campus by default.  Tests that care about the fence pass their own.
+DEFAULT_FENCE = [
+    (22.4000, 112.9300), (22.4000, 112.9500),
+    (22.4200, 112.9500), (22.4200, 112.9300),
+]
+
+
 class FakeClient:
     backend = 'netsec'
     proxy = None
@@ -49,7 +57,7 @@ class FakeClient:
         self.policy = policy
         self.points = points
         self.submit = submit
-        self.fence = fence
+        self.fence = DEFAULT_FENCE if fence is None else fence
         self.records = records
         self.calls = []
         # points.build_body needs a netsec session to seal the request

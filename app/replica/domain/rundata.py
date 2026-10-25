@@ -673,8 +673,8 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
 
 
 def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
-                      cadence: int = 172, center_lat: float = 22.410787,
-                      center_lng: float = 112.940804,
+                      cadence: int = 172, center_lat: float | None = None,
+                      center_lng: float | None = None,
                       rng: random.Random | None = None,
                       waypoints: list | None = None,
                       n_points: int | None = None,
@@ -707,6 +707,21 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
       * ``template`` – ``altitude_profile`` (parsed from local GPX/JSON),
         optionally mapped into ``altitude_range``.
     """
+    # There is deliberately no built-in campus here.  Callers either pass the
+    # account's real fence centre or a route whose first point is the centre;
+    # silently defaulting to 江门/厦门 wrote accepted records in the wrong city.
+    if center_lat is None or center_lng is None:
+        if waypoints:
+            center_lat = float(waypoints[0][0])
+            center_lng = float(waypoints[0][1])
+        else:
+            raise ValueError(
+                'center_lat/center_lng required: no built-in campus')
+    center_lat, center_lng = float(center_lat), float(center_lng)
+    if not (-90.0 <= center_lat <= 90.0 and -180.0 <= center_lng <= 180.0):
+        raise ValueError('center_lat/center_lng out of range')
+    if abs(center_lat) < 1e-6 and abs(center_lng) < 1e-6:
+        raise ValueError('center_lat/center_lng is the 0/0 sentinel')
     rng = rng or random
     if not (distance_km > 0):
         raise ValueError('distance_km must be > 0 (got %r)' % (distance_km,))
