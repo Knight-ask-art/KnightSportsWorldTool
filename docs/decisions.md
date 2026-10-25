@@ -143,3 +143,26 @@
 | NSIS 不装进系统 | 用官方免安装 zip，解压到 `app\build_tools\nsis`，用完删除 | 安装包只有 1.5MB，但没必要常驻；构建机保持干净 |
 
 细节见 `docs/packaging.md`（构建、路径、BOM 要求）和 `docs/update.md`（清单、双轨）。
+
+---
+
+## 9. 极验的可维护性（2026-10-26）
+
+极验不会「一劳永逸」。目标是**一年坏 1–2 次、每次两小时内恢复**，所以这轮改的不是
+算法，是「坏了能不能快速定位、用户能不能自己绕过去」。细节见 `docs/geetest.md`。
+
+| 决策 | 内容 | 原因 |
+|---|---|---|
+| 拆成 **图像 / 字段 / RSA / 编排** 四块 | `gt4_image.py`、`gt4_payload.py`、`gt4_rsa.py`、`gt4.py` | 上游改字段的频率远高于改图像；拆开后改字段不用重测 CV，改 CV 也碰不到 payload |
+| **黄金向量**逐字节回归 | `gt4_payload.GOLDEN_SHA256` 固定拆分前的明文哈希 | 拆分当场就抓出漏掉的 `YciC` 字段——这种错在线上表现为 10003，极难反推 |
+| **字段基线**校验 | `PAYLOAD_KEYS` + `validate_payload`，少/多/错序都抛 `PayloadError` | 宁可在本地炸，也不要发一张低信任票出去 |
+| 错误按 **A/B/C** 分层 | `GeeRejected` / `GeeSchemaChanged` / `GeeUnavailable` / `RiskControlError` | 当年把「票被 GeeTest 接受」当成「票被业务服务器接受」，49 轮里有 13 轮浪费在这上面 |
+| 失败**落盘**且脱敏 | `data/diagnostics/gt4/<时间戳>/`，含 `static_path`、`w` 明文、两张图 | 没有 ground truth 才需要 49 轮；有的话是一个 diff |
+| canary **不碰账号** | `python -m replica.transport.gt4 --canary` 只跑 `/load → /verify` | 能干净区分「解题器坏了」和「账号被风控了」 |
+| 重试收敛到 **2 个 id × 1 次** | `solve_gt4(attempts=1)`，`GeeRejected` 不重试 | 旧逻辑最多解 18 次；同一 IP 连续失败本身就触发风控 |
+| 手动兜底用**官方 JS** | 登录框里加载 `gt4.js`，凭证回传 `real_login_ticket` | 唯一不会随字段变更失效的路径；复用已有 WebView2，不引入 Playwright 或新 Chromium |
+| RSA 模数**可刷新** | 从 `static_path` 指向的 JS 现取并缓存，失败回退内置值 | 硬编码 37 个整数，轮换时只能靠人肉发现 |
+| 缩放 / 时序**去硬编码** | `userresponse` 按 `bg_width` 换算；`passtime` 按距离生成 | 图从 340 变 600（retina）时，旧公式会算错但不会报错 |
+
+**没做的**：没有引入 Playwright，没有把 unidbg 请回来。前者是 150MB 只为一条兜底路径，
+后者解决不了 `w` 字段问题——这两条在 `docs/geetest.md` §7 都有说明。

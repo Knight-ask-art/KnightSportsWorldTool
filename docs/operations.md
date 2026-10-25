@@ -15,6 +15,8 @@
 | `points_cache.json` | 打卡点缓存（300 秒，按目标距离分键） | 可以 |
 | `routes.json` | 路线库（手绘/导入/记录生成） | 可以 |
 | `updates/` | 自动更新下载的安装包（已校验 sha256，等待手动解压） | 可以 |
+| `diagnostics/gt4/<时间戳>/` | 极验失败现场：`attempt.json`、`bg.png`、`slice.png`；凭证已截断 | **不能**（含 `w` 明文） |
+| `cache/gt4/rsa-<版本>.json` | 从 GeeTest 官方 JS 取到的 RSA 模数缓存，按 `static_path` 分档 | 可以 |
 | `students.json` / `sport.json` / `account.json` | 旧 mock / 本地账号密码 | **不能** |
 | `app/fixtures/campus_fence_47203.json` | 这个校区围栏的样例（10 点） | 可以 |
 

@@ -42,6 +42,7 @@ python -m replica.selfcheck
 | [operations.md](operations.md) | 本地文件都在哪、每日上限/深夜闸门/回执怎么工作、报错怎么查 |
 | [packaging.md](packaging.md) | Nuitka 打包、NSIS 安装包、源码泄漏门禁、代码签名与加固边界 |
 | [update.md](update.md) | latest.json、安装版/便携版双轨更新、URL/哈希/回滚约定 |
+| [geetest.md](geetest.md) | 极验 v4 的模块划分、A/B/C 失效判定、canary、手动兜底、硬编码清单 |
 | [decisions.md](decisions.md) | 为什么这么设计、哪些结论有源码/实测出处、哪些**还没验证** |
 | [history.md](history.md) | 这一路踩过什么坑、旧文档为什么被封存、去哪找证据 |
 
@@ -57,7 +58,7 @@ python -m replica.selfcheck
 
 ```
 23/23 模块自测     PASS
-pytest（tests/）   277 passed
+pytest（tests/）   309 passed
 私有 corpus tests   3 passed
 legacy_bridge_suite  38 checks passed
 legacy_http_suite    23 checks passed

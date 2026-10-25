@@ -298,8 +298,11 @@ keyDataOne..Four -> fold32 x4 -> ror32 -> pAesKey
 响应: RSA 验签 fail-closed -> 两层 AES -> 业务 JSON
 ```
 
-`gt4.py` 是极验 v4：下载图、Canny+ZNCC 找缺口、PoW、拼 `w`。
-**`w` 明文里的动态键名由 lot_number 现场切**，缺一块就是 10003。
+极验 v4 拆成四块：`gt4_image.py`（图 → 缺口）、`gt4_payload.py`（缺口 → `w`，
+含 PoW 和字段基线）、`gt4_rsa.py`（`w` 尾部的 RSA，可从线上 JS 刷新）、`gt4.py`
+（编排 + 错误分类 + 落盘 + canary）。排障手册见 `docs/geetest.md`。
+
+**`w` 明文里的动态键名由 lot_number 现场切**，另有常量 `YciC`；缺任意一块就是 10003。
 
 已确认的线上事实：
 
