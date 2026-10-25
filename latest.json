@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "app": "haoxiangpao",
+  "name": "好想跑",
+  "channel": "stable",
+  "version": "0.1.2",
+  "min_version": "0.1.1",
+  "released_at": "2026-10-25T16:54:17+08:00",
+  "notes": [
+    "新增应用内检查更新：下载校验后自动解压并重启安装",
+    "新增海拔来源：自动 / 固定 / 区间 / 本机 GPX/JSON 模板",
+    "围栏校验升级为整段检查，提示越界点与越界路段",
+    "新增记录原始详情 JSON 调试命令与构建标识",
+    "新增首次启动新手引导；推荐手绘路线，自动功能仍在开发中",
+    "闭合路线默认关闭；导入轨迹不再自动首尾相连",
+    "记录详情 OBS 回读支持旧版 uuid key（v0.1.2 修复）",
+    "打包改用 Nuitka 编译，发布包不再包含核心 Python 源码",
+    "新增 latest.json 更新元数据（版本 / SHA-256 / 回滚）"
+  ],
+  "assets": {
+    "windows-x64": {
+      "file": "好想跑_v0.1.2_win64.zip",
+      "url": "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.2/%E5%A5%BD%E6%83%B3%E8%B7%91_v0.1.2_win64.zip",
+      "size": 79606511,
+      "sha256": "09bb95d05861436bd414ffd9f3dc6ca1fc1f8b08e7618c639c15ab5df6ee2af8",
+      "format": "zip",
+      "layout": "onedir",
+      "entry": "好想跑.exe",
+      "version": "0.1.2"
+    }
+  },
+  "generated_by": "packaging/make_latest.py"
+}
