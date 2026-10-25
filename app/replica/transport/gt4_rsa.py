@@ -1,19 +1,18 @@
-"""GeeTest v4 public modulus — built-in, refreshable, never fatal.
+"""GeeTest v4 public modulus — built in, with a disabled refresh hook.
 
-The ``w`` trailer is ``hex(RSA_PKCS1v15(str16))``.  Upstream keeps the modulus
-inside ``gcaptcha4.js``; we shipped it hard-coded, which means a rotation
-turns into "everything fails with no clue" until someone edits 37 integers.
+The ``w`` trailer is ``hex(RSA_PKCS1v15(str16))``.  The modulus is hard-coded:
+37 jsbn limbs, 1024 bits.
 
-This module keeps the hard-coded value as a **floor** and tries to refresh it
-from the JS bundle that ``/load`` points at (``static_path``).  The refresh is
-strictly best-effort:
+Measured on 2026-10-26 against the live ``v1.9.8-0d53fd`` build:
+``gcaptcha4.js`` is 728 KB and contains no ``RSA``, no 256-hex string and no
+28-bit limb array; ``gct4.*.js`` is a 3 KB loader with none either.  So
+fetching the bundle cannot refresh anything today, and doing it on every login
+just burns ~728 KB.  The refresh is therefore **off unless**
+``JHP_GT4_RSA=on``; it exists so that a future build which moves the key back
+into JS does not need a code change.
 
-* parse finds a candidate integer array, rebuilds the modulus;
-* candidate must be odd, >= 1024 bits, and exactly 1024/2048 bits;
-* anything unexpected -> keep the built-in modulus and say so in the log.
-
-So a wrong guess can never take down a working login; it can only fail to
-improve it.  ``JHP_GT4_RSA=off`` disables the network fetch entirely.
+When it does run, it is strictly best-effort: a wrong candidate can only fail
+to improve things, never break a working login.
 """
 
 from __future__ import annotations
@@ -181,6 +180,12 @@ def refresh(static_path: str, cache_dir: str, log=None,
             fetch=None) -> dict:
     """Try to load the modulus that ships with this GeeTest build.
 
+    **Off unless ``JHP_GT4_RSA=on``.**  Measured against the live bundle on
+    2026-10-26 (``v1.9.8-0d53fd``): ``gcaptcha4.js`` is 728 KB and contains no
+    ``RSA``, no 256-hex string and no 28-bit limb array; ``gct4.*.js`` is a
+    3 KB loader and has none either.  So the fetch can only waste bandwidth
+    until GeeTest moves the key back into JS.
+
     Returns ``{'source','bits','static_path','changed','error'}``.  Never
     raises: a failure just leaves the built-in modulus in place.
     """
@@ -190,9 +195,9 @@ def refresh(static_path: str, cache_dir: str, log=None,
     if not static_path:
         result['error'] = 'no static_path'
         return result
-    if str(os.environ.get('JHP_GT4_RSA', '')).strip().lower() in (
-            'off', '0', 'false', 'no'):
-        result['error'] = 'disabled'
+    mode = str(os.environ.get('JHP_GT4_RSA', '')).strip().lower()
+    if mode not in ('on', '1', 'true', 'yes'):
+        result['error'] = 'disabled (set JHP_GT4_RSA=on)'
         return result
 
     path = _cache_file(cache_dir, static_path)

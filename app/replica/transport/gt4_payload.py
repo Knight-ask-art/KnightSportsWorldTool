@@ -57,19 +57,48 @@ def str16() -> str:
     return ''.join(out)
 
 
+def _leading_zero_bits(digest: bytes) -> int:
+    total = 0
+    for byte in digest:
+        if byte == 0:
+            total += 8
+            continue
+        total += 8 - byte.bit_length()
+        break
+    return total
+
+
 def pow_msg(pow_detail: dict, captcha_id: str, lot_number: str) -> str:
-    """Find a 16-hex nonce so that sha256(msg) starts with ``00``."""
+    """Find a nonce that satisfies the PoW the *server* asked for.
+
+    The old code hard-coded sha256 and eight zero bits.  That happened to be
+    stricter than what GeeTest sends today (``bits: 0``, ``hashfunc: md5``),
+    so it kept working — but it ignored both stated parameters, and would fail
+    outright the day they ask for more than eight bits.
+
+    ``bits == 0`` means "no work required": return a random nonce immediately.
+    """
+    raw_bits = pow_detail.get('bits')
+    try:
+        bits = int(raw_bits)
+    except (TypeError, ValueError):
+        bits = 0
+    func = str(pow_detail.get('hashfunc') or 'sha256').strip().lower()
     base = '%s|%s|%s|%s|%s|%s||' % (
         pow_detail.get('version', ''),
-        pow_detail.get('bits'),
+        raw_bits,
         pow_detail.get('hashfunc', ''),
         pow_detail.get('datetime', ''),
         captcha_id,
         lot_number,
     )
+    if bits <= 0:
+        return base + ''.join(random.choice('0123456789abcdef')
+                              for _ in range(16))
+    hasher = hashlib.md5 if func == 'md5' else hashlib.sha256
     while True:
         nonce = ''.join(random.choice('0123456789abcdef') for _ in range(16))
-        if hashlib.sha256((base + nonce).encode()).hexdigest().startswith('00'):
+        if _leading_zero_bits(hasher((base + nonce).encode()).digest()) >= bits:
             return base + nonce
 
 

@@ -161,7 +161,7 @@
 | canary **不碰账号** | `python -m replica.transport.gt4 --canary` 只跑 `/load → /verify` | 能干净区分「解题器坏了」和「账号被风控了」 |
 | 重试收敛到 **2 个 id × 1 次** | `solve_gt4(attempts=1)`，`GeeRejected` 不重试 | 旧逻辑最多解 18 次；同一 IP 连续失败本身就触发风控 |
 | 手动兜底用**官方 JS** | 登录框里加载 `gt4.js`，凭证回传 `real_login_ticket` | 唯一不会随字段变更失效的路径；复用已有 WebView2，不引入 Playwright 或新 Chromium |
-| RSA 模数**可刷新** | 从 `static_path` 指向的 JS 现取并缓存，失败回退内置值 | 硬编码 37 个整数，轮换时只能靠人肉发现 |
+| RSA 模数**留了刷新钩子** | `gt4_rsa.refresh` 默认关闭，`JHP_GT4_RSA=on` 才去抓 | 实测线上 `gcaptcha4.js` 里没有公钥；默认开着只会每次登录白下 728KB |
 | 缩放 / 时序**去硬编码** | `userresponse` 按 `bg_width` 换算；`passtime` 按距离生成 | 图从 340 变 600（retina）时，旧公式会算错但不会报错 |
 
 **没做的**：没有引入 Playwright，没有把 unidbg 请回来。前者是 150MB 只为一条兜底路径，

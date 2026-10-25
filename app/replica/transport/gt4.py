@@ -4,7 +4,7 @@ The heavy lifting lives in two sibling modules, deliberately split:
 
     gt4_image.py    PNG -> gap x  (Canny + ZNCC)
     gt4_payload.py  gap -> `w`    (PoW, dynamic key, AES)
-    gt4_rsa.py      the RSA half of `w`, refreshable
+    gt4_rsa.py      the RSA half of `w` (hard-coded; refresh hook is off)
 
 Upstream changes the field set far more often than the image pipeline, so a
 field-only update must not require re-validating CV — and a CV change must not

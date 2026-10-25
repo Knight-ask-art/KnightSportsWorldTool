@@ -173,7 +173,8 @@ def test_probe_reports_the_same_solve_without_geevalidate(monkeypatch):
     assert len([u for u in fake.urls if '/verify?' in u]) == 1
 
 
-def test_refresh_switches_to_a_2048_bit_key(tmp_path):
+def test_refresh_switches_to_a_2048_bit_key(monkeypatch, tmp_path):
+    monkeypatch.setenv('JHP_GT4_RSA', 'on')
     n = (1 << 2047) + 1
     limbs = gt4_rsa.int_to_limbs(n)
     js = 'var noise=[1,2,3];var key=[%s];' % ','.join(str(x) for x in limbs)

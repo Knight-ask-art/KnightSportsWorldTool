@@ -70,7 +70,7 @@ CV 变的时候也不可能悄悄改到 payload。
 |---|---|---|
 | `JHP_GT4_DUMP` | `fail` | `off` / `fail` / `always`，控制落盘时机 |
 | `JHP_GT4_DUMP_DIR` | `<data>/diagnostics/gt4` | 落盘位置 |
-| `JHP_GT4_RSA` | 开启 | 设 `off` 可禁止从线上 JS 取模数 |
+| `JHP_GT4_RSA` | 关闭 | 线上 JS 里**没有**模数；设 `on` 才会去抓，纯属给未来留的钩子 |
 
 ### 失败时落什么
 
@@ -150,9 +150,10 @@ python -m replica.transport.gt4 --canary
 
 | 常量 | 位置 | 失效症状 | 现状 |
 |---|---|---|---|
-| `_RSA_LIMBS` | `gt4_rsa.py` | `/verify` 直接 `fail` | 启动时尝试从 `static_path` 指向的 `gcaptcha4.js` 现取并缓存；失败回退内置值 |
+| `_RSA_LIMBS` | `gt4_rsa.py` | `/verify` 直接 `fail` | 硬编码 1024 位。2026-10-26 实测 `v1.9.8-0d53fd` 的 `gcaptcha4.js`（728KB）里没有 `RSA`、没有 256 位十六进制串，`gct4.*.js` 只有 3KB 加载器 —— 所以自动刷新默认关闭，真要轮换只能手工替换 |
 | `1.0059466666666665` | `gt4_payload.py` | 缺口找对了但 `userresponse` 错 | 图宽落在 280–420px 区间时保持原式；超出这个区间（retina / 改过控件尺寸）才按 `bg_width` 换算 |
 | `passtime: 1887` | `gt4_payload.py` | 长期固定值可能被判脚本 | 按滑动距离生成 0.9–3.4s 的合理值 |
+| PoW 固定 `sha256` + 8 位 | `gt4_payload.py` | 服务端提高难度或换算法时直接失败 | 已改为按 `pow_detail` 的 `bits` / `hashfunc` 算；实测线上是 `bits=0 / md5` |
 | `YciC` / `gee_guard` / `em` | `gt4_payload.py` | 低信任票 → 10003 | 字段基线校验，改动会抛 `PayloadError` |
 | `CAPTCHA_ID_CANDIDATES` | `gt4.py` | `/load` 直接报错 | 两个 id 依次尝试 |
 
@@ -178,8 +179,8 @@ geevalidate 只给 1 次机会：10003 直接转手动，不再自动重解
 - **手动兜底没有在真实网络下跑过。** `captcha_id` 可能绑定了域名，`http://127.0.0.1`
   这个 origin 是否被 GeeTest 接受，要等第一次真机验证。如果不接受，错误会显示在
   模态窗口里，不影响自动解题路径。
-- **RSA 自动刷新只用合成样本测过解析器。** 真实 `gcaptcha4.js` 的数组排布可能不同；
-  解析失败会回退内置模数并在日志里说明，不会导致登录失败。
+- **RSA 自动刷新默认关闭**：实测线上 `gcaptcha4.js` 里没有公钥，抓了也是白抓。代码留了 `JHP_GT4_RSA=on` 的钩子，等 GeeTest 哪天把密钥搬回 JS 再打开。
+- **`pow_detail` 参数会变**：2026-10-26 线上是 `bits=0 / hashfunc=md5`。现在按服务器说的算，0 位就直接返回，不再硬套 sha256 + 8 位。
 - 没有代码签名；安装包和 zip 只有 SHA-256。
 - 只做滑块（`risk_type=slide`）。GeeTest 若切到点选/无感，`/load` 字段会变，
   `GeeSchemaChanged` 会立刻报出来。

@@ -8,7 +8,7 @@ said no.
 
 import json
 import os
-import tempfile
+import hashlib
 
 import cv2
 import numpy as np
@@ -117,6 +117,30 @@ def test_passtime_varies_and_stays_plausible():
     assert all(900 <= v <= 3400 for v in values)
 
 
+def test_pow_does_no_work_when_the_server_asks_for_zero_bits():
+    # This is what the live server sends today: bits=0, hashfunc=md5.
+    detail = {'version': '1', 'bits': 0, 'hashfunc': 'md5',
+              'datetime': '2026-10-26 00:00:00.000000+08:00'}
+    msg = gt4_payload.pow_msg(detail, 'cid', 'lot')
+    assert msg.startswith('1|0|md5|2026-10-26')
+    assert len(msg.rsplit('|', 1)[-1]) == 16
+
+
+def test_pow_honours_the_stated_hash_and_bit_count():
+    detail = {'version': '1', 'bits': 12, 'hashfunc': 'md5', 'datetime': 'x'}
+    msg = gt4_payload.pow_msg(detail, 'cid', 'lot')
+    digest = hashlib.md5(msg.encode()).digest()
+    assert gt4_payload._leading_zero_bits(digest) >= 12
+
+
+def test_pow_uses_sha256_when_asked():
+    detail = {'version': '1', 'bits': 10, 'hashfunc': 'sha256',
+              'datetime': 'x'}
+    msg = gt4_payload.pow_msg(detail, 'cid', 'lot')
+    digest = hashlib.sha256(msg.encode()).digest()
+    assert gt4_payload._leading_zero_bits(digest) >= 10
+
+
 # --------------------------------------------------------------------------
 # RSA
 # --------------------------------------------------------------------------
@@ -136,17 +160,34 @@ def test_rsa_rejects_a_bogus_candidate():
     assert gt4_rsa.active_source() == 'builtin'
 
 
-def test_rsa_refresh_is_never_fatal():
+def test_rsa_refresh_is_off_by_default(monkeypatch, tmp_path):
+    monkeypatch.delenv('JHP_GT4_RSA', raising=False)
+    calls = []
+
+    def fetch(path):
+        calls.append(path)
+        return 'var key=[];'
+
+    report = gt4_rsa.refresh('/v4/static/vX', str(tmp_path), fetch=fetch)
+    assert report['source'] == 'builtin'
+    assert 'disabled' in report['error']
+    # No network at all unless someone opts in: the live bundle has no key.
+    assert calls == []
+
+
+def test_rsa_refresh_is_never_fatal(monkeypatch, tmp_path):
+    monkeypatch.setenv('JHP_GT4_RSA', 'on')
+
     def boom(_):
         raise OSError('offline')
 
-    report = gt4_rsa.refresh('/v4/static/vX', tempfile.gettempdir(),
-                             fetch=boom)
+    report = gt4_rsa.refresh('/v4/static/vX', str(tmp_path), fetch=boom)
     assert report['source'] == 'builtin'
     assert report['error']
 
 
-def test_rsa_refresh_caches_by_static_path(tmp_path):
+def test_rsa_refresh_caches_by_static_path(monkeypatch, tmp_path):
+    monkeypatch.setenv('JHP_GT4_RSA', 'on')
     js = 'var key=[%s];' % ','.join(str(x) for x in gt4_rsa.BUILTIN_LIMBS)
     calls = []
 
