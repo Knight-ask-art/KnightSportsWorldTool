@@ -30,6 +30,7 @@ DEFAULT_ENTRY = '好想跑.exe'
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
     '0.1.2': [
+        '新增应用内检查更新：下载校验后自动解压并重启安装',
         '新增海拔来源：自动 / 固定 / 区间 / 本机 GPX/JSON 模板',
         '围栏校验升级为整段检查，提示越界点与越界路段',
         '新增记录原始详情 JSON 调试命令与构建标识',

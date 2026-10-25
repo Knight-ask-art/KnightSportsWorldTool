@@ -292,6 +292,11 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_profile` | — | 合并 `user/info` 资料与学期进度；`user/info` 失败时回落本地会话并返回 `errors` |
 | `real_violations` | `page`、`page_size` | **只读** `v78/cheat/cheatlist`；返回 `state`（`none_found`/`violations`/`unknown`/`failed`）、`records`、`stale` |
 | `real_fetch_school_rules` | `run_mode` | 只读 `runModePolicy.runRuleModel`，映射成设置页规则；不猜未返回字段 |
+| `real_check_update` | — | 读取 `latest.json`（GitHub raw，失败回退 jsDelivr）；返回 `state`（`available`/`current`/`ahead`/`failed`）、`latest`、`notes`、`url`、`sha256`、`size` |
+| `real_download_update` | `url`、`sha256`、`size`、`file` | 下载到 `data/updates/`，校验大小与 sha256 |
+| `real_apply_update` | `file`（可选） | 解压到 `staging/`，由分离的 PowerShell 脚本在本进程退出后覆盖安装目录（跳过 `data/`）并重启 |
+| `real_quit_app` | — | 约 1.2 秒后退出，让更新脚本接管 |
+| `real_open_updates` | — | 打开 `data/updates/` 目录（自动更新失败时排查用） |
 
 > `real_preview_model` / `real_submit_run` 的 `param_warnings` 是产品级黄色提醒：
 > 配速 <4.5 或 >8.5 min/km、步频 <150 或 >180 spm 时各一条，**不阻止提交**。

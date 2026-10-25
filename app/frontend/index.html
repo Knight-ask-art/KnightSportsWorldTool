@@ -131,7 +131,14 @@
           <div class="user-meta" id="sideMeta">等待会话</div>
         </div>
       </div>
-      <div class="side-meta" id="sideVersion">v0.1.2</div>
+      <div class="side-meta-row">
+        <div class="side-meta" id="sideVersion">v0.1.2</div>
+        <button class="update-btn" id="updateBtn" type="button" hidden
+                title="发现新版本" aria-label="发现新版本">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v10.5"/><path d="M7.8 9.8 12 14l4.2-4.2"/><path d="M4.5 18.5h15"/></svg>
+          <i class="update-dot" aria-hidden="true"></i>
+        </button>
+      </div>
     </div>
   </aside>
 
@@ -979,7 +986,9 @@
           <div class="sec-head"><h2>关于</h2></div>
           <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.2</span></div>
           <div class="detail-row"><span>构建</span><span id="aboutBuild">—</span></div>
+          <div class="detail-row"><span>更新</span><span id="updateState">未检查</span></div>
           <div class="form-actions" style="margin-top:8px">
+            <button class="btn small ghost" id="updateCheckBtn">检查更新</button>
             <button class="btn small ghost" id="diagCopy">复制诊断包</button>
             <button class="btn small ghost" id="onboardOpen">新手引导</button>
             <span class="hint" id="diagHint" style="margin:0">不含 token / 密码 / uid / 坐标 / IP。</span>
@@ -1003,6 +1012,29 @@
   </div>
   <div class="date-grid" id="dateGrid" role="grid"></div>
   <div class="date-pop-foot" id="dateFoot"></div>
+</div>
+
+<div class="onboard" id="updateDlg" role="dialog" aria-modal="true" aria-labelledby="updateTitle" hidden>
+  <div class="onboard-veil" id="updateVeil"></div>
+  <section class="onboard-card">
+    <header class="onboard-head">
+      <span class="tag ok" id="updateKicker">自动更新</span>
+      <button type="button" class="onboard-x" id="updateClose" aria-label="关闭更新窗口">×</button>
+    </header>
+    <div class="onboard-body">
+      <h2 id="updateTitle">发现新版本</h2>
+      <p id="updateSummary"></p>
+      <ul id="updateNotes"></ul>
+      <div class="onboard-tip" id="updateTip" hidden></div>
+    </div>
+    <footer class="onboard-foot">
+      <span class="mini" id="updateHint"></span>
+      <div class="onboard-actions">
+        <button type="button" class="btn small ghost" id="updateLater">稍后</button>
+        <button type="button" class="btn small primary" id="updateGo">下载</button>
+      </div>
+    </footer>
+  </section>
 </div>
 
 <div class="onboard" id="onboard" role="dialog" aria-modal="true" aria-labelledby="onboardTitle" hidden>

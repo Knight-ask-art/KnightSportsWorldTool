@@ -4576,6 +4576,218 @@ async function loadAppVersion(){
   }
 }
 
+/* ---------------- auto update ---------------- */
+const UPDATE = {data: null, busy: false, downloading: false, applying: false,
+                autoNotified: false, package: '', packageVersion: ''};
+
+function bytesLabel(n){
+  n = +n || 0;
+  if(n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if(n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+function updateLabel(d){
+  d = d || UPDATE.data || {};
+  if(!d.state) return '未检查';
+  if(d.state === 'available') return '发现 v' + (d.latest || '新版本');
+  if(d.state === 'current') return '已是最新 v' + (d.current || '');
+  if(d.state === 'ahead') return '本地版本更新';
+  return '检查失败';
+}
+
+function renderUpdate(){
+  const d = UPDATE.data || {};
+  const avail = d.state === 'available';
+  const btn = $('#updateBtn');
+  if(btn){
+    btn.hidden = !avail;
+    btn.disabled = UPDATE.busy || UPDATE.downloading || UPDATE.applying;
+    btn.classList.toggle('busy', UPDATE.busy || UPDATE.downloading ||
+      UPDATE.applying);
+    if(avail){
+      const tip = '发现新版本 v' + (d.latest || '') + '，点击查看';
+      btn.title = tip;
+      btn.setAttribute('aria-label', tip);
+    }
+  }
+  const st = $('#updateState');
+  if(st){
+    st.textContent = updateLabel(d);
+    st.title = d.message || '';
+    st.style.color = (d.state === 'failed' || d.state === 'ahead')
+      ? 'var(--stamp)' : '';
+  }
+  const chk = $('#updateCheckBtn');
+  if(chk){
+    chk.disabled = UPDATE.busy;
+    chk.textContent = UPDATE.busy ? '检查中…' : '检查更新';
+  }
+}
+
+async function checkUpdate(opts){
+  if(UPDATE.busy) return;
+  UPDATE.busy = true;
+  renderUpdate();
+  try{
+    const j = await liveApi('real_check_update', {}, 45000);
+    UPDATE.data = liveOk(j)
+      ? (j.data || {state: 'failed', message: j.message || ''})
+      : {state: 'failed', message: (j && j.message) || '本地服务不可用'};
+  }finally{
+    UPDATE.busy = false;
+    renderUpdate();
+  }
+  const d = UPDATE.data || {};
+  const silent = !!(opts && opts.silent);
+  if(d.state === 'available'){
+    const line = '发现新版本 v' + d.latest;
+    if(silent){
+      if(!UPDATE.autoNotified){
+        UPDATE.autoNotified = true;
+        toast(line + '，点左下角下载图标');
+        liveLog(line, (d.notes || []).slice(0, 3).join('；'), 'ok');
+      }
+    }else{
+      toast(line);
+      openUpdateDialog();
+    }
+  }else if(!silent){
+    toast(d.state === 'current'
+      ? '已是最新版本'
+      : (d.message || '检查更新失败'));
+  }
+}
+
+function openUpdateDialog(){
+  const d = UPDATE.data;
+  if(!d || d.state !== 'available'){
+    checkUpdate({silent: false});
+    return;
+  }
+  $('#updateTitle').textContent = '发现新版本 v' + (d.latest || '');
+  const size = d.size ? (' · ' + bytesLabel(d.size)) : '';
+  $('#updateSummary').textContent = '当前 v' + (d.current || '?')
+    + ' → 最新 v' + (d.latest || '?') + size;
+  const ul = $('#updateNotes');
+  ul.innerHTML = '';
+  const notes = (d.notes || []).slice(0, 12);
+  if(notes.length){
+    notes.forEach(n => {
+      const li = document.createElement('li');
+      li.textContent = n;
+      ul.appendChild(li);
+    });
+  }else{
+    const li = document.createElement('li');
+    li.textContent = '这个版本没有写更新说明。';
+    ul.appendChild(li);
+  }
+  const go = $('#updateGo');
+  const downloaded = !!UPDATE.package &&
+    UPDATE.packageVersion === (d.latest || '');
+  go.textContent = downloaded ? '立即更新' : '下载';
+  go.dataset.done = downloaded ? '1' : '';
+  go.disabled = false;
+  $('#updateHint').textContent = downloaded
+    ? ('已下载并校验：' + UPDATE.package) : '';
+  const tip = $('#updateTip');
+  tip.hidden = !downloaded;
+  tip.textContent = downloaded
+    ? '更新会自动解压并重启程序；data 文件夹保留。' : '';
+  $('#updateDlg').hidden = false;
+  go.focus();
+}
+
+function closeUpdateDialog(){
+  const dlg = $('#updateDlg');
+  if(dlg) dlg.hidden = true;
+}
+
+async function downloadUpdate(){
+  const d = UPDATE.data || {};
+  const go = $('#updateGo');
+  if(!go) return;
+  if(go.dataset.done === '1') return applyUpdate();
+  if(!d.url){ toast('清单里没有下载地址'); return; }
+  if(UPDATE.downloading) return;
+  UPDATE.downloading = true;
+  go.disabled = true;
+  go.textContent = '下载中…';
+  $('#updateHint').textContent = '正在下载并校验，请保持窗口打开';
+  try{
+    const j = await liveApi('real_download_update', {
+      url: d.url,
+      sha256: d.sha256 || '',
+      size: d.size || 0,
+      file: d.file || ''
+    }, 600000);
+    if(!liveOk(j)){
+      go.textContent = '重试下载';
+      $('#updateHint').textContent = (j && j.message) || '下载失败';
+      toast('更新包下载失败');
+      return;
+    }
+    const info = j.data || {};
+    UPDATE.package = info.file || '';
+    UPDATE.packageVersion = d.latest || '';
+    go.textContent = '立即更新';
+    go.dataset.done = '1';
+    $('#updateHint').textContent = '已下载并校验：' + (info.file || '');
+    const tip = $('#updateTip');
+    tip.hidden = false;
+    tip.textContent = '更新会自动解压并重启程序；data 文件夹保留。';
+    toast('更新包已下载');
+    liveLog('更新包已下载', (info.file || '') + ' · sha256 已校验', 'ok');
+  }finally{
+    UPDATE.downloading = false;
+    go.disabled = false;
+    if(go.dataset.done !== '1' && go.textContent === '下载中…'){
+      go.textContent = '下载';
+    }
+  }
+}
+
+async function applyUpdate(){
+  if(UPDATE.applying) return;
+  if(!UPDATE.package){ toast('先下载更新包'); return; }
+  if(UPDATE.packageVersion !== ((UPDATE.data || {}).latest || '')){
+    UPDATE.package = '';
+    UPDATE.packageVersion = '';
+    toast('版本已经变了，请重新下载');
+    renderUpdate();
+    openUpdateDialog();
+    return;
+  }
+  if(LIVE.submitting){ toast('提交进行中，等结果出来后再更新'); return; }
+  if(!confirm('更新会关闭程序并自动重启，确定现在更新？')) return;
+  UPDATE.applying = true;
+  const go = $('#updateGo');
+  go.disabled = true;
+  go.textContent = '正在更新…';
+  $('#updateHint').textContent = '正在解压并准备重启，请不要关闭窗口';
+  try{
+    const j = await liveApi('real_apply_update', {file: UPDATE.package}, 180000);
+    if(!liveOk(j)){
+      go.disabled = false;
+      go.textContent = '重试更新';
+      $('#updateHint').textContent = (j && j.message) || '自动更新失败';
+      toast('自动更新失败');
+      return;
+    }
+    $('#updateHint').textContent = '程序即将重启…';
+    toast('正在重启，稍等一下');
+    liveLog('自动更新已准备', (j.data && j.data.install) || '', 'ok');
+    await liveApi('real_quit_app', {}, 8000);
+  }finally{
+    UPDATE.applying = false;
+    if(go.textContent === '正在更新…'){
+      go.disabled = false;
+      go.textContent = '立即更新';
+    }
+  }
+}
+
 function liveWire(){
   // Closing the window mid-submit can turn a known result into an unknown one.
   window.addEventListener('beforeunload', e => {
@@ -4722,6 +4934,27 @@ function liveWire(){
     });
     maybeShowOnboard();
   }
+  const updateBtn = $('#updateBtn');
+  if(updateBtn){
+    updateBtn.addEventListener('click', () => {
+      if(UPDATE.data && UPDATE.data.state === 'available') openUpdateDialog();
+      else checkUpdate({silent: false});
+    });
+  }
+  ['#updateClose', '#updateLater'].forEach(sel => {
+    const el = $(sel);
+    if(el) el.addEventListener('click', closeUpdateDialog);
+  });
+  if($('#updateVeil')) $('#updateVeil').addEventListener('click', closeUpdateDialog);
+  if($('#updateGo')) $('#updateGo').addEventListener('click', downloadUpdate);
+  if($('#updateCheckBtn')){
+    $('#updateCheckBtn').addEventListener('click', () => checkUpdate({silent: false}));
+  }
+  document.addEventListener('keydown', ev => {
+    const dlg = $('#updateDlg');
+    if(!dlg || dlg.hidden) return;
+    if(ev.key === 'Escape'){ ev.preventDefault(); closeUpdateDialog(); }
+  });
   $('#ovPlanGrid').addEventListener('click', ev => {
     const btn = ev.target.closest('[data-plan-day]');
     if(!btn || btn.disabled) return;
@@ -4879,6 +5112,7 @@ function liveWire(){
 initRunDate();
 liveWire();
 loadAppVersion();
+setTimeout(() => checkUpdate({silent: true}), 1500);
 updateRunDateLabel();
 renderLog();
 loadRoutes();

@@ -70,6 +70,20 @@ def test_obs_track_fallback_is_wired():
     assert '这条记录的轨迹在 OBS' in SOURCE
 
 
+def test_update_icon_is_quiet_until_the_manifest_has_a_newer_build():
+    assert 'id="updateBtn"' in HTML
+    assert 'id="updateDlg"' in HTML
+    assert 'id="updateCheckBtn"' in HTML
+    assert "liveApi('real_check_update'" in SOURCE
+    assert "liveApi('real_download_update'" in SOURCE
+    assert "liveApi('real_apply_update'" in SOURCE
+    assert "liveApi('real_quit_app'" in SOURCE
+    assert 'btn.hidden = !avail' in SOURCE
+    # The package is verified locally and then swapped after the app exits.
+    assert 'sha256 已校验' in SOURCE
+    assert '更新会自动解压并重启程序' in SOURCE
+
+
 def test_partial_school_rules_and_issue_records_are_visible():
     assert '留空 = 学校没有这项要求' in SOURCE
     assert 'data-rec-filter="issue"' in SOURCE

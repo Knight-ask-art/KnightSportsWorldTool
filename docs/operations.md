@@ -14,6 +14,7 @@
 | `submission_receipts/<uid>__<unid>.json` | 提交回执（状态、rrid、时间窗） | 可以（不含 token/坐标） |
 | `points_cache.json` | 打卡点缓存（300 秒，按目标距离分键） | 可以 |
 | `routes.json` | 路线库（手绘/导入/记录生成） | 可以 |
+| `updates/` | 自动更新下载的安装包（已校验 sha256，等待手动解压） | 可以 |
 | `students.json` / `sport.json` / `account.json` | 旧 mock / 本地账号密码 | **不能** |
 | `app/fixtures/campus_fence_47203.json` | 这个校区围栏的样例（10 点） | 可以 |
 

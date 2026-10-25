@@ -24,8 +24,8 @@ import requests
 
 from ..application import credentials as CRED
 from ..application import device_profile as DP
-from ..build_info import (VERSION as APP_VERSION, build_info,
-                          version_string)
+from ..build_info import VERSION as APP_VERSION  # noqa: F401 - re-exported
+from ..build_info import build_info, version_string
 from ..domain import crypto as C
 from ..domain.rundata import generate_run_data, new_run_uuid
 from ..transport.realclient import as_dict
@@ -2171,6 +2171,57 @@ class ReplicaApi:
         info = build_info()
         info['label'] = version_string()
         return _ok(info)
+
+    # -- auto update ------------------------------------------------------
+    def real_check_update(self):
+        """Read the release manifest; the four states live in ``data.state``.
+
+        A failed network check is not a bridge error: the UI stays quiet and
+        the manual "检查更新" button can show the reason.
+        """
+        from ..application import updater
+        return _ok(updater.check())
+
+    def real_download_update(self, url: str = '', sha256: str = '',
+                             size: int = 0, file: str = ''):
+        """Fetch the package into ``data/updates`` and verify it (no install)."""
+        from ..application import updater
+        try:
+            info = updater.download(
+                url, os.path.join(self.store_dir, 'updates'),
+                sha256=sha256, size=size, file=file)
+            return _ok(info)
+        except Exception as e:  # noqa: BLE001 - show the reason in the UI
+            return _fail('下载失败: %s' % e)
+
+    def real_open_updates(self):
+        """Open ``data/updates`` (manual fallback when auto-apply fails)."""
+        path = os.path.join(self.store_dir, 'updates')
+        try:
+            os.makedirs(path, exist_ok=True)
+            if hasattr(os, 'startfile'):
+                os.startfile(path)  # noqa: S606 - Windows desktop app
+        except OSError as e:
+            return _fail('无法打开更新目录: %s' % e)
+        return _ok({'path': path})
+
+    def real_apply_update(self, file: str = ''):
+        """Stage the downloaded zip and swap files after this process exits."""
+        from ..application import updater
+        try:
+            package = updater.locate_package(self.store_dir, file)
+            return _ok(updater.apply(package, self.store_dir))
+        except Exception as e:  # noqa: BLE001 - the dialog shows the reason
+            return _fail('自动更新失败: %s' % e)
+
+    def real_quit_app(self):
+        """Exit so the detached updater can replace the exe and restart it."""
+        def _exit_later():
+            time.sleep(1.2)
+            os._exit(0)
+
+        threading.Thread(target=_exit_later, daemon=True).start()
+        return _ok({'closing': True})
 
     def real_altitude_template(self, text=None):
         """Parse a local GPX/JSON elevation profile for the parameter panel.
