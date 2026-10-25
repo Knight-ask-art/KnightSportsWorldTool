@@ -64,10 +64,65 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Backend pyinstalle
 
 ```text
 dist/好想跑_v<version>/好想跑.exe
-dist/好想跑_v<version>_win64.zip
-dist/好想跑_v<version>_win64.sha256
+dist/haoxiangpao_v<version>_win64.zip
+dist/haoxiangpao_v<version>_win64.sha256
+dist/haoxiangpao_v<version>_win64_setup.exe
+dist/haoxiangpao_v<version>_win64_setup.sha256
 dist/latest.json
 ```
+
+## 安装包：NSIS（v0.1.3 起为发布标准）
+
+**以后所有正式发布都出 NSIS 安装包。** zip 继续保留，但只作为兼容资产，不是主推形态。
+
+选它的理由：
+
+- 安装 / 卸载 / 开始菜单 / 卸载项一次到位，用户不用先想「解压到哪」。
+- 升级时能真正删掉旧文件。zip 更新只是覆盖，Nuitka 换模块布局后旧 `.pyd` 会一直留着。
+- LZMA 固实压缩，安装包比 zip 小。
+
+### 三条不能破的约束
+
+1. **按用户安装**：`%LOCALAPPDATA%\Programs\好想跑`，`RequestExecutionLevel user`。
+   程序把 `data/` 写在 exe 旁边，装进 `Program Files` 会写不进去，登录状态都保存不了。
+2. **升级只删程序文件，`data/` 永远不动**。`installer.nsi` 用 `FindFirst` 逐项删除并跳过
+   `data`；卸载默认保留，静默卸载也保留。
+3. **静默安装 `/S` 必须可用**。应用内更新就是靠它：下载 → 校验 → 等进程退出 → `/S` 安装 → 重启。
+
+### 构建（不需要安装 NSIS）
+
+NSIS 官方提供免安装 zip，用完删掉即可：
+
+```powershell
+# 1) https://nsis.sourceforge.io/Download 下载 nsis-3.13.zip
+# 2) 解压到 app\build_tools\nsis（或任意目录）
+# 3) 正常打包
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+
+# 也可以显式指定
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Makensis D:\tools\nsis\makensis.exe
+```
+
+`build.ps1` 依次在这些位置找 `makensis.exe`：
+
+- `app\build_tools\nsis\makensis.exe`（推荐，随时可删）
+- `%ProgramFiles(x86)%\NSIS\makensis.exe`
+- `%ProgramFiles%\NSIS\makensis.exe`
+- `%LOCALAPPDATA%\Programs\NSIS\makensis.exe`
+
+找不到会**直接构建失败**，不会静默产出一个没有安装包的版本。`-NoInstaller` 只用于本地粗测。
+
+### installer.nsi 的两个硬要求
+
+- **文件必须是 UTF-8 with BOM**。NSIS 只有看到 BOM 才按 UTF-8 解析脚本，否则「好想跑」
+  会被当成 ANSI，装出来的路径全是乱码。改完确认文件头是 `EF BB BF`。
+- `OutFile` 由 `build.ps1` 先指到 `%TEMP%`，编译完再移回 `dist`。`/D` 只传 ASCII 值，
+  避免中文路径在命令行上被转码。
+
+### 资产命名
+
+`haoxiangpao_v<version>_win64_setup.exe`、`haoxiangpao_v<version>_win64.zip`，全 ASCII。
+GitHub 会把中文资产名重写成 `_v0.1.2_win64.zip` 这种形式，清单里的 URL 就对不上了。
 
 ## 数据目录
 
@@ -75,22 +130,28 @@ dist/latest.json
 - 同版本重建：先把目标目录的 `data/` 移到备份，替换程序后再放回。
 - 新版本：从最新的 `dist/好想跑_v*/data` 迁移，先备份再复制。
 - `data/` 里有 token、回执、限额、设备指纹；更新器不得覆盖。
+- 安装版升级：`installer.nsi` 逐项删除程序文件、跳过 `data`；卸载默认保留，静默卸载也保留。
 
 ## 构建后验证
 
 ```powershell
 # 1) 冻结导入检查（退出码 0）
-dist\好想跑_v0.1.2\好想跑.exe --check
+dist\好想跑_v0.1.3\好想跑.exe --check
 
 # 2) 无窗口 HTTP 冒烟：登录页应包含 id="loginGate"
-dist\好想跑_v0.1.2\好想跑.exe --no-window --port 8765
+dist\好想跑_v0.1.3\好想跑.exe --no-window --port 8765
 
 # 3) 源码泄漏
-Get-ChildItem dist\好想跑_v0.1.2 -Recurse -Include *.py,*.pyc |
+Get-ChildItem dist\好想跑_v0.1.3 -Recurse -Include *.py,*.pyc |
   Where-Object { $_.FullName -match '\\replica\\' -or $_.Name -eq 'app.py' }
 
 # 4) 哈希
-Get-FileHash dist\好想跑_v0.1.2_win64.zip -Algorithm SHA256
+Get-FileHash dist\haoxiangpao_v0.1.3_win64.zip -Algorithm SHA256
+Get-FileHash dist\haoxiangpao_v0.1.3_win64_setup.exe -Algorithm SHA256
+
+# 5) 安装包冒烟：静默装一遍，确认 data 不被清空
+dist\haoxiangpao_v0.1.3_win64_setup.exe /S
+# 再装一次模拟升级，检查 %LOCALAPPDATA%\Programs\好想跑\data 还在
 ```
 
 ## 进一步加固（按性价比排序）

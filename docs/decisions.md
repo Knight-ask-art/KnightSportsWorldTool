@@ -124,3 +124,22 @@
 | 公共包导入名 | `replica` 为唯一 canonical 名称；`app.replica` 只是仓库根目录下的命名空间路径 | 避免同一进程加载两份模块与全局状态 |
 | 旧 71 API / mock | 隔离到 `compat`，默认不暴露、不删除 | 可能仍被旧脚本使用，先冻结再评估 |
 | 恢复点 | 仓库根 `好想跑/` 初始化 Git；`data/`、`backup/`、`dist/`、`private/data/`、`archive/`、`reverse-engineering/` 全部忽略 | 保证可回滚，同时不把凭据和运行数据入库 |
+
+---
+
+## 8. 发布形态（2026-10-26）
+
+**正式发布统一使用 NSIS 安装包。** 下面几条是约束，不是建议。
+
+| 决策 | 内容 | 原因 |
+|---|---|---|
+| 正式发布出 **NSIS 安装包** | `packaging/installer.nsi` 产 `haoxiangpao_v<version>_win64_setup.exe`；zip 保留为兼容资产 | 安装/卸载/开始菜单/卸载项一次到位；升级能真正删掉旧文件（zip 只是覆盖，旧 `.pyd` 会一直留着）；LZMA 比 zip 小 |
+| **按用户安装**到 `%LOCALAPPDATA%\Programs\好想跑` | `RequestExecutionLevel user`，不请求管理员 | 程序把 `data/` 写在 exe 旁边，装进 `Program Files` 写不进去，登录状态保存会失败 |
+| 升级 / 卸载**永不碰 `data/`** | `installer.nsi` 逐项删除并跳过 `data`；卸载默认保留，静默卸载也保留 | 里面有 token、提交回执、设备指纹；误删等于丢登录态和防重复提交的闸门 |
+| 清单同时保留 zip 与安装包 | `windows-x64`（zip）+ `windows-x64-setup`（exe） | 0.1.2 客户端只认 `windows-x64` 且只支持 zip；直接换成 exe 会让那一批人更新报「不是有效 zip」 |
+| 安装版走安装包、便携版走 zip | 更新器用 `Software\好想跑` 注册表判断形态 | 两条轨道各自原地升级，谁都不用迁移数据目录 |
+| 资产名全 ASCII | `haoxiangpao_v0.1.3_win64_setup.exe` | GitHub 会把中文资产名重写成 `_v...`，清单里的 URL 会 404 |
+| 安装包必须带 `sha256` | 清单缺哈希时更新器直接拒绝执行 | 下载完就要运行它，没有哈希等于闭眼执行 |
+| NSIS 不装进系统 | 用官方免安装 zip，解压到 `app\build_tools\nsis`，用完删除 | 安装包只有 1.5MB，但没必要常驻；构建机保持干净 |
+
+细节见 `docs/packaging.md`（构建、路径、BOM 要求）和 `docs/update.md`（清单、双轨）。
