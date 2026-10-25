@@ -14,8 +14,10 @@ class FakeClient:
     def __init__(self, replies):
         self.replies = list(replies)
         self.calls = []
+        self.acct = None
 
     def request(self, acct, path, body, **kw):
+        self.acct = acct
         self.calls.append((path, body, kw))
         if not self.replies:
             raise AssertionError('unexpected request to %s' % path)
@@ -55,6 +57,8 @@ def test_no_captcha_skips_the_solver(monkeypatch):
     sess = LF.login('13800000000', 'pw', solver=solver, log=lambda *_: None)
     assert sess['token'] == 'tok'
     assert solver.calls == []
+    assert client.acct.name == '13800000000'
+    assert client.acct.uid == '-1'
     assert [c[0] for c in client.calls] == [LF.GEE_CHECK, LF.LOGIN]
 
 

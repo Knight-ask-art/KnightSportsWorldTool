@@ -161,7 +161,7 @@ def write_dump(trace: dict, policy: str | None = None) -> str:
             if isinstance(blob, bytes) and blob:
                 with open(os.path.join(base, name + '.png'), 'wb') as fh:
                     fh.write(blob)
-    except OSError:
+    except Exception:  # noqa: BLE001 - diagnostics must never break a login
         return ''
     return base
 

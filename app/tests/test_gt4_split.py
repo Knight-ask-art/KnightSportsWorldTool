@@ -256,6 +256,18 @@ def test_two_failures_in_the_same_second_do_not_overwrite(monkeypatch,
     assert len([p for p in tmp_path.iterdir() if p.is_dir()]) == 2
 
 
+def test_dump_never_raises_even_on_a_bad_value(monkeypatch, tmp_path):
+    monkeypatch.setenv('JHP_GT4_DUMP_DIR', str(tmp_path))
+    monkeypatch.setenv('JHP_GT4_DUMP', 'fail')
+
+    class Weird:
+        pass
+
+    # Diagnostics are best-effort: a value json cannot serialise must not
+    # replace the real login error with a TypeError.
+    assert gt4.write_dump({'ok': False, 'obj': Weird()}) == ''
+
+
 def test_rsa_self_test_keeps_the_live_modulus():
     gt4_rsa.set_modulus(list(gt4_rsa.BUILTIN_LIMBS))
     try:

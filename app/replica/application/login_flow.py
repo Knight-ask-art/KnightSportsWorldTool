@@ -162,8 +162,11 @@ def _solve(solver, captcha_id, log) -> dict:
                             % exc) from exc
 
 
-def _account(device_model: str, os_version: str, device: dict | None) -> Account:
-    acct = Account(name='', uid='-1', token='')
+def _account(username: str, device_model: str, os_version: str,
+             device: dict | None) -> Account:
+    # `name` is only a label, but keep it as the username: that is what the
+    # pre-split code passed and nothing here should drift.
+    acct = Account(name=username, uid='-1', token='')
     acct.deviceName = device_model
     acct.osVersion = os_version
     if device:
@@ -185,7 +188,7 @@ def login(username: str, password: str, device_model: str = 'NCO-AL00',
     ``(captcha_id=..., log=...)`` and return the four credentials.
     """
     solver = solver or GT4.solve_gt4
-    acct = _account(device_model, os_version, device)
+    acct = _account(username, device_model, os_version, device)
     client = RealClient()
 
     # The uuid ties checkGeeUse -> geevalidate -> login together.  The server
@@ -230,7 +233,7 @@ def login_with_ticket(username: str, password: str, ticket: dict,
     if missing:
         raise LoginError('手动验证凭证不完整，缺少 %s' % missing)
 
-    acct = _account(device_model, os_version, device)
+    acct = _account(username, device_model, os_version, device)
     client = RealClient()
     login_uuid = str(uuid.uuid4())
     needs = _check_needs_captcha(client, acct, username, login_uuid, log)
