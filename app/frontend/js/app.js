@@ -2729,11 +2729,14 @@ function renderRecordMap(detail){
   if(!track.length){
     clearRecordMap();
     if(hint){
-      hint.textContent = meta.obs_error
-        ? ('轨迹在 OBS，但读取失败：' + meta.obs_error)
-        : (meta.json_from_obs
-          ? '这条记录的轨迹在 OBS，但服务端没有返回可读对象。'
-          : '这条记录没有读到轨迹（服务端未返回 allLocJson）。');
+      if(meta.obs_error && /404|不存在/.test(meta.obs_error))
+        hint.textContent = '这条记录的服务器轨迹已不存在（OBS 404），只能查看摘要。';
+      else if(meta.obs_error)
+        hint.textContent = 'OBS 轨迹读取失败：' + meta.obs_error;
+      else if(meta.json_from_obs)
+        hint.textContent = '这条记录的轨迹在 OBS，但服务端没有返回可读对象。';
+      else
+        hint.textContent = '这条记录没有读到轨迹（服务端未返回 allLocJson）。';
     }
     return;
   }
