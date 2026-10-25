@@ -175,6 +175,18 @@ POST api/v1/getGeoFenceForRun   {}
 | `sportType` | 1/3 | 3 时才发 `roomId` |
 | `allLocJson` | JSON 字符串 | 完整轨迹（见 §6）|
 
+**不发送的三个字段**（已确认，不要再补）：
+
+| 字段 | 是什么 | 为什么不上传 |
+|---|---|---|
+| `prizeName` | 奖品名称，详情页显示奖品图标 | 服务端 `RunHistoryBean` / `PrizeListBean` 字段。客户端只在 `RunHistoryDetailPImpl` 回显时 `setPrizeName`，**提交路径不设置** |
+| `recordUrl` | 记录分享链接 | 同上，服务端生成、详情页展示；提交路径不设置 |
+| `segmentJson` | 分段分析（每段步频/配速/合格状态） | `CreditRunPIml` 提交前用它计算 `useMobilityTools` / `status`，但 `UploadFormatEntity.setSegmentJson()` 算完会把 `segmentJson` 置为 `""` 再上传（L494）；最终报文里就是空串。我们不发 = 服务端 null = 空串 |
+
+三者都不在 31 个签名字段里。不发不影响入库、签名、完成度，只影响详情页的奖品/分享/分段展示。OBS 里的 `segment_json` 是另一个对象（见 §5.2），不受影响。
+
+依据：`UploadFormatEntity.java` L462–496、`CreditRunPIml.java` L396、`RunHistoryDetailPImpl.java` L1066/L1069/L1145；Rust 参考 `src/api/submit.rs` 也没有这三个字段。
+
 ### 5.2 OBS 十个键
 
 轨迹另存 OBS，全部是 `base64(gzip(...))`：

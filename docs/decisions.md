@@ -13,7 +13,7 @@
 | `JHP_CRYPTO=unidbg` 只作回退 | 旧 native 路径保留，不再维护 |
 | 单文件协议栈：登录/极验/信封/签名都在 `replica/` | 不依赖模拟器、抓包重放或浏览器 |
 | 提交体严格对齐上游 43 字段 / 31 签名字段 | `submit.rs` 与 `crypto.UPLOAD_SIGN_FIELDS` 逐字段对拍 |
-| 删掉自造的 `segmentJson` / `prizeName` / `recordUrl` | 上游提交体里没有；发了只会增加不确定性 |
+| 删掉自造的 `segmentJson` / `prizeName` / `recordUrl` | 详见 `docs/api.md` §5.1：`prizeName`/`recordUrl` 只在详情页回显时 set，提交路径不设置；`segmentJson` 在 `UploadFormatEntity.setSegmentJson()` 里算完 `useMobilityTools`/`status` 后置空再上传 |
 | `roomId` 只在 `sportType=3` 时发 | 上游条件分支 |
 
 ## 2. 坐标、单位与字段
