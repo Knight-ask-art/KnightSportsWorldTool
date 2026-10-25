@@ -25,8 +25,9 @@ DEV_JAVA = r'D:\Codex\tools\jdk-21\jdk-21.0.11+10\bin\java.exe'
 
 
 def _runtime_base() -> str:
-    """Where the app lives: frozen exe dir, or the project dir in dev."""
-    if getattr(sys, 'frozen', False):
+    """Where the app lives: compiled exe dir, or the project dir in dev."""
+    from ..build_info import is_compiled
+    if is_compiled():
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))))

@@ -1,6 +1,6 @@
 [project]
 name = "haoxiangpao"
-version = "0.1.1"
+version = "0.1.2"
 description = "好想跑：本地跑步数据工作台（协议复刻 / 造数 / 提交 / 只读回查）"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pyinstaller>=6.0",
+    "nuitka>=4.0",
 ]
 
 [tool.pytest.ini_options]

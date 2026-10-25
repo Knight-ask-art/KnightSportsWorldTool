@@ -56,8 +56,8 @@ class UnknownPending(GuardError):
 def _default_dir() -> str:
     base = os.environ.get('JHP_DATA_DIR')
     if not base:
-        base = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+        from ..build_info import app_root
+        base = os.path.join(app_root(), 'data')
     return os.path.join(base, 'submission_receipts')
 
 

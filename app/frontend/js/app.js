@@ -181,7 +181,7 @@ const routeInk = L.polyline([], {color: '#2E4A7D', weight: 3, opacity: .95, line
 const routeStart = L.circleMarker([0, 0], {radius: 5, color: '#FBF8F0', weight: 2, fillColor: '#2E4A7D', fillOpacity: 1});
 
 /* ---------- draw: click to add, smooth curve ---------- */
-let pen = false, smoothOn = true, routeClosed = true;
+let pen = false, smoothOn = true, routeClosed = false;
 let ctrlDots = [];
 
 function setPen(on, silent){
@@ -206,10 +206,11 @@ function setCloseUI(on){
     : '闭合关：保留起点到终点的开放折线');
   const state = $('#closeState');
   if(state){
-    state.textContent = '闭合：' + (on ? '开' : '关');
+    state.textContent = on ? '开' : '关';
     state.classList.toggle('on', on);
   }
 }
+setCloseUI(false);
 
 function distM(a, b){
   const dy = (b[0] - a[0]) * 110540;
@@ -436,12 +437,38 @@ const RUN_LIMITS = {
   cadence: {min: 60, max: 260, label: '步频', unit: 'spm', integer: true},
   altitude: {min: -100, max: 5000, label: '海拔基准', unit: 'm'}
 };
+let altProfile = null;
+let altTemplateLabel = '';
+function readAltitudeOpts(){
+  const mode = ($('#altMode') && $('#altMode').value) || 'auto';
+  const loRaw = ($('#altMin') && $('#altMin').value || '').trim();
+  const hiRaw = ($('#altMax') && $('#altMax').value || '').trim();
+  const usesRange = mode === 'range' || mode === 'template';
+  const range = usesRange && (loRaw !== '' || hiRaw !== '')
+    ? [+loRaw, +hiRaw] : null;
+  return {
+    mode: mode,
+    range: range,
+    profile: mode === 'template' ? altProfile : null
+  };
+}
+function altitudeArgs(p){
+  return {
+    altitude_mode: p.altitudeMode || 'auto',
+    altitude_range: p.altitudeRange || null,
+    altitude_profile: p.altitudeProfile || null
+  };
+}
 function readRunParams(){
+  const alt = readAltitudeOpts();
   return {
     km: +$('#inKm').value,
     pace: +$('#inPace').value,
     cadence: +$('#inCad').value,
-    altitude: +$('#inAlt').value
+    altitude: +$('#inAlt').value,
+    altitudeMode: alt.mode,
+    altitudeRange: alt.range,
+    altitudeProfile: alt.profile
   };
 }
 function validateRunParams(p){
@@ -457,7 +484,109 @@ function validateRunParams(p){
         spec.unit + ' 之间';
     }
   }
+  if(p.altitudeRange){
+    const lo = +p.altitudeRange[0], hi = +p.altitudeRange[1];
+    if(!isFinite(lo) || !isFinite(hi)){
+      return '海拔区间需要两个数字';
+    }
+    if(lo > hi) return '最低海拔不能大于最高海拔';
+    if(lo < RUN_LIMITS.altitude.min || hi > RUN_LIMITS.altitude.max){
+      return '海拔区间需要在 ' + RUN_LIMITS.altitude.min + '–' +
+        RUN_LIMITS.altitude.max + ' m 之间';
+    }
+  }
+  if(p.altitudeMode === 'range' && !p.altitudeRange){
+    return '区间模式需要填写最低和最高海拔';
+  }
+  if(p.altitudeMode === 'template' &&
+     !(Array.isArray(p.altitudeProfile) && p.altitudeProfile.length >= 2)){
+    return '模板模式需要先选择一个 GPX/JSON 文件';
+  }
   return '';
+}
+const ALT_HINTS = {
+  auto: '以「基准海拔」为中心轻微波动，像真实气压计。',
+  fixed: '全程固定在「固定海拔」，爬升为 0。',
+  range: '按最低–最高海拔合成坡形；基准海拔不参与。',
+  template: '本机 GPX/JSON，不上传；区间可留空。'
+};
+function updateAltSummary(){
+  const el = $('#altSummary');
+  if(!el) return;
+  const mode = ($('#altMode') && $('#altMode').value) || 'auto';
+  const base = +($('#inAlt') && $('#inAlt').value);
+  if(mode === 'auto'){
+    el.textContent = isFinite(base) ? ('基准 ' + base + ' m · 气压计') : '基准海拔未填写';
+  }else if(mode === 'fixed'){
+    el.textContent = isFinite(base) ? ('固定 ' + base + ' m · 零爬升') : '固定海拔未填写';
+  }else if(mode === 'range'){
+    const lo = +($('#altMin') && $('#altMin').value);
+    const hi = +($('#altMax') && $('#altMax').value);
+    el.textContent = (isFinite(lo) && isFinite(hi))
+      ? (lo + '–' + hi + ' m · 合成坡') : '待填写海拔区间';
+  }else{
+    el.textContent = altTemplateLabel
+      ? (altTemplateLabel + ' · 本地模板') : '未选择模板文件';
+  }
+}
+function altModeChanged(){
+  const mode = ($('#altMode') && $('#altMode').value) || 'auto';
+  const usesBase = mode === 'auto' || mode === 'fixed';
+  if($('#inAltLabelText')){
+    $('#inAltLabelText').textContent = mode === 'fixed' ? '固定海拔' : '基准海拔';
+  }
+  if($('#inAltUse')){
+    $('#inAltUse').textContent = usesBase
+      ? (mode === 'fixed' ? '固定模式使用' : '自动模式使用')
+      : '本模式不用';
+  }
+  if($('#inAlt')){
+    $('#inAlt').readOnly = !usesBase;
+    $('#inAlt').setAttribute('aria-disabled', usesBase ? 'false' : 'true');
+  }
+  if($('#inAltField')) $('#inAltField').classList.toggle('muted', !usesBase);
+  if($('#altRangeWrap')) $('#altRangeWrap').hidden = !(mode === 'range' || mode === 'template');
+  if($('#altTemplateWrap')) $('#altTemplateWrap').hidden = mode !== 'template';
+  if(mode === 'range' && $('#altMin') && $('#altMax') &&
+     !$('#altMin').value && !$('#altMax').value){
+    const base = +$('#inAlt').value || 25;
+    $('#altMin').value = Math.max(-100, Math.round(base - 10));
+    $('#altMax').value = Math.min(5000, Math.round(base + 25));
+  }
+  if($('#altHint')) $('#altHint').textContent = ALT_HINTS[mode] || ALT_HINTS.auto;
+  if($('#altRangeNote')) $('#altRangeNote').textContent =
+    mode === 'range' ? '必填 · 最低 ≤ 最高' : '可留空 · 沿用模板海拔';
+  updateAltSummary();
+  scheduleModelPreview();
+  refreshChecks();
+}
+async function loadAltitudeTemplate(file){
+  if(!file) return;
+  if(file.size > 8 * 1024 * 1024){
+    toast('模板超过 8 MiB，请先裁剪');
+    return;
+  }
+  const nameEl = $('#altTemplateName');
+  if(nameEl) nameEl.textContent = '解析中…';
+  let text = '';
+  try{ text = await file.text(); }
+  catch(e){ toast('读取文件失败：' + e); if(nameEl) nameEl.textContent = '未选择'; return; }
+  const j = await liveApi('real_altitude_template', {text: text}, 30000);
+  if(!liveOk(j)){
+    toast(j.message || '模板解析失败');
+    if(nameEl) nameEl.textContent = '解析失败';
+    return;
+  }
+  const d = j.data || {};
+  altProfile = (d.profile || []).map(Number).filter(v => isFinite(v));
+  altTemplateLabel = file.name;
+  if(nameEl){
+    nameEl.textContent = file.name + ' · ' + (d.points || altProfile.length) +
+      ' 点 · ' + d.min + '–' + d.max + ' m';
+  }
+  if($('#altMode')) $('#altMode').value = 'template';
+  altModeChanged();
+  toast('海拔模板已载入：' + (d.points || altProfile.length) + ' 点');
 }
 function refreshParams(){
   const km = +$('#inKm').value || 0;
@@ -563,20 +692,20 @@ $('#randomParams').addEventListener('click', () => {
 
 let currentMode = 'draw';
 const MODE_HELP = {
-  draw: '手绘：点地图加点；第一个落点为起点；闭合开时首尾相连。',
-  auto: '自动：按当前加载的打卡点生成一圈；提交时按目标距离绕圈。',
+  draw: '手绘：点地图加点；第一个落点为起点；默认不闭合，需要绕圈时再打开「闭合」。',
+  auto: '自动：仍在开发中，不建议使用；请改用手绘，或导入 GPX / 使用田径场。',
   file: '导入：读取 GPX / GeoJSON / JSON / CSV（手表或别的 App 导出的轨迹）。',
   stadium: '田径场：生成 200/300/400m 标准跑道；提交时按目标距离刷圈。'
 };
 const ROUTE_HINT = {
-  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。第一个落点为起点；闭合开时首尾相连。<br>点位和围栏来自登录后的真实接口；没有 token 时不会生成假点位。',
-  auto: '自动模式：按当前加载的打卡点生成一圈；点「重新生成」换一条。提交时按目标距离自动绕圈。<br>没有点位时请先登录并刷新点位。',
+  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有 token 时不会生成假点位。',
+  auto: '<b>自动功能仍在开发中，不建议使用。</b>请切到「手绘」逐点画，或导入 GPX / 使用田径场。<br>当前自动模式只是按已加载点位连成一圈，路线质量不稳定。',
   file: '导入模式：读取 GPX / GeoJSON / JSON / CSV；手表或别的 App 导出的轨迹。文件只在本机解析。',
   stadium: '田径场模式：选 200/300/400m 生成标准跑道；提交时按目标距离刷圈。'
 };
 function autoGenerate(){
   const left = livePoints.map(p => [p.lat, p.lng]);
-  if(left.length < 2){ toast('先登录并刷新点位'); return; }
+  if(left.length < 2){ toast('自动仍在开发中；请先登录刷新点位，或改用手绘'); return; }
   const out = [];
   let cur = left.shift();
   out.push(cur);
@@ -592,7 +721,8 @@ function autoGenerate(){
   route = out;
   setCloseUI(true);
   redraw();
-  toast('自动：按 ' + livePoints.length + ' 个点位生成一圈；提交时按目标距离绕圈');
+  liveLog('自动路线仍在开发中', '仅作试验；建议改用手绘或导入 GPX', 'warn');
+  toast('自动仍在开发中，不建议使用；已按 ' + livePoints.length + ' 个点位生成试验路线');
 }
 function stadiumGenerate(){
   const size = +($('#stadiumSize').value || 400);
@@ -766,7 +896,7 @@ function importRouteFile(){
       liveLog('导入路线已抽稀', `${parsed.length} → ${pts.length} 点（避免生成过慢）`, 'warn');
     }
     route = pts;
-    setCloseUI(true);
+    setCloseUI(false);
     redraw();
     toast('已导入 ' + pts.length + ' 个点');
     liveLog('路线已导入', f.name + ' · ' + pts.length + ' 点', 'ok');
@@ -3922,7 +4052,8 @@ async function refreshModelPreview(){
     start_time: ti.time,
     closed: !!routeClosed,
     daily_runs: di.loaded ? di.count : null,
-    daily_source: di.loaded ? di.source : null
+    daily_source: di.loaded ? di.source : null,
+    ...altitudeArgs(params)
   });
   if(seq !== _modelSeq) return;
   LIVE.model = liveOk(j) ? ((j.data && j.data.model) || null) : null;
@@ -4019,6 +4150,26 @@ function pointInPolygon(p, polygon){
     if(((ay > x) !== (by > x)) && (y < (bx - ax) * (x - ay) / (by - ay) + ax)) inside = !inside;
   }
   return inside;
+}
+function fenceOutside(routePoints, polygon){
+  const out = {points: 0, segments: 0};
+  if(!polygon || polygon.length < 3 || !routePoints || routePoints.length < 2) return out;
+  for(const p of routePoints){
+    if(!pointInPolygon(p, polygon)) out.points++;
+  }
+  // Sample each segment at <=3 m.  This catches a short notch that both
+  // endpoints (and the dense display points) can miss; the backend does the
+  // analytic version before submitting.
+  for(let i = 0; i < routePoints.length - 1; i++){
+    const a = routePoints[i], b = routePoints[i + 1];
+    const n = Math.max(1, Math.ceil(distM(a, b) / 3));
+    for(let k = 1; k < n; k++){
+      const t = k / n;
+      const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      if(!pointInPolygon(p, polygon)){ out.segments++; break; }
+    }
+  }
+  return out;
 }
 function computeCoverage(){
   if(!livePoints.length || !route || route.length < 2) return {passed: 0, total: livePoints.length, missed: livePoints.length};
@@ -4122,11 +4273,18 @@ function refreshChecks(){
   checks.push({ok: free || (cov.total > 0 && cov.missed === 0), warn: free,
     label: '经过全部打卡点',
     note: free ? '自由跑已跳过' : (cov.total ? (cov.passed + '/' + cov.total + ' 在 40m 内') : '未加载点位')});
-  let out = null;
-  if(LIVE.fence.length && route && route.length >= 2){
-    out = route.filter(p => !pointInPolygon(p, LIVE.fence)).length;
+  let fenceBad = {points: 0, segments: 0};
+  const fenceReady = LIVE.fence.length >= 3 && route && route.length >= 2;
+  if(fenceReady){
+    fenceBad = fenceOutside(displayPath(), LIVE.fence);
   }
-  checks.push({ok: out === 0, label: '在跑步围栏内', note: !LIVE.fence.length ? '围栏未加载' : (!route || route.length < 2 ? '待画线' : ('越界 ' + out + ' 点'))});
+  checks.push({ok: fenceReady && fenceBad.points === 0 && fenceBad.segments === 0,
+    label: '在跑步围栏内',
+    note: !LIVE.fence.length ? '围栏未加载'
+      : (!route || route.length < 2 ? '待画线'
+        : (fenceBad.points || fenceBad.segments
+          ? ('越界 ' + fenceBad.points + ' 点 / ' + fenceBad.segments + ' 段')
+          : '整段检查通过'))});
   const configured = !!(LIVE.rules && LIVE.rules.configured);
   checks.push({ok: configured, label: '学校要求已配置', note: configured ? '模型已启用' : '设置 → 学校要求'});
 
@@ -4241,12 +4399,17 @@ async function submitRun(){
   const btn = $('#submitRun');
   btn.disabled = true; btn.textContent = '提交中…';
   if(band.length) liveLog('参数提醒', band.join('；'), 'warn');
-  liveLog('开始提交', `${km} km · ${pace.toFixed(2)} /km · ${cadence} spm · ${dayText} ${timeText}`, 'info');
+  const altModeText = params.altitudeMode === 'fixed' ? ('固定 ' + altitude + ' m')
+    : params.altitudeMode === 'range' ? ('区间 ' + (params.altitudeRange || []).join('–') + ' m')
+    : params.altitudeMode === 'template' ? ('模板 ' + (altTemplateLabel || '已载入'))
+    : ('自动 · 基准 ' + altitude + ' m');
+  liveLog('开始提交', `${km} km · ${pace.toFixed(2)} /km · ${cadence} spm · 海拔 ${altModeText} · ${dayText} ${timeText}`, 'info');
   const j = await liveApi('real_submit_run', {
     km: km, pace: pace, cadence: cadence, altitude: altitude,
     waypoints: route && route.length ? route : null,
     snap_route: true, use_points: !freeRunOn(), geeToken: '',
-    date: ti.date, start_time: ti.time, closed: !!routeClosed
+    date: ti.date, start_time: ti.time, closed: !!routeClosed,
+    ...altitudeArgs(params)
   }, 180000);
   LIVE.submitting = false;
   btn.textContent = '提交这次跑步';
@@ -4308,6 +4471,111 @@ async function submitRun(){
 
 /* ---------------- wire live controls ---------------- */
 let snapping = false;
+/* ---------------- first-run guide ---------------- */
+const ONBOARD_KEY = 'hxp.onboard.v1';
+const ONBOARD_STEPS = [
+  {
+    title: '先登录，工具才知道你在哪个校区',
+    body: '<p>手机号登录后，工具会从服务器读取你所在校区的<b>跑步围栏</b>和<b>打卡点</b>。</p>' +
+      '<ul><li>围栏、点位都来自真实接口；没有 token 时不会生成假点位。</li>' +
+      '<li>token 失效时到「账号」页重新验证或登录。</li></ul>',
+    tip: '第一次登录要在本地解极验，会慢一点；之后一般几秒内完成。'
+  },
+  {
+    title: '请用手绘路线，自动功能还在开发中',
+    body: '<p>跑步页有四种路线：<b>手绘</b>、<b>导入</b>（GPX/GeoJSON/CSV）、<b>田径场</b>，以及仍在开发中的<b>自动</b>。</p>' +
+      '<ul><li><b>请优先使用「手绘」</b>：在地图上逐点画，最可控。</li>' +
+      '<li><b>不建议使用「自动」</b>：目前仍在开发中，生成的路线可能不理想。</li>' +
+      '<li>围栏校验会检查整段路线；提交前看到「越界 0 点 / 0 段」才稳。</li></ul>',
+    tip: '从「手绘」开始：点地图加点，右键删点；需要绕圈时再打开「闭合」。'
+  },
+  {
+    title: '填参数，先看模型分',
+    body: '<p>填写距离、配速、步频和海拔。海拔支持<b>自动</b>、<b>固定</b>、<b>区间</b>和<b>模板</b>（本机 GPX/JSON）。</p>' +
+      '<ul><li>保存学校要求后，右侧会显示合格分和逐项检查。</li>' +
+      '<li>配速/步频超出常见范围只是黄色提醒，不会硬拦。</li></ul>',
+    tip: '模板文件只在本机解析，不会上传，也不会写进记录。'
+  },
+  {
+    title: '自检通过，再提交',
+    body: '<p>提交前先看自检：token、点位、围栏、网络出口、当日次数、合格模型。</p>' +
+      '<ul><li>提交成功后回执会锁住这个时段，<b>不能重复提交</b>。</li>' +
+      '<li>「记录」页可以回放轨迹、看爬升和平台检查项。</li></ul>',
+    tip: '出问题在「设置 → 关于」复制诊断包；里面带版本和构建号，不含 token/坐标/IP。'
+  }
+];
+let onboardIndex = 0;
+let onboardFocus = null;
+
+function renderOnboard(){
+  const s = ONBOARD_STEPS[onboardIndex];
+  if(!s) return;
+  $('#onboardKicker').textContent = '新手指引 · ' + (onboardIndex + 1) + '/' + ONBOARD_STEPS.length;
+  $('#onboardDots').innerHTML = ONBOARD_STEPS.map((_, i) =>
+    '<i class="' + (i <= onboardIndex ? 'on' : '') + '"></i>').join('');
+  $('#onboardBody').innerHTML = '<h2 id="onboardTitle">' + s.title + '</h2>' + s.body +
+    (s.tip ? '<div class="onboard-tip">' + s.tip + '</div>' : '');
+  $('#onboardPrev').disabled = onboardIndex === 0;
+  $('#onboardNext').textContent =
+    onboardIndex === ONBOARD_STEPS.length - 1 ? '开始使用' : '下一步';
+}
+function openOnboard(){
+  if(!$('#onboard')) return;
+  onboardFocus = document.activeElement;
+  onboardIndex = 0;
+  renderOnboard();
+  $('#onboard').hidden = false;
+  setTimeout(() => { if($('#onboardClose')) $('#onboardClose').focus(); }, 30);
+}
+function closeOnboard(remember){
+  const box = $('#onboard');
+  if(!box || box.hidden) return;
+  box.hidden = true;
+  if(remember && $('#onboardNever') && $('#onboardNever').checked){
+    try{ localStorage.setItem(ONBOARD_KEY, 'done'); }catch(e){}
+  }
+  if(onboardFocus && onboardFocus.focus){
+    try{ onboardFocus.focus(); }catch(e){}
+  }
+}
+function onboardNext(){
+  if(onboardIndex >= ONBOARD_STEPS.length - 1){ closeOnboard(true); return; }
+  onboardIndex++;
+  renderOnboard();
+}
+function onboardPrev(){
+  if(onboardIndex > 0){ onboardIndex--; renderOnboard(); }
+}
+function maybeShowOnboard(){
+  let seen = '';
+  try{ seen = localStorage.getItem(ONBOARD_KEY) || ''; }catch(e){}
+  if(seen === 'done') return;
+  setTimeout(openOnboard, 700);
+}
+
+/* ---------------- version / build ---------------- */
+async function loadAppVersion(){
+  const j = await liveApi('app_version', {}, 10000);
+  if(!liveOk(j)) return;
+  const d = j.data || {};
+  const short = 'v' + (d.version || '?') + (d.commit ? ('+' + d.commit) : '');
+  ['#sideVersion', '#aboutVersion', '#loginVersion'].forEach(sel => {
+    const el = $(sel);
+    if(el) el.textContent = short;
+  });
+  const full = d.label || short;
+  if($('#sideVersion')) $('#sideVersion').title = full;
+  const build = $('#aboutBuild');
+  if(build){
+    build.textContent = d.commit
+      ? (d.commit + (d.dirty ? '-dirty' : '') +
+         (d.built_at ? (' · ' + d.built_at) : '') +
+         (d.frozen ? ' · 打包版' : ' · 源码'))
+      : (d.frozen ? '打包版（无 git 信息）' : '源码运行（无 git 信息）');
+    build.title = full;
+  }
+}
+
 function liveWire(){
   // Closing the window mid-submit can turn a known result into an unknown one.
   window.addEventListener('beforeunload', e => {
@@ -4428,6 +4696,32 @@ function liveWire(){
   });
   $('#rdSaveRoute').addEventListener('click', saveDetailAsRoute);
   $('#diagCopy').addEventListener('click', copyDiagnostics);
+  if($('#onboard')){
+    $('#onboardClose').addEventListener('click', () => closeOnboard(true));
+    $('#onboardSkip').addEventListener('click', () => closeOnboard(true));
+    $('#onboardNext').addEventListener('click', onboardNext);
+    $('#onboardPrev').addEventListener('click', onboardPrev);
+    $('#onboardVeil').addEventListener('click', () => closeOnboard(true));
+    $('#onboardOpen').addEventListener('click', openOnboard);
+    document.addEventListener('keydown', ev => {
+      if($('#onboard').hidden) return;
+      if(ev.key === 'Escape'){ ev.preventDefault(); closeOnboard(true); }
+      else if(ev.key === 'ArrowRight'){ ev.preventDefault(); onboardNext(); }
+      else if(ev.key === 'ArrowLeft'){ ev.preventDefault(); onboardPrev(); }
+      else if(ev.key === 'Tab'){
+        const focusables = [...$('#onboard').querySelectorAll(
+          'button:not([disabled]), input:not([disabled]), select, a[href]')];
+        if(!focusables.length) return;
+        const first = focusables[0], last = focusables[focusables.length - 1];
+        if(ev.shiftKey && document.activeElement === first){
+          ev.preventDefault(); last.focus();
+        }else if(!ev.shiftKey && document.activeElement === last){
+          ev.preventDefault(); first.focus();
+        }
+      }
+    });
+    maybeShowOnboard();
+  }
   $('#ovPlanGrid').addEventListener('click', ev => {
     const btn = ev.target.closest('[data-plan-day]');
     if(!btn || btn.disabled) return;
@@ -4489,6 +4783,20 @@ function liveWire(){
   $('#netSave').addEventListener('click', saveNetworkConfig);
   $('#netClear').addEventListener('click', clearNetworkConfig);
   ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => $('#' + id).addEventListener('input', () => { updateRunDateLabel(); scheduleModelPreview(); }));
+  if($('#altMode')){
+    $('#altMode').addEventListener('change', altModeChanged);
+    ['altMin', 'altMax'].forEach(id => $('#' + id).addEventListener('input', () => {
+      updateAltSummary(); scheduleModelPreview(); refreshChecks();
+    }));
+    $('#inAlt').addEventListener('input', updateAltSummary);
+    $('#altTemplateBtn').addEventListener('click', () => $('#altTemplateFile').click());
+    $('#altTemplateFile').addEventListener('change', ev => {
+      const f = ev.target.files && ev.target.files[0];
+      loadAltitudeTemplate(f);
+      ev.target.value = '';
+    });
+    altModeChanged();
+  }
   ['inStart'].forEach(id => $('#' + id).addEventListener('input', () => { updateRunDateLabel(); scheduleModelPreview(); refreshChecks(); }));
   // The six-page UI uses the date popover (#dateBtn/#datePop), not the old
   // #inDay select.  Calling wireDatePicker() here is required; otherwise the
@@ -4570,6 +4878,7 @@ function liveWire(){
 /* Boot: login gate -> local data -> real session. */
 initRunDate();
 liveWire();
+loadAppVersion();
 updateRunDateLabel();
 renderLog();
 loadRoutes();

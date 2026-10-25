@@ -47,6 +47,7 @@ import os
 import statistics
 import tempfile
 
+from ..build_info import app_root
 from ..domain import safety
 
 #: Every key is optional.  A non-empty key is enough to enable the model.
@@ -86,8 +87,7 @@ PENALTY = {
 def _base_dir() -> str:
     base = os.environ.get('JHP_DATA_DIR')
     if not base:
-        base = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+        base = os.path.join(app_root(), 'data')
     return base
 
 

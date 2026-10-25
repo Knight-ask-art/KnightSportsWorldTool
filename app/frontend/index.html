@@ -71,7 +71,7 @@
       </button>
     </form>
 
-    <div class="login-foot">好想跑 · 本地工作台</div>
+    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.2</span></div>
   </section>
 </div>
 
@@ -131,7 +131,7 @@
           <div class="user-meta" id="sideMeta">等待会话</div>
         </div>
       </div>
-      <div class="side-meta">v0.1.2</div>
+      <div class="side-meta" id="sideVersion">v0.1.2</div>
     </div>
   </aside>
 
@@ -386,14 +386,14 @@
           <div class="run-body">
             <section class="rsec active" id="rsec-route">
               <div class="mode-tabs" role="tablist" aria-label="路线来源">
-                <button class="mode-tab" data-mode="auto">自动</button>
+                <button class="mode-tab" data-mode="auto">自动<span class="dev-tag">开发中</span></button>
                 <button class="mode-tab active" data-mode="draw">手绘</button>
                 <button class="mode-tab" data-mode="file">导入</button>
                 <button class="mode-tab" data-mode="stadium">田径场</button>
                 <a href="#" class="mini" data-goto="routes" style="margin-left:auto;align-self:center;font-size:9.5px">路线库</a>
               </div>
 
-              <div class="mode-help" id="modeHelp">手绘：点地图加点；第一个落点为起点；闭合开时首尾相连。</div>
+              <div class="mode-help" id="modeHelp">手绘：点地图加点；第一个落点为起点；默认不闭合，需要绕圈时再打开「闭合」。</div>
               <div class="mode-actions">
                 <button class="btn small" id="autoGenerate" style="display:none">重新生成</button>
                 <button class="btn small ghost" id="importFile" style="display:none">选择 GPX / GeoJSON / CSV</button>
@@ -417,8 +417,8 @@
                 <button class="btn small ghost" id="importQuick">导入</button>
               </div>
               <div class="toggle-row">
-                <span>平滑</span><button class="switch on" id="smoothToggle" aria-label="平滑曲线" aria-pressed="true"></button>
-                <button class="switch on" id="closeToggle" aria-label="闭合路线（当前：开）" aria-pressed="true" title="闭合开：3 个点也会首尾相连"></button><span class="toggle-state on" id="closeState">闭合：开</span>
+                <span class="toggle-label">平滑</span><button class="switch on" id="smoothToggle" aria-label="平滑曲线" aria-pressed="true"></button>
+                <span class="toggle-label">闭合</span><button class="switch" id="closeToggle" aria-label="闭合路线（当前：关）" aria-pressed="false" title="闭合关：保留起点到终点的开放折线"></button><span class="toggle-state" id="closeState">关</span>
                 <span class="mini" id="ptCount">0 个控制点</span>
               </div>
 
@@ -439,7 +439,7 @@
                 <span id="goalLine2">预计 —</span>
               </div>
 
-              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。第一个落点为起点；闭合开时首尾相连。<br>点位与围栏来自登录后的服务器接口；点位按校区固定范围加载，不随目标距离变化；没有 token 时不会生成假点位。</div>
+              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>自动功能仍在开发中，不建议使用。点位与围栏来自登录后的服务器接口；没有 token 时不会生成假点位。</div>
             </section>
 
             <section class="rsec" id="rsec-params">
@@ -453,7 +453,43 @@
                 <div class="field"><label for="inKm" title="总距离；画好路线后会自动按线路长度填写，手动修改后保留你的值">目标距离</label><input id="inKm" type="number" inputmode="decimal" min="0.1" max="42.2" step="0.01" value="2.5"><span class="unit">km</span></div>
                 <div class="field"><label for="inPace">配速</label><input id="inPace" type="number" inputmode="decimal" min="2" max="20" step="0.01" value="6.00"><span class="unit">min/km</span></div>
                 <div class="field"><label for="inCad">步频</label><input id="inCad" type="number" inputmode="numeric" min="60" max="260" step="1" value="172"><span class="unit">spm</span></div>
-                <div class="field"><label for="inAlt">海拔基准</label><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span class="unit">m</span></div>
+                <div class="field" id="inAltField"><label for="inAlt"><span id="inAltLabelText">基准海拔</span><em id="inAltUse">自动使用</em></label><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span class="unit">m</span></div>
+              </div>
+
+              <div class="alt-card" id="altCard">
+                <div class="alt-card-head">
+                  <span class="alt-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18l5.2-8.5 3.4 5 2.9-4L21 18z"/><path d="M8.2 9.5l1.4 2"/></svg>
+                  </span>
+                  <div class="alt-head-text">
+                    <b>海拔来源</b>
+                    <span id="altSummary">基准 25 m</span>
+                  </div>
+                  <select id="altMode" aria-label="海拔来源">
+                    <option value="auto">自动</option>
+                    <option value="fixed">固定</option>
+                    <option value="range">区间</option>
+                    <option value="template">模板</option>
+                  </select>
+                </div>
+                <div class="alt-extra alt-template-row" id="altTemplateWrap" hidden>
+                  <button type="button" class="btn small ghost" id="altTemplateBtn">选择 GPX/JSON</button>
+                  <span class="mini" id="altTemplateName">未选择</span>
+                  <input type="file" id="altTemplateFile" accept=".gpx,.json,.geojson,.txt,.csv" hidden>
+                </div>
+                <div class="alt-extra alt-range-row" id="altRangeWrap" hidden>
+                  <div class="alt-box">
+                    <label for="altMin">最低</label>
+                    <div class="alt-input"><input id="altMin" type="number" inputmode="numeric" min="-100" max="5000" step="1" placeholder="15"><span>m</span></div>
+                  </div>
+                  <span class="alt-dash">–</span>
+                  <div class="alt-box">
+                    <label for="altMax">最高</label>
+                    <div class="alt-input"><input id="altMax" type="number" inputmode="numeric" min="-100" max="5000" step="1" placeholder="50"><span>m</span></div>
+                  </div>
+                  <span class="alt-note" id="altRangeNote">必填</span>
+                </div>
+                <div class="alt-hint" id="altHint">以基准海拔为中心轻微波动，像真实气压计。</div>
               </div>
 
               <div class="params" style="margin-top:9px">
@@ -470,16 +506,30 @@
               </div>
               <div class="hint" id="timeHint">选择提交日期与开始时间（09:00–22:00）；开始时间留空则在该时段随机。结束时间也要在 22:00 前。</div>
 
-              <div class="preset-row">
-                <span class="mini">距离</span>
-                <button class="chip-btn" data-km="2.0">2.0</button>
-                <button class="chip-btn" data-km="2.5">2.5</button>
-                <button class="chip-btn" data-km="3.0">3.0</button>
-                <button class="chip-btn" data-km="5.0">5.0</button>
-                <span class="mini" style="margin-top:5px">配速</span>
-                <button class="chip-btn" data-pace="6.0">6'00"</button>
-                <button class="chip-btn" data-pace="6.5">6'30"</button>
-                <button class="chip-btn" data-pace="7.0">7'00"</button>
+              <div class="quick-card">
+                <div class="quick-head"><b>快速填充</b><span>点一下写入参数</span></div>
+                <div class="quick-row">
+                  <span class="quick-label">距离</span>
+                  <div class="quick-chips">
+                    <button class="chip-btn" data-km="2.0">2.0</button>
+                    <button class="chip-btn" data-km="2.5">2.5</button>
+                    <button class="chip-btn" data-km="3.0">3.0</button>
+                    <button class="chip-btn" data-km="5.0">5.0</button>
+                  </div>
+                </div>
+                <div class="quick-row">
+                  <span class="quick-label">配速</span>
+                  <div class="quick-chips">
+                    <button class="chip-btn" data-pace="6.0">6'00"</button>
+                    <button class="chip-btn" data-pace="6.5">6'30"</button>
+                    <button class="chip-btn" data-pace="7.0">7'00"</button>
+                  </div>
+                </div>
+                <div class="quick-actions">
+                  <button class="btn small" id="randomParams">随机档位</button>
+                  <button class="btn small ghost" id="planFill">按计划填</button>
+                  <button class="btn small ghost" id="fillRouteDistance" title="用当前路线的长度重新填写目标距离">按线路填</button>
+                </div>
               </div>
 
               <div class="param-summary">
@@ -489,13 +539,11 @@
                 <div><span>步幅</span><b id="sumStride">—</b></div>
               </div>
 
-              <div class="form-actions">
-                <button class="btn small" id="randomParams">随机档位</button>
-                <button class="btn small ghost" id="planFill">按计划填</button>
-                <button class="btn small ghost" id="fillRouteDistance" title="用当前路线的长度重新填写目标距离">按线路填</button>
+              <div class="param-note">
+                <span class="note-mark" aria-hidden="true">i</span>
+                <span>画好路线后会自动按线路长度填写目标距离；手动改过可点「按线路填」恢复。闭合路线按单圈长度绕圈。</span>
               </div>
-              <div class="hint" style="margin:-2px 0 0">画好路线后会自动按线路长度填写目标距离；手动改过之后保留你的值，点「按线路填」可恢复。闭合路线按单圈长度，绕几圈由目标距离决定。</div>
-              <div class="hint" id="paceSpeedHint">填写目标后显示配速、速度与步幅一致性提示。</div>
+              <div class="param-note subtle" id="paceSpeedHint">填写目标后显示配速、速度与步幅一致性提示。</div>
 
               <div class="pace-card">
                 <div class="pace-head">
@@ -929,9 +977,11 @@
 
         <section class="sec">
           <div class="sec-head"><h2>关于</h2></div>
-          <div class="detail-row"><span>版本</span><span>v0.1.2</span></div>
+          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.2</span></div>
+          <div class="detail-row"><span>构建</span><span id="aboutBuild">—</span></div>
           <div class="form-actions" style="margin-top:8px">
             <button class="btn small ghost" id="diagCopy">复制诊断包</button>
+            <button class="btn small ghost" id="onboardOpen">新手引导</button>
             <span class="hint" id="diagHint" style="margin:0">不含 token / 密码 / uid / 坐标 / IP。</span>
           </div>
         </section>
@@ -953,6 +1003,29 @@
   </div>
   <div class="date-grid" id="dateGrid" role="grid"></div>
   <div class="date-pop-foot" id="dateFoot"></div>
+</div>
+
+<div class="onboard" id="onboard" role="dialog" aria-modal="true" aria-labelledby="onboardTitle" hidden>
+  <div class="onboard-veil" id="onboardVeil"></div>
+  <section class="onboard-card">
+    <header class="onboard-head">
+      <span class="tag ok" id="onboardKicker">新手指引 · 4 步</span>
+      <button type="button" class="onboard-x" id="onboardClose" aria-label="关闭新手引导">×</button>
+    </header>
+    <div class="onboard-dots" id="onboardDots" aria-hidden="true"></div>
+    <div class="onboard-body" id="onboardBody" aria-live="polite"></div>
+    <footer class="onboard-foot">
+      <label class="onboard-never">
+        <input type="checkbox" id="onboardNever" checked>
+        <span>下次不再自动显示</span>
+      </label>
+      <div class="onboard-actions">
+        <button type="button" class="mini-link" id="onboardSkip">跳过</button>
+        <button type="button" class="btn small ghost" id="onboardPrev">上一步</button>
+        <button type="button" class="btn small primary" id="onboardNext">下一步</button>
+      </div>
+    </footer>
+  </section>
 </div>
 
 <script src="vendor/leaflet.js"></script>

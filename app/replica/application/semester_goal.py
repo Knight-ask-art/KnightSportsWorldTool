@@ -15,6 +15,8 @@ import json
 import os
 import time
 
+from ..build_info import app_root
+
 FILENAME = 'semester_goal.json'
 MIN_KM = 0.1
 MAX_KM = 5000.0
@@ -23,8 +25,7 @@ MAX_KM = 5000.0
 def _base_dir() -> str:
     base = os.environ.get('JHP_DATA_DIR')
     if not base:
-        base = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+        base = os.path.join(app_root(), 'data')
     return base
 
 

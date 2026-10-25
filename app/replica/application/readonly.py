@@ -822,6 +822,57 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
             'fields': sorted(obj.keys())}
 
 
+def raw_record_detail(client, acct, rrid, uuid=None, include_obs=False) -> dict:
+    """Raw server payload for one record, for debugging and issue reports.
+
+    Unlike :func:`record_detail` this never normalises or trims: ``detail`` is
+    the unwrapped ``get_one_record`` object exactly as returned, and ``obs`` is
+    the full OBS object when it exists.  ``path`` says which endpoint answered
+    (v61200 vs v70260), which is what separates a stub row from a full one.
+    """
+    if not rrid:
+        raise QueryFailed('缺少 rrid')
+
+    payload = {'rrid': rrid, 'uuid': uuid, 'calculateBadge': False}
+    raw, path, errors = None, None, []
+    for p in DETAIL_PATHS:
+        try:
+            raw = _unwrap(_call(client, acct, p, payload))
+            path = p
+            break
+        except Exception as e:  # noqa: BLE001
+            errors.append('%s: %s' % (p, e))
+    if raw is None:
+        raise QueryFailed(' | '.join(errors) or '详情为空')
+
+    obj = raw
+    if isinstance(obj, dict):
+        inner = _unwrap(obj.get('data'))
+        if isinstance(inner, dict) and ('run_data' in inner
+                                       or 'totalDis' in inner):
+            obj = inner
+    if not isinstance(obj, dict):
+        raise QueryFailed('详情返回不是对象: %s' % type(obj).__name__)
+
+    out = {
+        'rrid': obj.get('rrid') or rrid,
+        'path': path,
+        'detail': obj,
+        'obs': None,
+        'obs_error': '',
+    }
+    json_from_obs = int(_num(obj.get('jsonFromObs')))
+    if include_obs or json_from_obs:
+        try:
+            out['obs'] = _fetch_obs_detail(
+                client, acct, rrid,
+                uuid=obj.get('uuid') or uuid,
+                start_ms=_start_ms(obj))
+        except Exception as e:  # noqa: BLE001
+            out['obs_error'] = str(e)
+    return out
+
+
 # --------------------------------------------------------------------------
 # leaderboards
 # --------------------------------------------------------------------------

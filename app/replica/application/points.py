@@ -35,6 +35,7 @@ import threading
 import time
 import uuid
 
+from ..build_info import app_root
 from ..transport import netsec
 from ..domain import coords
 
@@ -62,8 +63,7 @@ CACHE_TTL = 300.0
 RATE_LIMIT_ERR = 10603
 
 _DEFAULT_CACHE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data',
-    'points_cache.json')
+    app_root(), 'data', 'points_cache.json')
 _CACHE_LOCK = threading.RLock()
 
 

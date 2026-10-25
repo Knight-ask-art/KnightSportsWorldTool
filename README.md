@@ -110,11 +110,17 @@ python -m pytest private\research\tests -q
 cd 好想跑\app
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 # 输出 dist\好想跑_v<版本>\ + dist\好想跑_v<版本>_win64.zip
-#      + dist\好想跑_v<版本>_win64.sha256
+#      + dist\好想跑_v<版本>_win64.sha256 + dist\latest.json
 ```
 
-构建脚本会做冻结导入检查和 HTTP 冒烟；同版本重建会保留目标目录里的 `data/`，
-但不会把 `data/` 打进压缩包。
+默认使用 **Nuitka standalone**：模块编译成 C，不把 `replica/*.py` 源码带进包；
+构建结束会扫描产物，发现核心 `.py/.pyc` 直接失败。PyInstaller 仅作为兼容回退
+（`-Backend pyinstaller`），不适合正式发布。
+
+构建脚本会做冻结导入检查、HTTP 冒烟、源码泄漏审计和 zip 哈希；同版本重建会
+保留目标目录里的 `data/`，但不会把 `data/` 打进压缩包。`latest.json` 是给
+自动更新器用的元数据，详见 [`docs/update.md`](docs/update.md)；打包与加固边界
+见 [`docs/packaging.md`](docs/packaging.md)。
 
 ## 三条边界
 

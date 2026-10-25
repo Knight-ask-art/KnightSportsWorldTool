@@ -29,8 +29,11 @@ from ..domain.rundata import (build_upload_entity, generate_run_data,
                               new_run_uuid, sign_upload_entity, validate_run_data)
 
 
+_LOG_STREAM = None
+
+
 def log(msg):
-    print(msg, flush=True)
+    print(msg, file=_LOG_STREAM or sys.stdout, flush=True)
 
 
 def _fail(msg, code=1):
@@ -46,9 +49,9 @@ def _keepalive_cli(args):
     password is held in memory and is never written to the session file.
     """
     from ..application.tokenkeeper import TokenKeeper, _read_json, _write_json, probe_real_session, relogin_real, ensure_state
+    from ..build_info import app_root
 
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(base, 'data', 'accounts_emu.json')
+    path = os.path.join(app_root(), 'data', 'accounts_emu.json')
 
     if args.token:
         if not args.uid:
@@ -271,26 +274,66 @@ def do_points(client, acct, args, must_points=None):
         try:
             fence = P.fetch_fence(client, acct)
             bad = RT.outside_fence(pts, fence['polygon'])
-            if bad['count']:
-                worst = max(p['distance_m'] for p in bad['points'])
+            bad_seg = RT.outside_fence_segments(pts, fence['polygon'])
+            if bad['count'] or bad_seg['count']:
+                worst = max([p['distance_m'] for p in bad['points']] or [0])
+                seg_worst = max([s['distance_m'] for s in bad_seg['segments']] or [0])
                 log('      ! 路线有 %d/%d 个点在围栏外（最远 %.0fm）'
                     % (bad['count'], bad['total'], worst))
-                for b in bad['points'][:4]:
+                log('      ! 路线有 %d/%d 段穿过围栏外（最远 %.0fm）'
+                    % (bad_seg['count'], bad_seg['total'], seg_worst))
+                for b in bad['points'][:3]:
                     log('        · 第 %d 点 越界 %.0fm'
                         % (b['index'] + 1, b['distance_m']))
+                for s in bad_seg['segments'][:3]:
+                    log('        · 第 %d→%d 段 越界 %.0fm'
+                        % (s['index'] + 1, s['index'] + 2, s['distance_m']))
                 log('        ! 围栏外的路段很可能被判无效')
             else:
-                log('      路线全部在围栏内（%d 个围栏点）'
-                    % len(fence['polygon']))
+                log('      路线全部在围栏内（%d 个围栏点，%d 段）'
+                    % (len(fence['polygon']), bad_seg['total']))
         except Exception as e:  # noqa: BLE001
             log('      围栏校验跳过（%s）' % e)
 
     return cps, pts
 
 
+def _altitude_kwargs(args):
+    """Resolve the elevation flags into generator kwargs.
+
+    An explicit ``--altitude-range`` implies ``range`` mode and an explicit
+    template implies ``template`` mode.  The template is read and parsed on
+    this machine only; it is never written back or uploaded.
+    """
+    from ..domain.rundata import parse_altitude_template
+
+    mode = getattr(args, 'altitude_mode', None)
+    rng = getattr(args, 'altitude_range', None)
+    path = getattr(args, 'altitude_template', None)
+    profile = None
+    if path:
+        p = os.path.abspath(os.path.expanduser(path))
+        if not os.path.isfile(p):
+            raise ValueError('海拔模板不存在: %s' % p)
+        if os.path.getsize(p) > 8 * 1024 * 1024:
+            raise ValueError('海拔模板超过 8 MiB')
+        with open(p, 'r', encoding='utf-8-sig', errors='replace') as f:
+            profile = parse_altitude_template(f.read())
+        mode = mode or 'template'
+    if mode is None:
+        mode = 'range' if rng else 'auto'
+    if mode == 'range' and not rng:
+        raise ValueError('--altitude-mode range 需要 --altitude-range LO HI')
+    if mode == 'template' and not profile:
+        raise ValueError('--altitude-mode template 需要 --altitude-template PATH')
+    return {'altitude_mode': mode, 'altitude_range': rng,
+            'altitude_profile': profile}
+
+
 def do_forge(acct, cps, wps, args, start_ms=None):
     log('[3/6] 造数...')
     try:
+        alt = _altitude_kwargs(args)
         run = generate_run_data(
             distance_km=args.km, pace_min_per_km=args.pace,
             cadence=args.cadence,
@@ -299,7 +342,8 @@ def do_forge(acct, cps, wps, args, start_ms=None):
             weight_kg=args.weight,
             altitude_base=getattr(args, 'altitude', 25.0),
             start_ms=start_ms,
-            run_uuid=new_run_uuid(getattr(acct, 'platform', None)))
+            run_uuid=new_run_uuid(getattr(acct, 'platform', None)),
+            **alt)
     except ValueError as e:
         raise SystemExit(_fail('造数参数无效: %s' % e, 1))
     issues = validate_run_data(run)
@@ -309,10 +353,46 @@ def do_forge(acct, cps, wps, args, start_ms=None):
     log('      %.2fkm / %ds / %d 点 / %.0fkcal / 爬升 %.1fm'
         % (run['juli'] / 1000.0, run['sportTime'], len(locs),
            run['calorie'], run['totalAscent']))
+    mode = alt.get('altitude_mode', 'auto')
+    if mode == 'template':
+        alt_note = '模板 %d 点' % len(alt.get('altitude_profile') or [])
+    elif mode == 'range':
+        lo, hi = alt.get('altitude_range') or ('?', '?')
+        alt_note = '区间 %s–%s m' % (lo, hi)
+    elif mode == 'fixed':
+        alt_note = '固定 %.0f m' % getattr(args, 'altitude', 25.0)
+    else:
+        alt_note = '基准 %.0f m' % getattr(args, 'altitude', 25.0)
+    log('      海拔 %s（%s）' % (mode, alt_note))
     log('      起止 %s → %s'
         % (safety.fmt_beijing(locs[0]['ts'], '%m-%d %H:%M:%S'),
            safety.fmt_beijing(locs[-1]['ts'], '%H:%M:%S')))
     return run
+
+
+def _raw_record(client, acct, args):
+    """Print one record's raw detail JSON on stdout; diagnostics go to stderr.
+
+    Piping the output therefore stays valid JSON even when the bridge logs
+    progress or an OBS fallback warning.
+    """
+    global _LOG_STREAM
+    from ..application import readonly as RO
+    from ..build_info import version_string
+
+    _LOG_STREAM = sys.stderr
+    log('[record] 读取 rrid=%s ...' % args.record_json)
+    try:
+        out = RO.raw_record_detail(
+            client, acct, int(args.record_json),
+            uuid=getattr(args, 'record_uuid', None),
+            include_obs=bool(getattr(args, 'record_obs', False)))
+    except Exception as e:  # noqa: BLE001
+        return _fail('原始详情读取失败: %s' % e, 1)
+    out['fetched_at'] = safety.fmt_beijing(safety.now_ms())
+    out['build'] = version_string()
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
 
 
 def do_sign(run, acct, args, policy_data=None):
@@ -455,7 +535,11 @@ def do_readback(client, acct, res):
 # --------------------------------------------------------------------------
 
 def main(argv=None, client_factory=None):
+    global _LOG_STREAM
+    from ..build_info import version_string
     ap = argparse.ArgumentParser(description='运动世界 一键全链（纯协议）')
+    ap.add_argument('--version', action='version', version=version_string(),
+                    help='打印版本与构建标识后退出')
     auth = ap.add_argument_group('账号')
     auth.add_argument('--user', help='手机号（走纯协议登录）')
     auth.add_argument('--pass', dest='password', help='密码')
@@ -473,7 +557,15 @@ def main(argv=None, client_factory=None):
     run_g.add_argument('--cadence', type=int, default=172)
     run_g.add_argument('--weight', type=float, default=health.DEFAULT_WEIGHT_KG)
     run_g.add_argument('--altitude', type=float, default=25.0,
-                       help='校区海拔基准（米）；上游默认 82 是作者自己校区的值')
+                       help='海拔基准（auto 模式）或固定海拔（fixed 模式），米')
+    run_g.add_argument('--altitude-mode', choices=('auto', 'fixed', 'range', 'template'),
+                       default=None,
+                       help='海拔来源：auto=合成，fixed=固定，range=区间，template=本地 GPX/JSON')
+    run_g.add_argument('--altitude-range', type=float, nargs=2, metavar=('LO', 'HI'),
+                       default=None,
+                       help='海拔区间（米）；给定时默认 range 模式')
+    run_g.add_argument('--altitude-template', default=None, metavar='PATH',
+                       help='本地 GPX/JSON 海拔模板；只在本机解析，不上传')
     run_g.add_argument('--days-ago', type=int, default=None, metavar='N',
                        help='补跑日期：0=今天，1=昨天，最多 3 天前（北京时间）；'
                             '不填且不给 --time 时保持“以当前时间倒推”的旧行为')
@@ -532,6 +624,15 @@ def main(argv=None, client_factory=None):
     ap.add_argument('--no-limit', action='store_true',
                     help='关闭本地风控闸门（次数与深夜）')
     ap.add_argument('--json', action='store_true', help='输出 JSON 报告')
+    rec = ap.add_argument_group('记录调试')
+    rec.add_argument('--record-json', type=int, default=None, metavar='RRID',
+                     help='只读取一条记录并打印原始详情 JSON 后退出'
+                          '（stdout 仅 JSON，日志走 stderr）')
+    rec.add_argument('--record-uuid', default=None, metavar='UUID',
+                     help='--record-json 详情查询用的 uuid（可选）')
+    rec.add_argument('--record-obs', action='store_true',
+                     help='--record-json 时附带 OBS 原始对象'
+                          '（jsonFromObs=1 会自动附带）')
     ap.add_argument('--logout', action='store_true',
                     help='退出登录并验证 token 失效（需要 --token/--uid）')
     ka = ap.add_argument_group('token 保活')
@@ -545,6 +646,11 @@ def main(argv=None, client_factory=None):
     ka.add_argument('--auto-relogin', action='store_true',
                     help='探测到失效时用 --user/--pass 自动重登；密码只在内存')
     args = ap.parse_args(argv)
+
+    # Raw-record mode promises "stdout is JSON".  Switch every progress line
+    # to stderr before login/device/profile code can print anything.
+    if args.record_json is not None:
+        _LOG_STREAM = sys.stderr
 
     if getattr(args, 'logout', False):
         from ..transport import realclient as R
@@ -632,6 +738,10 @@ def main(argv=None, client_factory=None):
     log('   crypto backend = %s' % client.backend)
     if client.proxy:
         log('   出口代理 = %s' % client.proxy)
+
+    # ---- raw record debug (read-only, no submit) -----------------------
+    if args.record_json is not None:
+        return _raw_record(client, acct, args)
 
     # ---- variation: pick this run's shape ------------------------------
     from ..application import variation as V

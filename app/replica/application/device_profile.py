@@ -153,13 +153,8 @@ def default_store_dir() -> str:
     env = os.environ.get('JHP_DATA_DIR')
     if env:
         return os.path.abspath(os.path.expanduser(env))
-    import sys
-    if getattr(sys, 'frozen', False):
-        return os.path.join(os.path.dirname(sys.executable), 'data')
-    # app/replica/application/device_profile.py -> app
-    app_dir = os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(app_dir, 'data')
+    from ..build_info import app_root
+    return os.path.join(app_root(), 'data')
 
 
 def read_session(store_dir: str) -> dict:

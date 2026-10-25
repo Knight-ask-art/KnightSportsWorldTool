@@ -24,6 +24,8 @@ import requests
 
 from ..application import credentials as CRED
 from ..application import device_profile as DP
+from ..build_info import (VERSION as APP_VERSION, build_info,
+                          version_string)
 from ..domain import crypto as C
 from ..domain.rundata import generate_run_data, new_run_uuid
 from ..transport.realclient import as_dict
@@ -31,7 +33,6 @@ from ..transport.realclient import as_dict
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
 #: open-source build; AMap binds keys to a domain/app and a leaked one is a
 #: billing and quota risk.
-APP_VERSION = '0.1.2'
 # Fixed checkpoint-query distance for the UI.  Campus checkpoints belong to the
 # school, not to the distance the operator plans to run today; the requested
 # target must not cause a re-fetch or invalidate the points already displayed.
@@ -2165,13 +2166,47 @@ class ReplicaApi:
         return _fail('服务器没有返回可用的学校规则: %s' % '; '.join(errors),
                      data={'errors': errors})
 
+    def app_version(self):
+        """Version + build identifier (shown in 设置 → 关于 and the sidebar)."""
+        info = build_info()
+        info['label'] = version_string()
+        return _ok(info)
+
+    def real_altitude_template(self, text=None):
+        """Parse a local GPX/JSON elevation profile for the parameter panel.
+
+        The file is read by the browser and sent to this loopback bridge; it
+        is parsed here only and is never written to disk or uploaded.
+        """
+        from ..domain.rundata import parse_altitude_template, resample_profile
+        raw = text if isinstance(text, str) else ''
+        if not raw.strip():
+            return _fail('模板文件为空')
+        if len(raw.encode('utf-8', 'ignore')) > 8 * 1024 * 1024:
+            return _fail('模板超过 8 MiB，请先裁剪')
+        try:
+            values = parse_altitude_template(raw)
+            # The UI only needs a compact shape; the full file may have
+            # hundreds of thousands of points.
+            profile = resample_profile(values, min(len(values), 600))
+        except Exception as e:  # noqa: BLE001
+            return _fail('模板解析失败: %s' % e)
+        return _ok({
+            'profile': [round(float(v), 2) for v in profile],
+            'points': len(values),
+            'min': round(min(values), 1),
+            'max': round(max(values), 1),
+        })
+
     def real_diagnostics(self):
         """Redacted support bundle; safe to paste into an issue."""
         from ..diagnostics import collector as D
         from ..domain import safety as S
         try:
-            info = D.collect(crypto_backend='netsec', app_version=APP_VERSION,
+            info = D.collect(crypto_backend='netsec',
+                             app_version=version_string(False),
                              extra={'generated_by': 'replica_api',
+                                    'build': build_info(),
                                     'session_present': bool(self._real_account())})
             return _ok({'info': info, 'text': D.render(info, 'text'),
                         'at': S.fmt_beijing(S.now_ms())})
@@ -2182,7 +2217,8 @@ class ReplicaApi:
                            altitude=25.0, waypoints=None, checkpoints=None,
                            days_ago=0, start_time=None,
                            daily_runs=None, daily_source=None, date=None,
-                           closed=True):
+                           closed=True, altitude_mode='auto',
+                           altitude_range=None, altitude_profile=None):
         """Evaluate the user-entered rules against a local preview run.
 
         This is offline (no server call).  It lets the UI show a real score
@@ -2225,6 +2261,9 @@ class ReplicaApi:
                 waypoints=wps or None,
                 checkpoints=cps or None,
                 altitude_base=float(altitude),
+                altitude_mode=altitude_mode or 'auto',
+                altitude_range=altitude_range or None,
+                altitude_profile=altitude_profile or None,
                 start_ms=start_ms,
                 closed=bool(closed),
                 run_uuid=new_run_uuid(
@@ -2286,7 +2325,8 @@ class ReplicaApi:
                         waypoints=None, geeToken='', use_points=True,
                         altitude=25.0, snap_route=True,
                         days_ago=0, start_time=None, date=None,
-                        closed=True):
+                        closed=True, altitude_mode='auto',
+                        altitude_range=None, altitude_profile=None):
         """Forge a run, sign it with the official scheme, submit it for real,
         then read the record back so the caller sees the completion checklist.
 
@@ -2420,6 +2460,9 @@ class ReplicaApi:
                                     waypoints=wps or None,
                                     checkpoints=cps or None,
                                     altitude_base=float(altitude),
+                                    altitude_mode=altitude_mode or 'auto',
+                                    altitude_range=altitude_range or None,
+                                    altitude_profile=altitude_profile or None,
                                     start_ms=start_ms,
                                     closed=bool(closed),
                                     run_uuid=new_run_uuid(

@@ -1,12 +1,15 @@
 # ---- 运行数据 / 凭据（绝不入库）----
 app/data/
+app/replica/data/
 app/backup/
 app/dist/
 app/build/
 app/build_tmp/
 app/build_stage/
+app/build_nuitka*/
 app/build_target_backup_*/
 app/.cache/
+app/replica/_build_info.py
 private/data/
 private/**/*.jsonl
 *.pem

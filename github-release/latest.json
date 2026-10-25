@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "app": "haoxiangpao",
+  "name": "好想跑",
+  "channel": "stable",
+  "version": "0.1.2",
+  "min_version": "0.1.1",
+  "released_at": "2026-10-25T13:09:36+08:00",
+  "notes": [
+    "新增海拔来源：自动 / 固定 / 区间 / 本机 GPX/JSON 模板",
+    "围栏校验升级为整段检查，提示越界点与越界路段",
+    "新增记录原始详情 JSON 调试命令与构建标识",
+    "新增首次启动新手引导；推荐手绘路线，自动功能仍在开发中",
+    "闭合路线默认关闭；导入轨迹不再自动首尾相连",
+    "记录详情 OBS 回读支持旧版 uuid key（v0.1.2 修复）"
+  ],
+  "assets": {
+    "windows-x64": {
+      "file": "好想跑_v0.1.2_win64.zip",
+      "url": "%E5%A5%BD%E6%83%B3%E8%B7%91_v0.1.2_win64.zip",
+      "size": 78081761,
+      "sha256": "2e44281dfb3545d1ec1fc6f105ec8e5b023d06185eed9b19788a6ee6bab2d732",
+      "format": "zip",
+      "layout": "onedir",
+      "entry": "好想跑.exe",
+      "version": "0.1.2"
+    }
+  },
+  "generated_by": "packaging/make_latest.py",
+  "rollback": {
+    "file": "好想跑_v0.1.1_win64.zip",
+    "url": "%E5%A5%BD%E6%83%B3%E8%B7%91_v0.1.1_win64.zip",
+    "size": 78079627,
+    "sha256": "922a8edbe8bef4f5a302aeedd0bc67f11c7f2c46dd39b35c4d172271f3b9fdfd",
+    "format": "zip",
+    "layout": "onedir",
+    "entry": "好想跑.exe",
+    "version": "0.1.1"
+  }
+}

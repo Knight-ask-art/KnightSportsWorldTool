@@ -10,33 +10,41 @@ Usage:  python run.py [--port 65520] [--no-browser]
 import inspect
 import json
 import os
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from ..build_info import app_root, is_compiled
 from ..compat.mocks.mock_65530 import MockBackendState, serve as serve_be
 from ..compat.mocks.mock_iydsj import MockIydsjState, serve as serve_iydsj
 from ..domain import crypto as C
 from .bridge_api import ReplicaApi
 
-APP_DIR = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+def _app_dir() -> str:
+    # Nuitka/PyInstaller have no reliable package __file__; both place the
+    # frontend next to the executable in a standalone build.
+    return app_root()
+
+
+APP_DIR = _app_dir()
 FRONTEND_DIR = os.path.join(APP_DIR, 'frontend')
 
 #: Cap on a bridge request body. The server only listens on 127.0.0.1, but an
 #: unbounded read is still a one-line denial of service.
 MAX_BODY = 1 << 20
+#: Elevation templates are local GPX/JSON files and are often larger than a
+#: normal bridge payload; they are parsed once and never stored.  JSON escaping
+#: of newlines can roughly double the file, hence the headroom.
+MAX_TEMPLATE_BODY = 20 << 20
 
 
 def _default_store_dir() -> str:
-    """Honour JHP_DATA_DIR; frozen exe keeps data next to the exe."""
+    """Honour JHP_DATA_DIR; a compiled exe keeps data next to the exe."""
     env = os.environ.get('JHP_DATA_DIR')
     if env:
         return os.path.abspath(os.path.expanduser(env))
-    if getattr(sys, 'frozen', False):
-        return os.path.join(os.path.dirname(sys.executable), 'data')
-    return os.path.join(APP_DIR, 'data')
+    return os.path.join(app_root(), 'data')
 
 
 STORE_DIR = _default_store_dir()
@@ -201,7 +209,8 @@ class Handler(BaseHTTPRequestHandler):
         if n <= 0:
             return self._json({'code': 400, 'message': 'empty body',
                                'data': None}, 400)
-        if n > MAX_BODY:
+        if n > (MAX_TEMPLATE_BODY if name == 'real_altitude_template'
+                else MAX_BODY):
             return self._json({'code': 413, 'message': 'body too large',
                                'data': None}, 413)
         raw = self.rfile.read(n)

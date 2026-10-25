@@ -295,6 +295,203 @@ def _altitudes(n: int, rng, base: float = 25.0) -> list[float]:
     return out
 
 
+#: Altitude modes exposed by the CLI/UI.  `auto` keeps the OU barometer;
+#: `fixed` is one value (zero climb); `range` maps the synthetic profile to a
+#: chosen min/max; `template` follows a user-selected local GPX/JSON profile.
+ALTITUDE_MODES = ('auto', 'fixed', 'range', 'template')
+
+
+def _template_numbers(text: str) -> list[float]:
+    """Extract elevations from a GPX/JSON template without touching the network."""
+    import re
+
+    text = (text or '').strip()
+    if not text:
+        raise ValueError('海拔模板为空')
+    if len(text) > 8 * 1024 * 1024:
+        raise ValueError('海拔模板超过 8 MiB')
+
+    values: list[float] = []
+    # GPX: trkpt / rtept / wpt, in document order.
+    if '<' in text and re.search(r'<(?:trkpt|rtept|wpt)\b', text, re.I):
+        for m in re.finditer(r'<(?:trkpt|rtept|wpt)\b[^>]*>(.*?)'
+                             r'</(?:trkpt|rtept|wpt)>', text, re.S | re.I):
+            ele = re.search(r'<ele>\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)'
+                            r'(?:[eE][-+]?\d+)?)\s*</ele>',
+                            m.group(1), re.I)
+            if ele:
+                values.append(float(ele.group(1)))
+        if not values:
+            raise ValueError('GPX 模板里没有 <ele> 海拔点')
+        return values
+
+    # JSON: support arrays of numbers and objects with common elevation keys.
+    if text[:1] in '[{':
+        obj = json.loads(text)
+
+        def walk(node):
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+            elif isinstance(node, dict):
+                for key in ('ele', 'elevation', 'altitude', 'alt', 'bdA'):
+                    if key in node:
+                        try:
+                            values.append(float(node[key]))
+                        except (TypeError, ValueError):
+                            pass
+                        # The elevation value is a leaf; walking it again
+                        # appended every number twice.
+                        return
+                for child in node.values():
+                    walk(child)
+            elif isinstance(node, (int, float)):
+                values.append(float(node))
+
+        walk(obj)
+        if not values:
+            raise ValueError('JSON 模板里没有海拔字段（ele/elevation/altitude）')
+        return values
+
+    # Plain CSV/txt: last numeric column is the elevation.
+    for line in text.splitlines():
+        parts = [p.strip() for p in line.replace(';', ',').split(',')]
+        if len(parts) >= 2:
+            try:
+                values.append(float(parts[-1]))
+            except ValueError:
+                continue
+    if not values:
+        raise ValueError('模板格式不支持；请用 GPX 或含海拔字段的 JSON')
+    return values
+
+
+def parse_altitude_template(text: str) -> list[float]:
+    """Parse + smooth a local elevation template.
+
+    GPS elevation is noisy; a short moving average keeps the real climb while
+    removing one-point spikes that would inflate `totalAscent`.
+    """
+    values = [v for v in _template_numbers(text) if math.isfinite(v)]
+    if len(values) < 2:
+        raise ValueError('海拔模板至少需要 2 个有效点')
+    if len(values) > 200_000:
+        values = values[:200_000]
+    if any(v < -500.0 or v > 9000.0 for v in values):
+        raise ValueError('海拔模板含超出 -500–9000 m 的值')
+    if len(values) >= 5:
+        half = 2
+        smoothed = []
+        for i in range(len(values)):
+            lo, hi = max(0, i - half), min(len(values), i + half + 1)
+            smoothed.append(sum(values[lo:hi]) / (hi - lo))
+        values = smoothed
+    return values
+
+
+def _map_profile(values: list[float], lo: float, hi: float) -> list[float]:
+    vmin, vmax = min(values), max(values)
+    if vmax - vmin < 1e-9:
+        mid = (lo + hi) / 2.0
+        return [mid for _ in values]
+    scale = (hi - lo) / (vmax - vmin)
+    return [lo + (v - vmin) * scale for v in values]
+
+
+def resample_profile(values: list[float], n: int) -> list[float]:
+    """Linear resample of an elevation profile to exactly `n` points."""
+    n = int(n)
+    if n <= 0:
+        return []
+    values = list(values or [])
+    if not values:
+        raise ValueError('海拔模板为空')
+    if len(values) == 1:
+        return [float(values[0])] * n
+    out = []
+    last = len(values) - 1
+    for i in range(n):
+        pos = (i * last) / max(1, n - 1)
+        j = int(math.floor(pos))
+        k = min(last, j + 1)
+        frac = pos - j
+        out.append(values[j] + (values[k] - values[j]) * frac)
+    return out
+
+
+def make_altitudes(n: int, rng, base: float = 25.0,
+                   mode: str = 'auto',
+                   alt_range: list | tuple | None = None,
+                   profile: list[float] | None = None) -> list[float]:
+    """Altitude sequence for one run.
+
+    ``auto``     – OU barometer around `base` (legacy behaviour).
+    ``fixed``    – every point at `base`; zero ascent/descent.
+    ``range``    – synthetic profile mapped into ``(lo, hi)``.
+    ``template`` – local GPX/JSON profile, optionally mapped into a range.
+    """
+    n = int(n)
+    if n <= 0:
+        return []
+    mode = (mode or 'auto').strip().lower()
+    if mode in ('synthetic', 'ou'):
+        mode = 'auto'
+    if mode not in ALTITUDE_MODES:
+        raise ValueError('海拔模式未知: %s' % mode)
+    try:
+        base = float(base)
+    except (TypeError, ValueError):
+        raise ValueError('海拔基准无效: %r' % (base,))
+    if not math.isfinite(base) or not (-500.0 <= base <= 9000.0):
+        raise ValueError('海拔基准超出 -500–9000 m')
+
+    rng_range = None
+    if alt_range is not None:
+        if len(alt_range) != 2:
+            raise ValueError('海拔区间需要两个数：MIN MAX')
+        try:
+            lo, hi = float(alt_range[0]), float(alt_range[1])
+        except (TypeError, ValueError):
+            raise ValueError('海拔区间无效')
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            raise ValueError('海拔区间无效')
+        if lo > hi:
+            lo, hi = hi, lo
+        if lo < -500.0 or hi > 9000.0:
+            raise ValueError('海拔区间超出 -500–9000 m')
+        rng_range = (lo, hi)
+
+    if mode == 'fixed':
+        return [round(base, 1)] * n
+
+    if mode == 'range':
+        if rng_range is None:
+            raise ValueError('海拔区间模式需要 MIN MAX')
+        raw = _altitudes(n, rng, base=0.0)
+        mapped = _map_profile(raw, *rng_range)
+        lo, hi = rng_range
+        return [min(hi, max(lo, round(v, 1))) for v in mapped]
+
+    if mode == 'template':
+        if not profile:
+            raise ValueError('海拔模板模式需要 GPX/JSON 模板')
+        vals = resample_profile(profile, n)
+        if rng_range is not None:
+            vals = _map_profile(vals, *rng_range)
+        # Keep a tiny sensor jitter, but preserve the template's real shape.
+        # Clamp after rounding so the requested min/max is never exceeded by
+        # the 0.05 m jitter (the UI promises a band).
+        out = []
+        for v in vals:
+            v = round(v + rng.gauss(0.0, 0.05), 1)
+            if rng_range is not None:
+                v = min(rng_range[1], max(rng_range[0], v))
+            out.append(v)
+        return out
+
+    return _altitudes(n, rng, base=base)
+
+
 def _apply_gps_jitter(pts: list[dict], rng, rho: float = 0.72,
                       sigma_m: float = 0.75) -> None:
     """Correlated GPS error, in metres.
@@ -354,6 +551,9 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
                    n_points: int | None = None,
                    target_m: float | None = None,
                    alt_base: float = 25.0,
+                   alt_mode: str = 'auto',
+                   alt_range: list | tuple | None = None,
+                   alt_profile: list[float] | None = None,
                    closed: bool = True,
                    dist_fractions: list[float] | None = None,
                    start_offset_m: float = 0.0) -> list[dict]:
@@ -369,6 +569,10 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
     (instead of even spacing), so a run can speed up and slow down.
     ``start_offset_m`` moves the start along a closed loop by 20-50 m so every
     run does not begin at the exact same coordinate.
+
+    ``alt_mode`` / ``alt_range`` / ``alt_profile`` select the altitude source:
+    synthetic OU (default), one fixed value, a synthetic profile mapped into a
+    range, or a local GPX/JSON profile.
     """
     rng = rng or random
     n_points = int(n_points or N_POINTS)
@@ -399,7 +603,10 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
             if not sampled:
                 return generate_route(center_lat, center_lng, radius_deg, rng,
                                       n_points=n_points, target_m=target_m,
-                                      alt_base=alt_base, closed=closed,
+                                      alt_base=alt_base, alt_mode=alt_mode,
+                                      alt_range=alt_range,
+                                      alt_profile=alt_profile,
+                                      closed=closed,
                                       dist_fractions=dist_fractions,
                                       start_offset_m=start_offset_m)
             for i, (lat, lng) in enumerate(sampled):
@@ -432,7 +639,10 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
             if not sampled:
                 return generate_route(center_lat, center_lng, radius_deg, rng,
                                       n_points=n_points, target_m=target_m,
-                                      alt_base=alt_base, closed=closed,
+                                      alt_base=alt_base, alt_mode=alt_mode,
+                                      alt_range=alt_range,
+                                      alt_profile=alt_profile,
+                                      closed=closed,
                                       dist_fractions=dist_fractions,
                                       start_offset_m=start_offset_m)
             for i, (lat, lng) in enumerate(sampled):
@@ -453,7 +663,8 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
             for i, p in enumerate(pts):
                 p['index'] = i
 
-        alts = _altitudes(len(pts), rng, base=alt_base)
+        alts = make_altitudes(len(pts), rng, base=alt_base, mode=alt_mode,
+                              alt_range=alt_range, profile=alt_profile)
         for p, a in zip(pts, alts):
             p['alt'] = a
         if _adjacent_ok(pts):
@@ -471,6 +682,9 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       checkpoints: list | None = None,
                       weight_kg: float = health.DEFAULT_WEIGHT_KG,
                       altitude_base: float = 25.0,
+                      altitude_mode: str = 'auto',
+                      altitude_range: list | tuple | None = None,
+                      altitude_profile: list[float] | None = None,
                       start_ms: int | None = None,
                       closed: bool = True,
                       run_uuid: str | None = None) -> dict:
@@ -485,6 +699,13 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     ``start_ms`` pins the run to an explicit Beijing timestamp (the backfill
     feature).  When omitted the historical behaviour is kept: the run ends
     1-5 s before `now`, which is what the reference client does.
+
+    ``altitude_mode``:
+      * ``auto`` – synthetic OU barometer around ``altitude_base``;
+      * ``fixed`` – every point at ``altitude_base`` (zero climb);
+      * ``range`` – synthetic profile mapped into ``altitude_range``;
+      * ``template`` – ``altitude_profile`` (parsed from local GPX/JSON),
+        optionally mapped into ``altitude_range``.
     """
     rng = rng or random
     if not (distance_km > 0):
@@ -556,7 +777,9 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     locs = generate_route(
         center_lat, center_lng, rng=rng, waypoints=waypoints,
         n_points=n_points, target_m=total_meters,
-        alt_base=altitude_base, closed=closed,
+        alt_base=altitude_base, alt_mode=altitude_mode,
+        alt_range=altitude_range, alt_profile=altitude_profile,
+        closed=closed,
         dist_fractions=fracs,
         start_offset_m=(rng.uniform(20.0, 50.0) if closed else 0.0))
     n_locs = len(locs)

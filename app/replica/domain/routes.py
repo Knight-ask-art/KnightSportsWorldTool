@@ -344,6 +344,77 @@ def outside_fence(points: list[tuple[float, float]],
     return {'count': found, 'total': len(points), 'points': bad}
 
 
+def _segment_edge_t(a: tuple[float, float], b: tuple[float, float],
+                    c: tuple[float, float], d: tuple[float, float]) -> float | None:
+    """Where segment a→b crosses c→d, as t in [0, 1] along a→b."""
+    rx, ry = b[0] - a[0], b[1] - a[1]
+    sx, sy = d[0] - c[0], d[1] - c[1]
+    den = rx * sy - ry * sx
+    if abs(den) < 1e-18:
+        return None
+    qx, qy = c[0] - a[0], c[1] - a[1]
+    t = (qx * sy - qy * sx) / den
+    u = (qx * ry - qy * rx) / den
+    if -1e-9 <= t <= 1.0 + 1e-9 and -1e-9 <= u <= 1.0 + 1e-9:
+        return min(1.0, max(0.0, t))
+    return None
+
+
+def outside_fence_segments(points: list[tuple[float, float]],
+                           ring: list[tuple[float, float]],
+                           max_report: int = 0) -> dict:
+    """Which route *segments* leave the campus geofence.
+
+    Checking only sampled points can miss a short excursion between two
+    inside points (a fence notch, a gap between campuses).  Each segment is
+    split at every polygon-edge crossing and every open interval is tested,
+    so the answer covers the whole line, not just the vertices.
+
+    Returns {'count', 'total', 'segments': [
+        {'index', 'from', 'to', 'lat', 'lon', 'distance_m'}]}.
+    `index` is the zero-based start-point index of the segment.
+    """
+    pts = [(float(a), float(b)) for a, b in (points or [])]
+    ring = [(float(a), float(b)) for a, b in (ring or [])]
+    total = max(0, len(pts) - 1)
+    if total == 0 or len(ring) < 3:
+        return {'count': 0, 'total': total, 'segments': []}
+
+    edges = list(zip(ring, ring[1:] + ring[:1]))
+    bad = []
+    for i in range(total):
+        a, b = pts[i], pts[i + 1]
+        cuts = [0.0, 1.0]
+        for c, d in edges:
+            t = _segment_edge_t(a, b, c, d)
+            if t is not None:
+                cuts.append(t)
+        cuts = sorted(set(round(t, 12) for t in cuts))
+        worst = None
+        for t0, t1 in zip(cuts, cuts[1:]):
+            if t1 - t0 < 1e-12:
+                continue
+            tm = (t0 + t1) / 2.0
+            lat = a[0] + (b[0] - a[0]) * tm
+            lng = a[1] + (b[1] - a[1]) * tm
+            if point_in_polygon(lat, lng, ring):
+                continue
+            dist = distance_to_ring_m(lat, lng, ring)
+            if worst is None or dist > worst[0]:
+                worst = (dist, lat, lng)
+        if worst is not None:
+            dist, lat, lng = worst
+            bad.append({'index': i,
+                        'from': [round(a[0], 7), round(a[1], 7)],
+                        'to': [round(b[0], 7), round(b[1], 7)],
+                        'lat': round(lat, 7), 'lon': round(lng, 7),
+                        'distance_m': round(dist, 1)})
+    found = len(bad)
+    if max_report:
+        bad = bad[:max_report]
+    return {'count': found, 'total': total, 'segments': bad}
+
+
 # --------------------------------------------------------------------------
 # self test
 # --------------------------------------------------------------------------
