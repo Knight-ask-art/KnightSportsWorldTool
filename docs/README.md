@@ -51,13 +51,13 @@ python -m replica.selfcheck
 
 ---
 
-## 当前状态（2026-10-24）
+## 当前状态（2026-10-25）
 
 **离线回归**
 
 ```
 23/23 模块自测     PASS
-pytest（tests/）   165 passed
+pytest（tests/）   236 passed
 私有 corpus tests   3 passed
 legacy_bridge_suite  38 checks passed
 legacy_http_suite    23 checks passed
@@ -77,7 +77,8 @@ validate_sim      1/2/3/5 km PASS
 | 补跑（今天..3 天前，09:00–22:00） | 2026-10-25 补跑 10-23 已受理（rrid `1344757460`） |
 | 每日次数提醒 | 按所选日期查服务器记录；超学校上限时只给 `warn` 提醒，不阻止提交 |
 | v0.1.1 稳定包 | UI 点位按校区固定范围拉取（提交按目标距离补点）、回执只读核对、网络自检、记录轨迹地图、日历次数、学期进度、路线库落盘、14 天计划、诊断包、学校规则自动读取、个人主页/违规自查 |
-| v0.1.2 稳定收尾 | 版本号统一、跨版本 data 自动迁移、配速/步频软提醒、不可行路线明确报错 |
+| v0.1.2 稳定收尾 | 版本号统一、跨版本 data 自动迁移、配速/步频软提醒、不可行路线明确报错；新增海拔来源（自动/固定/区间/模板）、围栏整段校验、原始详情 JSON CLI、构建标识、新手引导、`latest.json` 更新元数据 |
+| 打包/分发 | 默认 Nuitka standalone 编译（LTO、去 docstring/assert、源码泄漏门禁）；PyInstaller 仅兼容回退；zip 附 SHA-256 与 `latest.json` |
 | 设备指纹 | 每个 `data` 目录随机一次（Android / iOS，`JHP_IOS_CHANCE` 默认 30）；登录/保活/提交/OBS/注销共用；iOS 提交链已于 2026-10-25 验证 |
 
 > 最后一条是硬限制：没有可用 token 时，所有真实接口都会明确报错，

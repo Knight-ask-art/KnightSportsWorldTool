@@ -233,11 +233,11 @@ python -m replica.routes
 python -m replica.points
 ```
 
-期望输出（2026-10-24）：
+期望输出（2026-10-25）：
 
 ```
-22/22 模块通过（含 tokenkeeper）
-87 passed（pytest tests/）
+23/23 模块通过（含 tokenkeeper）
+236 passed（pytest tests/）
 3 passed（private/research/tests）
 38 passed（legacy_bridge_suite）
 23 passed（legacy_http_suite）

@@ -1,7 +1,7 @@
 # 交接：好想跑 v0.1.2（app）
 
 > **2026-10-25 v0.1.2 稳定收尾**：版本号/前端版本统一、跨版本 `data/` 自动迁移、
-> 配速/步频软提醒、不可行路线明确报错、OBS 回读 SHA-256 校验与旧记录 uuid key 回读。回归基线 `pytest 206 passed`。
+> 配速/步频软提醒、不可行路线明确报错、OBS 回读 SHA-256 校验与旧记录 uuid key 回读。回归基线 `pytest 236 passed`。
 >
 > **2026-10-25 iOS 真机验证通过**：2026-10-25 00:52（北京时间）用 v0.1.1 提交了
 > 2026-10-23 12:58–13:36:49 的补跑，rrid `1344757460`，4.13 km / 2329 s /
@@ -18,6 +18,37 @@
 > `reverse-engineering/unidbg/PORT_FROM_NEKO.md`；更早的文档已统一封存到 `archive/`。
 > 旧 `交接文档.md`（2026-09-07）的响应解密部分已被纯 Python `netsec.py` 取代，
 > 不要再按它去修 unidbg。
+
+### 2026-10-25 v0.1.2 重打包（Nuitka + latest.json）
+
+- **功能**：海拔来源（自动/固定/区间/本机 GPX/JSON 模板；基准海拔只在自动/固定
+  使用）、围栏整段校验（点 + 段，CLI 解析式 / UI 3m 采样）、原始详情 JSON CLI
+  （`--record-json`，stdout 仅 JSON）、构建标识（`--version` / bridge `app_version`
+  / 设置页）、首次启动 4 步新手引导（明确推荐手绘，自动功能标注开发中）、
+  闭合路线默认关闭、导入轨迹默认开放。
+- **打包**：改用 Nuitka 4.3.1 standalone（MSVC 14.3、LTO、no docstrings/no asserts、
+  pywebview 插件、frontend 数据目录），PyInstaller 仅保留 `-Backend pyinstaller`
+  兼容回退。构建后删除 PDB，并扫描产物；`replica/*.py`、`app.py`、核心 `.pyc`
+  任一出现即失败。前端 `frontend/` 仍是明文静态资源，不在保护范围。
+- **产物**：`dist/好想跑_v0.1.2/` 207.7 MB；zip **75.9 MB**（79,557,439 bytes），
+  SHA256 `f44fb5db48bf2a09717bf91cb87d93fd72400f644661563f3fc6c8dfc3edf453`；
+  zip 共 122 项，无 `data/`、无 `replica/*.py`、无 `app.py`、无 `.pdb`；
+  `frontend/` 14 项、`webview/` 13 项齐全。
+- **latest.json**：`dist/latest.json` 与 `github-release/latest.json` 同步；
+  `version=0.1.2`、`min_version=0.1.1`、`windows-x64` 资产 + SHA-256/大小，
+  `rollback=0.1.1`（哈希 `922a8edb…`）。相对 URL，客户端按清单 URL 解析；
+  GitHub Releases 用 `releases/latest/download/latest.json` 时相对资产可命中。
+- **data**：旧 `dist/好想跑_v0.1.2/data` 先备份到
+  `app/backup/好想跑_v0.1.2-data-20261025-142640/`（9 个文件），新目录构建后已
+  原样恢复；token/设备指纹/回执/限额/学校规则/学期目标/点位缓存均通过 JSON 校验。
+  旧 v0.1.2 目录、zip、sha256 已删除；v0.1.1 目录与 zip 保留可回滚。
+- **验证**：`pytest 236 passed`；`replica.selfcheck 23/23`；`node --check`；
+  `--check` exit 0；HTTP 登录页 200；冻结 `app_version` 为
+  `v0.1.2+52c516a · 2026-10-25 14:29`、`frozen=true`、`dirty=false`；
+  恢复 data 后 `/bridge/real_get_session` 返回 `token_present=true`、
+  校区 `广州软件学院 江门校区`。**本轮没有执行真实提交/OBS PUT**，由用户自行验证。
+- 之前 11:54 的 v0.1.2 包已被本轮替换，旧哈希 `2e44281d…` 仅作历史记录。
+- 仍然不要同时运行 v0.1.1 和 v0.1.2：回执/限额各存一份，会失去跨版本防重保护。
 
 ---
 
@@ -148,7 +179,7 @@
   记录实测：全部取回轨迹（215–466 点）与 5 个点位。
   只要记录内联已有轨迹，就不再为空的 `segment_json` 去请求 OBS，避免无谓的失败提示。
   已验证的 iOS 记录详情为 `json_from_obs=true`、`track_source='obs'`、`obs_error=''`、466 点。
-- 回归：`pytest 206 passed`；`test_pipeline` 连跑通过；`node --check` / `app.py --check` 通过。
+- 回归：`pytest 236 passed`；`test_pipeline` 连跑通过；`node --check` / `app.py --check` 通过。
 
 ---
 
