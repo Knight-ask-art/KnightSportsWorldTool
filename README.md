@@ -11,7 +11,7 @@
 
 ## 下载
 
-去 [Releases](releases) 下最新的 `好想跑_vX.Y.Z_win64.zip`，解压，双击 `好想跑.exe`。
+去 [Releases](releases) 下最新的 `haoxiangpao_vX.Y.Z_win64.zip`，解压，双击 `好想跑.exe`。
 
 注意两点：
 
