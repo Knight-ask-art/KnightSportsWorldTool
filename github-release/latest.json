@@ -5,8 +5,9 @@
   "channel": "stable",
   "version": "0.1.2",
   "min_version": "0.1.1",
-  "released_at": "2026-10-25T14:37:53+08:00",
+  "released_at": "2026-10-25T16:54:17+08:00",
   "notes": [
+    "新增应用内检查更新：下载校验后自动解压并重启安装",
     "新增海拔来源：自动 / 固定 / 区间 / 本机 GPX/JSON 模板",
     "围栏校验升级为整段检查，提示越界点与越界路段",
     "新增记录原始详情 JSON 调试命令与构建标识",
@@ -18,25 +19,15 @@
   ],
   "assets": {
     "windows-x64": {
-      "file": "好想跑_v0.1.2_win64.zip",
-      "url": "%E5%A5%BD%E6%83%B3%E8%B7%91_v0.1.2_win64.zip",
-      "size": 79557439,
-      "sha256": "f44fb5db48bf2a09717bf91cb87d93fd72400f644661563f3fc6c8dfc3edf453",
+      "file": "haoxiangpao_v0.1.2_win64.zip",
+      "url": "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.2/haoxiangpao_v0.1.2_win64.zip",
+      "size": 79606511,
+      "sha256": "09bb95d05861436bd414ffd9f3dc6ca1fc1f8b08e7618c639c15ab5df6ee2af8",
       "format": "zip",
       "layout": "onedir",
       "entry": "好想跑.exe",
       "version": "0.1.2"
     }
   },
-  "generated_by": "packaging/make_latest.py",
-  "rollback": {
-    "file": "好想跑_v0.1.1_win64.zip",
-    "url": "%E5%A5%BD%E6%83%B3%E8%B7%91_v0.1.1_win64.zip",
-    "size": 78079627,
-    "sha256": "922a8edbe8bef4f5a302aeedd0bc67f11c7f2c46dd39b35c4d172271f3b9fdfd",
-    "format": "zip",
-    "layout": "onedir",
-    "entry": "好想跑.exe",
-    "version": "0.1.1"
-  }
+  "generated_by": "packaging/make_latest.py"
 }
