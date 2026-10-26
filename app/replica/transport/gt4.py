@@ -152,7 +152,7 @@ def write_dump(trace: dict, policy: str | None = None) -> str:
     try:
         os.makedirs(base, exist_ok=True)
         meta = _redact({k: v for k, v in trace.items()
-                        if k not in ('bg', 'slice')})
+                        if k not in ('bg', 'slice') and not k.startswith('_')})
         with open(os.path.join(base, 'attempt.json'), 'w',
                   encoding='utf-8') as fh:
             json.dump(meta, fh, ensure_ascii=False, indent=1)

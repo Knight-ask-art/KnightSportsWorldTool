@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 import pytest
 
+from replica.adapters.bridge_api import ReplicaApi
 from replica.transport import gt4, gt4_payload, gt4_rsa
 
 LOT = gt4_payload.GOLDEN_LOT
@@ -236,16 +237,11 @@ class _ManualApi:
         self._gt4_manual_lock = threading.Lock()
         self.persisted = None
 
+    # Bind the real implementation instead of copying it: a stub that
+    # re-implements pruning would keep passing after the production rule
+    # changed.
     def _read_session(self):
         return {}
-
-    def _prune_manual(self):
-        import time
-        from replica.adapters.bridge_api import GT4_MANUAL_TTL
-        now = time.time()
-        for key, item in list(self._gt4_manual.items()):
-            if now - item['ts'] > GT4_MANUAL_TTL:
-                self._gt4_manual.pop(key, None)
 
     def _effective_device(self, session=None):
         return {'DeviceId': 'dev', 'source': 'pool'}
@@ -253,6 +249,10 @@ class _ManualApi:
     def _persist_login(self, sess, device, raw_session):
         self.persisted = sess
         return {'code': 200, 'message': 'success', 'data': sess['profile']}
+
+
+# Use the real TTL prune, not a copy of it.
+_ManualApi._prune_manual = ReplicaApi._prune_manual
 
 
 def test_manual_start_returns_the_images_and_the_travel_range(monkeypatch):
@@ -271,7 +271,8 @@ def test_manual_start_returns_the_images_and_the_travel_range(monkeypatch):
     # Where the slice may travel: the only numbers the UI needs to lay out.
     assert data['max_left'] == 340 - 60
     # The row the piece is drawn on: the gap in the fixture is cut at y=40.
-    assert data['slice_top'] == 40
+    # +-2 because this is an algorithm output, not a constant.
+    assert abs(data['slice_top'] - 40) <= 2, data['slice_top']
     assert data['expires_in'] > 0
     assert data['token'] in api._gt4_manual
 

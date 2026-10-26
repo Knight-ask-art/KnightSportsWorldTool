@@ -1137,6 +1137,7 @@ function prettyLoginError(raw){
   let msg = String(raw || '登录失败，请重试。').trim();
   msg = msg.replace(/^登录失败\s*[:：]\s*/, '').replace(/^Error:\s*/, '');
   if(/10121/.test(msg)) return '这个账号还在手机端登录。请先在手机上退出，再回来登录。';
+  if(/10175|账号或密码错误/.test(msg)) return '手机号或密码不对，请检查后重试。';
   if(/超时|timed out|timeout|bridge 超时/i.test(msg)) return '登录等待超时了。后台可能仍在处理，请稍等几秒再试。';
   if(/手动滑一下|手动验证/.test(msg)) return '自动验证没通过，请点下面的「手动滑一下」，自己把缺口对上。';
   if(/极验|gee|gt4|captcha/i.test(msg)) return '验证没有通过，请重试。';
@@ -1433,6 +1434,32 @@ async function openManualCaptcha(){
   await gt4LoadChallenge();
 }
 
+// `img.decode()` hangs forever on an already-decoded data URL in this
+// Chromium/WebView2 build (measured: complete=true, naturalWidth=300, promise
+// still pending after 3s), which parked the dialog on "正在读取题目…" with a
+// dead slider.  The element's own load/error events are the only signal
+// needed, and a timeout keeps a stuck decoder from blocking the dialog.
+function gt4ImageReady(img){
+  if(img.complete && img.naturalWidth) return Promise.resolve(true);
+  return new Promise(resolve => {
+    let done = false;
+    let timer = null;
+    const finish = ok => {
+      if(done) return;
+      done = true;
+      img.removeEventListener('load', onload);
+      img.removeEventListener('error', onerror);
+      if(timer) clearTimeout(timer);
+      resolve(ok);
+    };
+    const onload = () => finish(true);
+    const onerror = () => finish(false);
+    img.addEventListener('load', onload);
+    img.addEventListener('error', onerror);
+    timer = setTimeout(() => finish(!!img.naturalWidth), 4000);
+  });
+}
+
 async function gt4LoadChallenge(){
   const retry = $('#gt4Retry');
   if(retry) retry.hidden = true;
@@ -1467,8 +1494,13 @@ async function gt4LoadChallenge(){
   }
   stage.classList.remove('is-empty');
   gt4Place(0);
-  try{ await bg.decode(); }catch(e){}
+  await Promise.all([gt4ImageReady(bg), gt4ImageReady(sl)]);
   gt4Layout();
+  if(!bg.naturalWidth || !sl.naturalWidth){
+    setGt4Status('验证图片没有加载出来，换一张试试', 'error');
+    if(retry) retry.hidden = false;
+    return;
+  }
   if(GT4.maxLeft <= 0){
     setGt4Status('这张图没有可用的缺口，换一张试试', 'error');
     if(retry) retry.hidden = false;
@@ -1554,7 +1586,16 @@ async function gt4Commit(){
     GT4.token = '';                 // the bridge consumed it either way
     if(!liveOk(j)){
       GT4.busy = false;
-      setGt4Status((j && j.message) || '验证没有通过', 'error');
+      const msg = (j && j.message) || '验证没有通过';
+      // The captcha passed and the server rejected the account instead:
+      // keeping the dialog up would hide the real problem behind a puzzle the
+      // operator can no longer retry (the challenge is already consumed).
+      if(/10175|10121|10007|账号或密码|风控/.test(msg)){
+        closeManualCaptcha();
+        loginFail(prettyLoginError(msg));
+        return;
+      }
+      setGt4Status(msg, 'error');
       const retry = $('#gt4Retry');
       if(retry) retry.hidden = false;
       return;

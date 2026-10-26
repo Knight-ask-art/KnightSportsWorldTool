@@ -219,6 +219,9 @@ geevalidate 只给 1 次机会：10003 直接转手动，不再自动重解
 - **没有在真机上验证过 WebView2 的触摸拖拽**：`pointerdown/move/up` 在桌面 Chromium
   上已逐像素核对（`ratio=0.5 → set_left=110`，误差 <0.1px），触摸屏只做了同一套
   Pointer Events，没有 Windows 平板实测。
+- **`img.decode()` 在这套 WebView2 上会挂起**：对已解码的 data URL，`complete=true`、
+  `naturalWidth=300`，但 promise 三秒仍 pending，直接把对话框卡在「正在读取题目…」。
+  现在改用 `load/error` 事件 + 4s 超时；以后往这个弹窗里加图也别再用 `decode()`。
 - **RSA 自动刷新默认关闭**：实测线上 `gcaptcha4.js` 里没有公钥，抓了也是白抓。代码留了 `JHP_GT4_RSA=on` 的钩子，等 GeeTest 哪天把密钥搬回 JS 再打开。
 - **`pow_detail` 参数会变**：2026-10-26 线上是 `bits=0 / hashfunc=md5`。现在按服务器说的算，0 位就直接返回，不再硬套 sha256 + 8 位。
 - 没有代码签名；安装包和 zip 只有 SHA-256。

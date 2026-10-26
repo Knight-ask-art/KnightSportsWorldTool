@@ -1642,6 +1642,13 @@ class ReplicaApi:
         username = str(username or '').strip()
         if not username or not password:
             return _fail('请先填好手机号和密码，再完成手动验证')
+        # Validate before consuming: a malformed position must not cost the
+        # operator the puzzle they just solved.
+        try:
+            distance = int(round(float(set_left)))
+        except (TypeError, ValueError):
+            return _fail('滑块位置无效，请重新拖动')
+
         with self._gt4_manual_lock:
             self._prune_manual()
             entry = self._gt4_manual.pop(str(token or ''), None)
@@ -1651,10 +1658,6 @@ class ReplicaApi:
         from ..transport import gt4
         ch = entry['challenge']
         trace = entry['trace']
-        try:
-            distance = int(round(float(set_left)))
-        except (TypeError, ValueError):
-            return _fail('滑块位置无效，请重新拖动')
         distance = max(0, min(int(ch['bg_width']) - 1, distance))
         trace.update({'source': 'manual', 'gap': distance})
 
