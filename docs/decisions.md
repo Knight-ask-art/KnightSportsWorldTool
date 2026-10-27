@@ -297,3 +297,23 @@ if (this.mCachePoint < 1 && lineBean2.getType() == lineBean.getType()
 **读不到规则时不硬拦**：学校不下发 `runRuleModel` 时，服务端自己也没有
 `unqualifiedRate` 可以拿来算，硬拦只会误伤正常提交。这时把「本次未校验配速/步频」
 放进提交结果的提醒里，用户看得见。
+
+---
+
+## 13. `user/info` 跟到 v70400，旧路径只做 404 回退（2026-10-27）
+
+7.4.0（versionCode 408）的 dex 里只有 `api/v70400/user/info`；7.2.70 到 7.3.70
+都是 `v70100`。这是三个版本之间**唯一一条变动的接口**——`save/record`、
+`originalSign`、`runModePolicy`、`facecheck/save`、`records`、`get_one_record`、
+`geevalidate` 全部逐字节相同，提交字段族（`allLocJson` / `fivePoint` /
+`speedPerTenSec` / `stepsPerTenSec` / `useMobilityTools` / `unqualifiedRate`）
+计数一致。
+
+`user/info` 是判断 token 还活着的唯一探针，所以「路径没了」绝不能被读成「token
+死了」：只在 HTTP 404/405 时回退 `v70100`。401 是服务端对 **token** 的判决，
+原样返回；5xx 是服务端故障，换路径也救不回来，回退只会让每条失败探测发两次请求。
+
+**证据边界**：7.4.0 是字符串层证据（易盾仍加固，dex 头里只有 1,061 条字符串、
+30 个类），不是类级反编译；中文全部丢失，所以只能比较路由与英文/字段名。取包
+校验信息与差异表在 `archive/reference/PROTO_DIFF_7.4.0.md`（`archive/` 被
+`.gitignore` 忽略，不进版本库）。
