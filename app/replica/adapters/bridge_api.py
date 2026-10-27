@@ -2869,8 +2869,19 @@ class ReplicaApi:
         # User-entered school rules -> qualification model.  If the rules are
         # incomplete the model stays silent; it never guesses a school's rules.
         from ..application import qualification as Q
+        from ..application import policy as POL
         from ..application import readonly as RO
         rules = Q.load_rules()
+        # `school_rules.json` is written once -- when Settings is first opened
+        # -- and never refreshed.  The gate below is only as good as those
+        # bands, so fold in the runModePolicy already fetched for this
+        # submission instead of trusting the file alone.
+        rules, rules_refreshed = POL.merge_rules(rules, policy_data)
+        if rules_refreshed:
+            try:
+                Q.save_rules(rules)
+            except Exception:  # noqa: BLE001
+                pass          # the gate still uses the fresh copy
         # The school's daily cap applies to the *run date*.  Prefer the
         # server's record list (it also sees other devices/app runs); the local
         # receipt counter is a lower bound but is not proof that the server
@@ -2887,6 +2898,15 @@ class ReplicaApi:
             day_runs = max(day_runs, local_runs)
         model = Q.evaluate(run, rules, checkpoints=cps,
                            daily_runs=day_runs, daily_source=day_source)
+        rules_warning = ''
+        if not model.get('configured'):
+            # No usable band.  Do not hard-block: a school that publishes no
+            # rule model has nothing for the server to score `useMobilityTools`
+            # against either, so refusing here would only break a valid flow.
+            # Say it out loud instead of passing silently.
+            rules_warning = ('学校要求没有读到，本次提交没有校验配速/步频区间；'
+                             '服务端若按 runModePolicy 复核，可能判为不合格。')
+            model.setdefault('warnings', []).insert(0, rules_warning)
         if model.get('configured') and model.get('verdict') == 'fail':
             bad = [c['label'] + ' ' + c['value'] for c in model['checks']
                    if c['status'] == 'fail']
@@ -3026,7 +3046,8 @@ class ReplicaApi:
                         }
         except Exception as e:  # noqa: BLE001
             res['readback_error'] = str(e)
-        res['param_warnings'] = plausibility_warnings(pace, cadence)
+        res['param_warnings'] = plausibility_warnings(pace, cadence) + (
+            [rules_warning] if rules_warning else [])
         return _ok(res)
 
     # -- hardware-bound stubs (documented, need real env) ------------------------------

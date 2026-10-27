@@ -264,3 +264,36 @@ if (this.mCachePoint < 1 && lineBean2.getType() == lineBean.getType()
 `generate_run_data` 调用点里只有提交链路拿得到围栏多边形，其余是离线生成和自检；
 只在一处加检查会给人「已经防住」的错觉。要做就得先把多边形贯通到生成器，
 属于另一轮。
+
+---
+
+## 12. 提交前用服务端规则刷新本地闸门（2026-10-27）
+
+`useMobilityTools` 不是服务端算的，是**客户端算的**。
+`UploadFormatEntity.setSegmentJson()` 遍历每段 `AnalysisStateDB`，未达标比例
+≥ `unqualifiedRate` 且 `isOpenTimeInterval` 为真时置 1、同时 `setStatus(1)`，
+然后把 `segmentJson` 清空再上传——服务端拿不到明细，只能信这个字段，或者自己按
+`speedPerTenSec` / `stepsPerTenSec` 重算。
+
+我们原来把这个字段写死 `0`，而配速/步频的区间闸门依赖 `data/school_rules.json`。
+那份文件只在用户**第一次打开「设置」页**时从服务器读一次（`app.js:954`），之后
+不再刷新。后果有二：学校改了区间，闸门还在查旧数字；装好就没进过设置页，闸门
+根本不存在，记录会一边声称 `useMobilityTools=0`、一边发出大量超区间窗口。
+
+实测（学校区间取 5.5–8.0 分/公里，10 秒窗口）：
+
+| 配速 | 超出区间的窗口 |
+|---|---|
+| 4.5 分/公里 | 100% |
+| 5.5 分/公里 | 47% |
+| 6.0 分/公里 | 0% |
+| 8.0 分/公里 | 48% |
+| 9.0 分/公里 | 100% |
+
+现在提交前用**这次提交已经取到的** `runModePolicy` 刷新（不额外发请求）：
+只覆盖服务器真正下发的字段，保留手填的 `max_per_day`，也尊重显式关闭的
+`auto_fetch`。刷新后会写回 `school_rules.json`，下次打开界面也是新的。
+
+**读不到规则时不硬拦**：学校不下发 `runRuleModel` 时，服务端自己也没有
+`unqualifiedRate` 可以拿来算，硬拦只会误伤正常提交。这时把「本次未校验配速/步频」
+放进提交结果的提醒里，用户看得见。

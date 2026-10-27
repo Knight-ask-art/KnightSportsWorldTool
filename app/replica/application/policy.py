@@ -256,6 +256,33 @@ def rules_from_policy(data) -> dict:
             'mapped': sorted(rules)}
 
 
+def merge_rules(cached: dict, policy_data) -> tuple[dict, bool]:
+    """Fold the server's ``runRuleModel`` into the cached school rules.
+
+    ``school_rules.json`` is written once -- when the settings page is first
+    opened -- and never refreshed afterwards.  A school that changes its band,
+    or an install that never opened that page, would then pass a gate that
+    checks nothing, while the payload still claims every 10 s window is
+    qualified (``useMobilityTools = 0``).
+
+    Submission already fetches ``runModePolicy`` for the submit body, so use
+    that copy instead of trusting the file.  Only fields the server actually
+    published are overwritten: a manual ``max_per_day`` survives, and an
+    explicit ``auto_fetch = False`` (the operator turned the model off) is
+    honoured.
+    """
+    cached = dict(cached or {})
+    if cached.get('auto_fetch') is False:
+        return cached, False
+    mapped = (rules_from_policy(policy_data) or {}).get('rules') or {}
+    if not mapped:
+        return cached, False
+    merged = dict(cached)
+    merged.update({k: v for k, v in mapped.items() if v is not None})
+    merged['auto_fetch'] = True
+    return merged, True
+
+
 def policy_value(policy: dict | None, default: int = 1) -> int:
     """The server-decided rule set (0 or 1).  Upstream submits this verbatim
     instead of hardcoding it (src/api/flow.rs: `let pol = fetch_policy(...)`)."""
