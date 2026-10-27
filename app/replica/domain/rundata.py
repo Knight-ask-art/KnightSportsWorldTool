@@ -31,6 +31,13 @@ MIN_LOOP_M = 80.0
 MAX_LAPS = 30
 FIVE_EVERY = 6
 
+#: Pace deviation: an OU process with a 24 s memory and a 2% stationary sd.
+#: Correlated on purpose -- two fixed sine frequencies used to sit at 3 and 7
+#: cycles per run whatever the duration, which is a fingerprint.  See the pace
+#: profile block in :func:`generate_run_data`.
+PACE_TAU_S = 24.0
+PACE_SIGMA = 0.020
+
 
 def new_run_uuid(platform: str | None = None) -> str:
     """A run id shaped like the real client's.
@@ -758,18 +765,24 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     # acceleration / fatigue curve.  The old order produced a perfectly
     # constant per-point speed (6.5941 km/h for all 444 points), which is a
     # stronger synthetic signal than any single header field.
+    #
+    # The deviation is an OU process, not two fixed sine waves.  The sines
+    # were at 3 and 7 cycles per run no matter how long the run was, which put
+    # 19% and 11% of the spectrum on two exact frequencies -- a fingerprint
+    # that survives any duration.  Upstream PR #134 uses a 24 s correlation
+    # target for pace; at 10 s buckets that is phi = exp(-10/24) = 0.66.
     n_buckets = max(1, int(math.ceil(total_seconds / float(SEG_SECONDS))))
     avg_mps = total_meters / max(1, total_seconds)
-    ph1, ph2 = rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi)
+    phi = math.exp(-SEG_SECONDS / PACE_TAU_S)
+    innovation = PACE_SIGMA * math.sqrt(1.0 - phi * phi)
+    pace_dev = 0.0
     raw_d = []
     for i in range(n_buckets):
         t = i / max(1, n_buckets - 1)
         ramp = 0.86 + 0.14 * min(1.0, t / 0.06)
         fatigue = 1.0 - 0.06 * t
-        wave = (1.0 + 0.025 * math.sin(2 * math.pi * 3 * t + ph1)
-                + 0.015 * math.sin(2 * math.pi * 7 * t + ph2))
-        noise = rng.uniform(0.995, 1.005)
-        raw_d.append(avg_mps * SEG_SECONDS * ramp * fatigue * wave * noise)
+        pace_dev = phi * pace_dev + rng.gauss(0.0, innovation)
+        raw_d.append(avg_mps * SEG_SECONDS * ramp * fatigue * (1.0 + pace_dev))
     d_scale = total_meters / max(0.001, sum(raw_d))
     bucket_m = [x * d_scale for x in raw_d]
     cum_before = [0.0]
