@@ -5,7 +5,7 @@
   "channel": "stable",
   "version": "0.1.4",
   "min_version": "0.1.1",
-  "released_at": "2026-10-28T03:46:18+08:00",
+  "released_at": "2026-10-28T04:41:36+08:00",
   "notes": [
     "每公里用时独立随机，参数面板可直接修改；合计严格等于预计时长",
     "10 秒窗口配速按真实记录重标（CV 0.19–0.52，随配速变化），采样间隔改为 2–4 秒",
@@ -21,8 +21,8 @@
     "windows-x64": {
       "file": "haoxiangpao_v0.1.4_win64.zip",
       "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.4/haoxiangpao_v0.1.4_win64.zip",
-      "size": 79796102,
-      "sha256": "816d04e68f3e548370eaf398865305a4adcb48d867fcdc126284f0065c2c0ab1",
+      "size": 79796101,
+      "sha256": "556e459bf7033200b875574c99e4c7431a4e469e4f8a7ed9759d606acb1e501c",
       "format": "zip",
       "layout": "onedir",
       "entry": "好想跑.exe",
@@ -37,8 +37,8 @@
     "windows-x64-setup": {
       "file": "haoxiangpao_v0.1.4_win64_setup.exe",
       "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.4/haoxiangpao_v0.1.4_win64_setup.exe",
-      "size": 56034276,
-      "sha256": "aa52889bc5755948b9fa30542aced89b42ceb496c902c751524601b65714f96a",
+      "size": 56035019,
+      "sha256": "fff74439f91899adec6f287bed4810cd0705e99f7dfd258773db49e4d2aba831",
       "format": "installer",
       "layout": "installer",
       "entry": "好想跑.exe",
