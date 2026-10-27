@@ -21,7 +21,7 @@ GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两�
 - `https://gh.llkk.cc/` + 链接（时好时坏）
 
 例如：
-`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.3/haoxiangpao_v0.1.3_win64_setup.exe`
+`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.4/haoxiangpao_v0.1.4_win64_setup.exe`
 
 注意：
 

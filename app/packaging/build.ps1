@@ -38,7 +38,7 @@ param(
     [switch]$NoDataMigration,
     [string]$DownloadBaseUrl = '',
     [string]$Channel = 'stable',
-    [string]$RollbackVersion = '0.1.2',
+    [string]$RollbackVersion = '0.1.3',
     [ValidateSet('nuitka', 'pyinstaller')]
     [string]$Backend = 'nuitka',
     [switch]$NoInstaller,

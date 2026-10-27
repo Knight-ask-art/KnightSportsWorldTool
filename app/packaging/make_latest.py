@@ -29,6 +29,16 @@ DEFAULT_ENTRY = '好想跑.exe'
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.1.4': [
+        '每公里用时独立随机，参数面板可直接修改；合计严格等于预计时长',
+        '10 秒窗口配速按真实记录重标（CV 0.19–0.52，随配速变化），采样间隔改为 2–4 秒',
+        '每公里步频/步幅不再恒定：laps 的 avgCadence 曾每公里都除回 150.0',
+        '海拔按距离定标：4 km 约 19–24 m、1.3 km 约 11–14 m，加入短坡与气压抖动',
+        '默认步频 172 → 150，匹配账号历史记录（102–154）',
+        '修复慢配速下窗口噪声为负导致总距离回退、分段被静默摊平',
+        '模型软阈值按真实记录重标（配速波动、停顿、累计爬升）',
+        'v0.1.3 保留为回滚版本，latest.json 的 rollback 指向它的 zip',
+    ],
     '0.1.3': [
         '提交坐标改为读取账号真实校区围栏，不再使用内置坐标',
         '切换校区会自动清空旧坐标；拿不到围栏时拒绝提交',
