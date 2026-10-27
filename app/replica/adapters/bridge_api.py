@@ -2478,12 +2478,18 @@ class ReplicaApi:
         return _ok(updater.check())
 
     def real_download_update(self, url: str = '', sha256: str = '',
-                             size: int = 0, file: str = ''):
-        """Fetch the package into ``data/updates`` and verify it (no install)."""
+                             size: int = 0, file: str = '', urls=None):
+        """Fetch the package into ``data/updates`` and verify it (no install).
+
+        ``urls`` is the mirror list from the manifest: the updater probes them
+        and downloads from the fastest that answers.  ``url`` stays supported
+        for an older UI and for manifests that only carry one link.
+        """
         from ..application import updater
+        targets = urls if isinstance(urls, (list, tuple)) and urls else url
         try:
             info = updater.download(
-                url, os.path.join(self.store_dir, 'updates'),
+                targets, os.path.join(self.store_dir, 'updates'),
                 sha256=sha256, size=size, file=file)
             return _ok(info)
         except Exception as e:  # noqa: BLE001 - show the reason in the UI

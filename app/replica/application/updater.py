@@ -25,6 +25,8 @@ import shutil
 import subprocess
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FutureTimeout
 from urllib.parse import unquote, urljoin, urlparse
 
 import requests
@@ -44,6 +46,17 @@ MAX_DOWNLOAD_BYTES = 400 * 1024 * 1024
 MAX_NOTES = 12
 USER_AGENT = 'haoxiangpao-updater'
 ENTRY_NAME = '好想跑.exe'
+
+#: Mirror ranking.  One ranged 64 KB request per mirror, measured on first
+#: byte plus first-chunk throughput; the whole probe has a 2.5 s budget and
+#: only runs when the operator actually clicks download.
+PROBE_BYTES = 64 * 1024
+PROBE_TIMEOUT = (2.0, 2.5)
+PROBE_BUDGET = 2.5
+PROBE_MAX_MIRRORS = 4
+#: A captive portal or a broken proxy answers 200 with an HTML page.  Check
+#: the first bytes instead of waiting for a 76 MB sha256 mismatch.
+MAGIC_BYTES = {'.zip': b'PK\x03\x04', '.exe': b'MZ'}
 
 #: Registry key the NSIS installer writes (HKCU).  Its presence is what tells
 #: the updater "this copy is installed", so the installer asset is used instead
@@ -210,6 +223,19 @@ def normalize(manifest, source: str, current: str = VERSION,
     if parsed.scheme not in ('http', 'https') or not parsed.netloc:
         raise ValueError('下载地址不是 http(s)')
 
+    # Every mirror the manifest carries, primary first.  Unknown or malformed
+    # entries are dropped rather than failing the whole update: an old client
+    # that only understands `url` must still work when a mirror is bad.
+    urls = [url]
+    for extra in asset.get('urls') or []:
+        if not isinstance(extra, str) or not extra.strip():
+            continue
+        candidate = urljoin(source, extra.strip())
+        parts = urlparse(candidate)
+        if parts.scheme in ('http', 'https') and parts.netloc \
+                and candidate not in urls:
+            urls.append(candidate)
+
     file_name = os.path.basename(str(asset.get('file') or '').replace('\\', '/'))
     if not file_name:
         file_name = os.path.basename(unquote(parsed.path)) or 'update.zip'
@@ -238,6 +264,7 @@ def normalize(manifest, source: str, current: str = VERSION,
         'latest': latest,
         'file': file_name,
         'url': url,
+        'urls': urls,
         'size': _int_or_zero(asset.get('size')),
         'sha256': sha,
         'format': fmt,
@@ -312,19 +339,79 @@ def _safe_name(name: str, url: str) -> str:
     return name or 'update.zip'
 
 
-def download(url: str, dest_dir: str, sha256: str = '', size: int = 0,
-             file: str = '') -> dict:
-    """Stream a package into ``dest_dir``; verify size and sha256 first."""
-    parsed = urlparse(str(url or ''))
-    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
-        raise ValueError('下载地址不合法')
+def _magic_for(name: str) -> bytes:
+    return MAGIC_BYTES.get(os.path.splitext(str(name or ''))[1].lower(), b'')
 
-    expected_size = _int_or_zero(size)
-    if expected_size > MAX_DOWNLOAD_BYTES:
-        raise ValueError('安装包超过大小上限')
 
-    os.makedirs(dest_dir, exist_ok=True)
-    name = _safe_name(file, url)
+def _probe_mirror(url: str, magic: bytes = b'') -> tuple:
+    """Measure one mirror: ``(ttfb_seconds, bytes_per_second)``.
+
+    A ranged GET, not HEAD: several CDNs answer HEAD from cache in a few
+    milliseconds and are still slow on the body.  The stream is closed after
+    the first 64 KB, so a server that ignores ``Range`` cannot make us pull
+    the whole package twice.
+    """
+    started = time.monotonic()
+    with requests.get(
+            url, stream=True, timeout=PROBE_TIMEOUT,
+            headers={'User-Agent': USER_AGENT,
+                     'Range': 'bytes=0-%d' % (PROBE_BYTES - 1)},
+            allow_redirects=True) as response:
+        if response.status_code not in (200, 206):
+            raise RuntimeError('HTTP %s' % response.status_code)
+        first = next(response.iter_content(4096), b'')
+        if not first:
+            raise RuntimeError('空响应')
+        ttfb = time.monotonic() - started
+        if magic and not first.startswith(magic):
+            raise RuntimeError('返回的不是安装包')
+        got = len(first)
+        for chunk in response.iter_content(1 << 16):
+            got += len(chunk)
+            if got >= PROBE_BYTES:
+                break
+        elapsed = max(time.monotonic() - started, 1e-6)
+    return ttfb, got / elapsed
+
+
+def rank_mirrors(urls, magic: bytes = b'', budget: float = PROBE_BUDGET):
+    """Order mirrors by measured cost: ``ttfb + 64 KB / speed``.
+
+    Latency alone is the wrong metric -- a 20 ms mirror throttled to 50 KB/s
+    is worse than a 300 ms mirror that streams at 5 MB/s -- so the score is an
+    estimate of how long this package's first block takes.
+
+    Returns ``(ranked, scores)``.  Mirrors that fail or miss the budget keep
+    the manifest order behind the ranked ones, so a broken probe can only cost
+    2.5 s, never the update.
+    """
+    urls = [u for u in urls if u]
+    if len(urls) < 2:
+        return list(urls), {}
+    results = {}
+    pool = ThreadPoolExecutor(max_workers=min(PROBE_MAX_MIRRORS, len(urls)))
+    try:
+        futures = {pool.submit(_probe_mirror, u, magic): u for u in urls}
+        try:
+            for future in as_completed(futures, timeout=budget):
+                url = futures[future]
+                try:
+                    ttfb, speed = future.result()
+                except Exception:  # noqa: BLE001 - a dead mirror is expected
+                    continue
+                results[url] = ttfb + PROBE_BYTES / max(speed, 1.0)
+        except FutureTimeout:
+            pass
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    ranked = sorted(results, key=lambda u: results[u])
+    ranked += [u for u in urls if u not in results]
+    return ranked, results
+
+
+def _download_one(url: str, dest_dir: str, name: str, sha256: str,
+                  expected_size: int) -> dict:
+    """One mirror, all the way to a verified file (raises on any mismatch)."""
     target = os.path.join(os.path.realpath(dest_dir), name)
     part = target + '.part'
     digest = hashlib.sha256()
@@ -356,6 +443,48 @@ def download(url: str, dest_dir: str, sha256: str = '', size: int = 0,
             pass
         raise
     return {'file': name, 'path': target, 'size': total, 'sha256': actual}
+
+
+def download(url, dest_dir: str, sha256: str = '', size: int = 0,
+             file: str = '') -> dict:
+    """Stream a package into ``dest_dir``; verify size and sha256 first.
+
+    ``url`` may be a string or a list of mirrors.  Mirrors are ranked by a
+    64 KB probe, then tried in order until one file matches the manifest.
+    A mirror that returns HTML, truncates, or flips a byte is skipped -- the
+    sha256 check makes "wrong mirror" a retry, not a broken install.
+    """
+    candidates = [url] if isinstance(url, str) else [
+        str(u) for u in (url or []) if u]
+    if not candidates:
+        raise ValueError('下载地址不合法')
+    for candidate in candidates:
+        parsed = urlparse(candidate)
+        if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+            raise ValueError('下载地址不合法')
+
+    expected_size = _int_or_zero(size)
+    if expected_size > MAX_DOWNLOAD_BYTES:
+        raise ValueError('安装包超过大小上限')
+
+    os.makedirs(dest_dir, exist_ok=True)
+    name = _safe_name(file, candidates[0])
+    ranked, scores = rank_mirrors(candidates, _magic_for(name))
+    tried = []
+    last = None
+    for candidate in ranked:
+        try:
+            info = _download_one(candidate, dest_dir, name, sha256,
+                                 expected_size)
+        except Exception as e:  # noqa: BLE001 - try the next mirror
+            tried.append('%s: %s' % (urlparse(candidate).netloc, e))
+            last = e
+            continue
+        info['mirror'] = candidate
+        info['probe'] = round(float(scores.get(candidate, 0.0)), 3)
+        info['tried'] = tried
+        return info
+    raise last if last is not None else RuntimeError('没有可用的下载地址')
 
 
 def _updates_dir(store_dir: str) -> str:

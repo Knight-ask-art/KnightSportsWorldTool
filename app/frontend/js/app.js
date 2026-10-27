@@ -5045,6 +5045,7 @@ async function downloadUpdate(){
   try{
     const j = await liveApi('real_download_update', {
       url: d.url,
+      urls: (d.urls && d.urls.length) ? d.urls : [],
       sha256: d.sha256 || '',
       size: d.size || 0,
       file: d.file || ''
@@ -5065,7 +5066,12 @@ async function downloadUpdate(){
     tip.hidden = false;
     tip.textContent = '更新会关闭程序、自动安装并重启；data 文件夹保留。';
     toast('更新包已下载');
-    liveLog('更新包已下载', (info.file || '') + ' · sha256 已校验', 'ok');
+    let via = '';
+    if(info.mirror){
+      try{ via = new URL(info.mirror).host; }catch(e){ via = info.mirror; }
+    }
+    liveLog('更新包已下载', (info.file || '') +
+      (via ? ' · 线路 ' + via : '') + ' · sha256 已校验', 'ok');
   }finally{
     UPDATE.downloading = false;
     go.disabled = false;

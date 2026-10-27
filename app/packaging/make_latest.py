@@ -82,10 +82,22 @@ def asset_url(name: str, base_url: str = '') -> str:
 
 def _asset(path: Path, base_url: str, version: str, *,
            fmt: str = 'zip', layout: str = 'onedir',
-           entry: str = DEFAULT_ENTRY) -> dict:
-    return {
+           entry: str = DEFAULT_ENTRY, mirrors: tuple = ()) -> dict:
+    """One downloadable file.  ``url`` stays first for old clients; ``urls``
+    carries the extra mirrors and is only emitted when there is more than one.
+
+    GitHub release assets are frequently unreachable from mainland China, so
+    the manifest lists the same file behind several proxies.  Clients that
+    predate this field read ``url`` and ignore the rest.
+    """
+    urls = []
+    for base in (base_url,) + tuple(mirrors or ()):
+        value = asset_url(path.name, base)
+        if value and value not in urls:
+            urls.append(value)
+    asset = {
         'file': path.name,
-        'url': asset_url(path.name, base_url),
+        'url': urls[0],
         'size': path.stat().st_size,
         'sha256': sha256_file(path),
         'format': fmt,
@@ -93,10 +105,14 @@ def _asset(path: Path, base_url: str, version: str, *,
         'entry': entry,
         'version': version,
     }
+    if len(urls) > 1:
+        asset['urls'] = urls
+    return asset
 
 
 def build_manifest(version: str, zip_path: Path, *,
                    base_url: str = '',
+                   mirrors: tuple = (),
                    channel: str = DEFAULT_CHANNEL,
                    min_version: str = DEFAULT_MIN_VERSION,
                    released_at: str | None = None,
@@ -114,7 +130,8 @@ def build_manifest(version: str, zip_path: Path, *,
         now = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8)))
         released_at = now.replace(microsecond=0).isoformat()
 
-    assets = {'windows-x64': _asset(zip_path, base_url, version, entry=entry)}
+    assets = {'windows-x64': _asset(zip_path, base_url, version, entry=entry,
+                                    mirrors=mirrors)}
     # The installer is the primary asset for new installs and for updating an
     # installed copy.  `windows-x64` stays a zip so that v0.1.2 clients (whose
     # updater only understands zip) can still auto-update instead of failing
@@ -123,7 +140,7 @@ def build_manifest(version: str, zip_path: Path, *,
         setup_path = Path(setup_path)
         if setup_path.is_file():
             assets['windows-x64-setup'] = _asset(
-                setup_path, base_url, version,
+                setup_path, base_url, version, mirrors=mirrors,
                 fmt='installer', layout='installer', entry=entry)
         else:
             print(f'warning: setup not found: {setup_path}', file=sys.stderr)
@@ -145,7 +162,8 @@ def build_manifest(version: str, zip_path: Path, *,
         rollback_zip = Path(rollback_zip)
         if rollback_zip.is_file():
             manifest['rollback'] = _asset(
-                rollback_zip, base_url, rollback_version, entry=entry)
+                rollback_zip, base_url, rollback_version, entry=entry,
+                mirrors=mirrors)
         else:
             print(f'warning: rollback zip not found: {rollback_zip}',
                   file=sys.stderr)
@@ -194,6 +212,9 @@ def main(argv=None) -> int:
     ap.add_argument('--out', default=None, help='defaults to <dist>/latest.json')
     ap.add_argument('--base-url', default='',
                     help='absolute download base; omit for relative URLs')
+    ap.add_argument('--mirror-base-url', action='append', default=[],
+                    metavar='URL',
+                    help='extra download base (repeatable); written to urls[]')
     ap.add_argument('--channel', default=DEFAULT_CHANNEL)
     ap.add_argument('--min-version', default=DEFAULT_MIN_VERSION)
     ap.add_argument('--released-at', default=None,
@@ -228,6 +249,7 @@ def main(argv=None) -> int:
     manifest = build_manifest(
         version, zip_path,
         base_url=args.base_url,
+        mirrors=tuple(args.mirror_base_url or ()),
         channel=args.channel,
         min_version=args.min_version,
         released_at=args.released_at,

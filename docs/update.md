@@ -60,7 +60,13 @@ python packaging\make_latest.py --dist dist --out ..\github-release\latest.json
     },
     "windows-x64-setup": {
       "file": "haoxiangpao_v0.1.3_win64_setup.exe",
-      "url": "haoxiangpao_v0.1.3_win64_setup.exe",
+      "url": "https://gh.llkk.cc/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
+      "urls": [
+        "https://gh.llkk.cc/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
+        "https://gh-proxy.com/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
+        "https://ghfast.top/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
+        "https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe"
+      ],
       "size": 51234567,
       "sha256": "…64 位十六进制…",
       "format": "installer",
@@ -95,6 +101,8 @@ python packaging\make_latest.py --dist dist --out ..\github-release\latest.json
 | `format` | `zip` 或 `installer`，决定更新器走哪条路径 |
 | `layout` | `onedir`（解压即用）或 `installer`（NSIS） |
 | `size` / `sha256` | 下载后必须校验；**安装包没有 sha256 会被直接拒绝**（下载完就要执行它） |
+| `url` | 主下载地址，老客户端只认这一个 |
+| `urls` | 同一文件的全部渠道（镜像在前、官方直链在最后）；客户端探测后按实测速度排序，失败依次重试。老客户端忽略该字段 |
 | `rollback` | 上一稳定版，用于手动或自动回滚 |
 
 ## URL 约定
@@ -106,6 +114,20 @@ python packaging\make_latest.py --dist dist --out ..\github-release\latest.json
   **不要**再用中文资产名：GitHub 会把 `好想跑_v0.1.2_win64.zip` 重写成
   `_v0.1.2_win64.zip`，清单里的链接就 404 了。
 - 不要把 token、账号、`data/` 路径写进清单；它会被公开下载。
+
+### 多镜像
+
+`--base-url` 写主地址（清单里的 `url`），`--mirror-base-url` 可重复，写进 `urls`。
+顺序是「镜像在前、官方直链在最后」。
+
+客户端 0.1.4 起，在用户点「下载更新」时对每个 `urls` 发一个
+`GET` + `Range: bytes=0-65535`，收到第一块就断开，用
+`ttfb + 64KB / 首块速度` 排序；2.5 秒预算内没答完的排到后面，全部失败就按清单
+顺序来。选中的地址只是首选，下载后照常校验 `size` 和 `sha256`，不对就换下一个
+——坏镜像最多浪费一次流量，装不进坏包。
+
+0.1.3 及更老的客户端只读 `url`，不会看 `urls`；所以 `url` 必须是一个能用的地址，
+不能写相对路径指望客户端自己拼镜像。
 
 ### GitHub Releases
 
