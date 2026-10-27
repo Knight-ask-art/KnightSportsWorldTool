@@ -24,10 +24,10 @@ Soft checks (warnings, score deductions):
     instead of being dropped: silence would look like "0 runs today".
   * cadence 140–200 spm
   * stride 0.45–1.75 m
-  * 10-second speed range 1.6–6.5 m/s
-  * pace coefficient of variation ≤ 12 %
+  * 10-second speed peaks ≤ 6.3 m/s, at most 15 % of the windows stopped
+  * pace coefficient of variation ≤ 65 % (real traces: 19–52 %)
   * GPS jump between adjacent points ≤ 100 m
-  * total ascent ≤ 50 m on a campus run
+  * total ascent ≤ 70 m on a campus run
   * per-km pace consistency
 
 The output is a plain dict so the CLI and the web UI can share it:
@@ -267,10 +267,12 @@ def metrics(run: dict) -> dict:
     speed_min = min(speeds) if speeds else None
     speed_max = max(speeds) if speeds else None
     pace_cv = None
+    stop_share = None
     if len(speeds) >= 3:
         mean = statistics.fmean(speeds)
         if mean > 0:
             pace_cv = statistics.pstdev(speeds) / mean
+        stop_share = sum(1 for s in speeds if s < 0.15) / len(speeds)
 
     locs = run.get('locPoints') or run.get('allLocJson') or []
     jumps = []
@@ -315,6 +317,7 @@ def metrics(run: dict) -> dict:
         'km': km, 'seconds': seconds, 'minutes': minutes, 'pace': pace,
         'steps': steps, 'cadence': cadence, 'stride': stride,
         'speed_min': speed_min, 'speed_max': speed_max, 'pace_cv': pace_cv,
+        'stop_share': stop_share,
         'max_jump': max_jump, 'ascent': ascent,
         'start_ms': start_ms, 'start_hhmm': start_hhmm,
         'start_date': start_date, 'days_ago': days_ago,
@@ -499,15 +502,22 @@ def evaluate(run: dict, rules: dict, checkpoints: list | None = None,
             penalty=PENALTY['stride'])
 
     if m['speed_min'] is not None and m['speed_max'] is not None:
-        ok = 1.9 <= m['speed_min'] and m['speed_max'] <= 6.3
+        # Every real trace from this account has a few near-zero windows (a
+        # light, a crossing); judging the floor on a single window flagged all
+        # of them.  What matters is that the stops stay rare and the top speed
+        # is not a sprint.
+        share = m.get('stop_share') or 0.0
+        ok = share <= 0.15 and m['speed_max'] <= 6.3
         add('speed', '10 秒速度', 'pass' if ok else 'warn',
-            '%.1f–%.1f m/s' % (m['speed_min'], m['speed_max']),
-            '常见 1.9–6.3 m/s', penalty=PENALTY['speed'])
+            '%.1f–%.1f m/s，停顿 %.0f%%'
+            % (m['speed_min'], m['speed_max'], share * 100),
+            '峰值建议 ≤ 6.3 m/s，停顿 ≤ 15%', penalty=PENALTY['speed'])
 
     if m['pace_cv'] is not None:
-        ok = m['pace_cv'] <= 0.12
+        # Calibrated on the account's own 2026-09/10 runs: 0.19-0.52.
+        ok = m['pace_cv'] <= 0.65
         add('pace_cv', '配速波动', 'pass' if ok else 'warn',
-            '%.1f%%' % (m['pace_cv'] * 100), '建议 ≤ 12%',
+            '%.1f%%' % (m['pace_cv'] * 100), '真实记录 19–52%',
             penalty=PENALTY['pace_cv'])
 
     if m['max_jump'] is not None:
@@ -516,9 +526,9 @@ def evaluate(run: dict, rules: dict, checkpoints: list | None = None,
             '最大 %.0f m' % m['max_jump'], '相邻点建议 ≤ 100 m',
             penalty=PENALTY['gps'])
 
-    ok = m['ascent'] <= 50
+    ok = m['ascent'] <= 70
     add('ascent', '累计爬升', 'pass' if ok else 'warn',
-        '%.1f m' % m['ascent'], '校园跑建议 ≤ 50 m',
+        '%.1f m' % m['ascent'], '真实记录的起伏约 20 m',
         penalty=PENALTY['ascent'])
 
     # ---- score --------------------------------------------------------
@@ -555,7 +565,7 @@ def self_test() -> list[tuple[str, bool, str]]:
         'min_minutes': 10, 'max_minutes': 90, 'max_per_day': 2,
         'window_start': '00:00', 'window_end': '23:59',
     }
-    run = rundata.generate_run_data(2.5, 6.0, 172,
+    run = rundata.generate_run_data(2.5, 6.0, 150,
                                     center_lat=22.4108, center_lng=112.9408)
     model = evaluate(run, rules)
     out.append(('configured model runs', model['configured'] is True,
@@ -582,7 +592,7 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(('unconfigured is explicit', empty['configured'] is False,
                 empty['summary']))
 
-    broken = rundata.generate_run_data(2.5, 6.0, 172,
+    broken = rundata.generate_run_data(2.5, 6.0, 150,
                                        center_lat=22.4108, center_lng=112.9408)
     broken['fivePoint'][0]['isPass'] = False
     pts = evaluate(broken, rules)
@@ -618,7 +628,7 @@ def self_test() -> list[tuple[str, bool, str]]:
                 bool(uchk) and uchk[0]['status'] == 'warn', uchk[:1]))
 
     yesterday_ms = safety.now_ms() - 24 * 3600 * 1000
-    yrun = rundata.generate_run_data(2.5, 6.0, 172,
+    yrun = rundata.generate_run_data(2.5, 6.0, 150,
                                      center_lat=22.4108, center_lng=112.9408,
                                      start_ms=yesterday_ms)
     ymodel = evaluate(yrun, rules, daily_runs=0)
@@ -628,7 +638,7 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and ydchk[0]['status'] == 'pass', ydchk[:1]))
 
     old_ms = safety.now_ms() - 4 * 24 * 3600 * 1000
-    orun = rundata.generate_run_data(2.5, 6.0, 172,
+    orun = rundata.generate_run_data(2.5, 6.0, 150,
                                      center_lat=22.4108, center_lng=112.9408,
                                      start_ms=old_ms)
     omodel = evaluate(orun, rules, daily_runs=0)

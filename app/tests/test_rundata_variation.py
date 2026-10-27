@@ -42,7 +42,10 @@ def test_per_point_speed_actually_varies():
     run = _run()
     speeds = [p['speed'] for p in run['locPoints'][2:-1]]
     assert statistics.pstdev(speeds) > 0.2, speeds[:5]
-    assert min(speeds) >= 6.0 * 0.95
+    # A stop window legitimately reports ~0 km/h now, so the floor applies to
+    # the bulk of the run, not to every single sample.
+    in_band = [s for s in speeds if 6.0 * 0.95 <= s <= 16.2]
+    assert len(in_band) >= len(speeds) * 0.85, (min(speeds), max(speeds))
     assert max(speeds) <= 16.2
 
 
@@ -60,7 +63,10 @@ def test_totals_stay_exact():
     run = _run()
     last = run['locPoints'][-1]
     assert last['totalDis'] == run['juli'] == 4000
-    assert last['totalTime'] == run['sportTime'] == 1440
+    # Splits are random, but they are rescaled so the sum is still km * pace.
+    splits = [s['seconds'] for s in run['km_splits']]
+    assert run['sportTime'] == sum(splits) == last['totalTime'] == 1440
+    assert len({s for s in splits}) == len(splits)
     assert last['steps'] == run['total_steps']
 
 
@@ -96,11 +102,16 @@ def test_tight_window_still_passes_every_waypoint():
 
 
 def test_runs_start_at_different_points():
-    a = _run(seed=7)['allLocJson'][0]
-    b = _run(seed=11)['allLocJson'][0]
-    gap = math.hypot((a['lat'] - b['lat']) * 110540,
-                     (a['lng'] - b['lng']) * 111320)
-    assert gap > 5, gap
+    starts = [_run(seed=seed)['allLocJson'][0] for seed in (7, 11, 13)]
+    gaps = []
+    for i, a in enumerate(starts):
+        for b in starts[i + 1:]:
+            gaps.append(math.hypot((a['lat'] - b['lat']) * 110540,
+                                   (a['lng'] - b['lng']) * 111320))
+    # The start is rotated 20-50 m along the loop, so different runs must not
+    # begin on the exact same coordinate; the pair distance itself is random.
+    assert min(gaps) > 1.0, gaps
+    assert max(gaps) > 10.0, gaps
 
 
 def test_run_uuid_matches_the_platform():

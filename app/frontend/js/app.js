@@ -54,6 +54,11 @@ let fenceBounds = L.latLngBounds([]);
 const pointLayer = L.layerGroup().addTo(map);
 /* kept name for the existing route code; it contains only real checkpoints */
 let livePoints = [];
+/* Split editor state is touched by redraw() during boot (before the later
+   `let` block would initialise), so it must be hoisted — see the TDZ note at
+   the top of this file. */
+var splitRows = null;           // [{km, seconds}]; null = generated on preview
+var _splitsTimer = null;
 
 function renderPoints(points, opts){
   opts = opts || {};
@@ -431,6 +436,18 @@ function durationText(totalMin){
 function kmText(v){
   return (+v || 0).toFixed(2).replace(/\.?0+$/, '');
 }
+function splitFmt(sec){
+  sec = Math.max(0, Math.round(+sec || 0));
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+function splitParse(text){
+  text = String(text || '').trim().replace(/[’'"]/g, '');
+  let m = text.match(/^(\d+)\s*[:：]\s*(\d{1,2})$/);
+  if(m) return (+m[1]) * 60 + (+m[2]);
+  m = text.match(/^(\d+(?:\.\d+)?)$/);   // decimal minutes, like the pace field
+  if(m) return Math.round((+m[1]) * 60);
+  return null;
+}
 const RUN_LIMITS = {
   km: {min: 0.1, max: 42.2, label: '目标距离', unit: 'km'},
   pace: {min: 2, max: 20, label: '配速', unit: 'min/km'},
@@ -633,6 +650,66 @@ function refreshParams(){
 }
 refreshParams();
 
+/* ---------- per-kilometre splits (editable) ---------- */
+function renderSplits(){
+  const card = $('#splitsCard'), list = $('#splitsList');
+  if(!card || !list) return;
+  if(!splitRows || !splitRows.length){ card.hidden = true; list.innerHTML = ''; return; }
+  card.hidden = false;
+  list.innerHTML = splitRows.map((row, i) => {
+    const dist = +row.km || 0;
+    const label = (Math.abs(dist - 1) < 0.005 ? String(i + 1) : kmText(dist)) + ' km';
+    const pace = dist > 0 ? (+row.seconds || 0) / (60 * dist) : 0;
+    return '<div class="split-row">' +
+      '<span class="split-km">' + label + '</span>' +
+      '<input class="split-input" data-split="' + i + '" value="' + splitFmt(row.seconds) +
+        '" inputmode="text" aria-label="第 ' + (i + 1) + ' 段用时">' +
+      '<span class="split-hint">' + (dist >= 0.05 ? _paceText(pace) + '/km' : '') + '</span>' +
+      '</div>';
+  }).join('');
+  const sumSec = splitRows.reduce((a, r) => a + (+r.seconds || 0), 0);
+  const sumKm = splitRows.reduce((a, r) => a + (+r.km || 0), 0);
+  list.innerHTML += '<div class="split-total">合计 <b>' + kmText(sumKm) + ' km</b> · <b>' +
+    splitFmt(sumSec) + '</b> · 平均 ' +
+    _paceText(sumSec / (60 * Math.max(0.001, sumKm))) + '/km</div>';
+}
+
+function applySplitsToPace(){
+  const km = +$('#inKm').value || 0;
+  if(!splitRows || !splitRows.length || !km) return;
+  const total = splitRows.reduce((a, r) => a + (+r.seconds || 0), 0);
+  const pace = total / 60 / km;
+  if(isFinite(pace) && pace >= RUN_LIMITS.pace.min && pace <= RUN_LIMITS.pace.max){
+    $('#inPace').value = pace.toFixed(2);
+  }
+  refreshParams();
+  renderSplits();
+  updateRunDateLabel();
+  scheduleModelPreview();
+}
+
+function scheduleSplitsPreview(){
+  clearTimeout(_splitsTimer);
+  _splitsTimer = setTimeout(refreshSplits, 260);
+}
+
+async function refreshSplits(){
+  if(!hasSession() || LIVE.submitting) return;
+  const params = readRunParams();
+  if(validateRunParams(params)) return;
+  const j = await liveApi('preview_route', {
+    km: params.km, pace: params.pace, cadence: params.cadence,
+    waypoints: route && route.length >= 2 ? route : null,
+    closed: !!routeClosed,
+    km_times: splitRows ? splitRows.map(r => Math.round(+r.seconds || 0)) : null
+  });
+  if(liveOk(j) && j.data && Array.isArray(j.data.splits) && !splitRows){
+    splitRows = j.data.splits.map(s => ({km: +s.km,
+                                         seconds: Math.round(+s.seconds || 0)}));
+    renderSplits();
+  }
+}
+
 /* ---------- run panel tabs / collapse ---------- */
 function switchRunTab(name){
   if(name !== 'params') closeDatePop();
@@ -678,7 +755,7 @@ document.querySelectorAll('[data-pace]').forEach(b => {
 $('#randomParams').addEventListener('click', () => {
   const kms = [2.0, 2.5, 3.0, 3.5, 4.0];
   const paces = [5.8, 6.0, 6.3, 6.6, 7.0];
-  const cads = [160, 168, 172, 176, 180];
+  const cads = [140, 145, 150, 155, 160];
   const pick = a => a[Math.floor(Math.random() * a.length)];
   distanceManual = true;
   $('#inKm').value = pick(kms);
@@ -1220,6 +1297,10 @@ function enterApp(resetPage){
     try{ map.invalidateSize(); }catch(e){}
     try{ routeMap.invalidateSize(); }catch(e){}
   }, 280);
+  // Fill the split table as soon as the workbench is actually visible; the
+  // preview also runs on every parameter change, but the first login should
+  // not require touching a field to see it.
+  scheduleSplitsPreview();
 }
 async function requestLogin(username, password){
   const j = await liveApi('real_login', {username, password}, 120000);
@@ -4355,7 +4436,7 @@ function wireDatePicker(){
   document.addEventListener('scroll', closeDatePop, true);
 }
 
-function scheduleModelPreview(){ clearTimeout(_modelTimer); _modelTimer = setTimeout(refreshModelPreview, 300); }
+function scheduleModelPreview(){ clearTimeout(_modelTimer); _modelTimer = setTimeout(refreshModelPreview, 300); scheduleSplitsPreview(); }
 async function refreshModelPreview(){
   const seq = ++_modelSeq;
   if(!hasSession()){
@@ -4736,6 +4817,7 @@ async function submitRun(){
     waypoints: route && route.length ? route : null,
     snap_route: true, use_points: !freeRunOn(), geeToken: '',
     date: ti.date, start_time: ti.time, closed: !!routeClosed,
+    km_times: splitRows ? splitRows.map(r => r.seconds) : null,
     ...altitudeArgs(params)
   }, 180000);
   LIVE.submitting = false;
@@ -5370,7 +5452,7 @@ function liveWire(){
     redraw();
     toast('已按线路长度填写；继续画线会同步更新');
   });
-  $('#runCheck').addEventListener('click', () => { refreshModelPreview(); refreshChecks(); toast('已重新检查'); });
+  $('#runCheck').addEventListener('click', () => { refreshModelPreview(); scheduleSplitsPreview(); refreshChecks(); toast('已重新检查'); });
   $('#submitRun').addEventListener('click', submitRun);
   $('#saveRules').addEventListener('click', saveRules);
   $('#saveSemesterGoal').addEventListener('click', saveSemesterGoal);
@@ -5380,7 +5462,32 @@ function liveWire(){
   $('#rulesFetch').addEventListener('click', () => fetchSchoolRules({force: true}));
   $('#netSave').addEventListener('click', saveNetworkConfig);
   $('#netClear').addEventListener('click', clearNetworkConfig);
-  ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => $('#' + id).addEventListener('input', () => { updateRunDateLabel(); scheduleModelPreview(); }));
+  ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => $('#' + id).addEventListener('input', () => {
+    // A new distance or average pace invalidates the split table; the next
+    // preview regenerates it from the new target.
+    if(id === 'inKm' || id === 'inPace'){ splitRows = null; renderSplits(); }
+    updateRunDateLabel(); scheduleModelPreview();
+  }));
+  if($('#splitsList')){
+    $('#splitsList').addEventListener('change', ev => {
+      const inp = ev.target.closest('.split-input');
+      if(!inp) return;
+      const i = +inp.dataset.split;
+      const sec = splitParse(inp.value);
+      if(sec === null || sec <= 0){
+        toast('用时格式：6:03 或 6.05（分钟）');
+        renderSplits();
+        return;
+      }
+      splitRows = (splitRows || []).map(r => Object.assign({}, r));
+      splitRows[i].seconds = sec;
+      applySplitsToPace();
+    });
+    $('#splitsReset').addEventListener('click', () => {
+      splitRows = null; renderSplits(); scheduleModelPreview();
+      toast('已恢复自动分配');
+    });
+  }
   if($('#altMode')){
     $('#altMode').addEventListener('change', altModeChanged);
     ['altMin', 'altMax'].forEach(id => $('#' + id).addEventListener('input', () => {

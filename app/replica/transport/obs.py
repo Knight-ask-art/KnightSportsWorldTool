@@ -78,32 +78,75 @@ def _dist_m(a, b) -> float:
 def _cumulative(run: dict):
     """cumulative distance (m), time (s) and steps for every track point.
 
-    Distance is distributed by TIME, not by measured geometry: the generator
-    emits constant-pace runs, and deriving distance from jittered radii made the
-    implied pace wobble (378 s/km then 331 s/km inside one 6'00" run), which is
-    exactly the kind of artefact a reviewer notices.  Falls back to geometry if
-    the timestamps are degenerate.
+    Distance comes from the generated 28-key points when they are present:
+    ``totalDis`` already carries the per-kilometre pace profile and the stop
+    windows.  Deriving it from time instead (the old behaviour) forced every
+    lap to the same split and threw the whole profile away, which is exactly
+    the artefact a reviewer notices.  Falls back to time, then geometry, when
+    the record has no point column (hand-built payloads in tests).
     """
     locs = run['allLocJson']
     t0 = locs[0]['ts']
     cum_t = [max(0, p['ts'] - t0) / 1000.0 for p in locs]
     span = cum_t[-1]
 
-    if span > 0:
-        cum_d = [run['juli'] * t / span for t in cum_t]
-    else:
-        raw = [0.0]
-        for a, b in zip(locs, locs[1:]):
-            raw.append(raw[-1] + _dist_m(a, b))
-        scale = (run['juli'] / raw[-1]) if raw[-1] > 0 else 0.0
-        cum_d = [d * scale for d in raw]
+    cum_d = None
+    pts = run.get('locPoints') or []
+    if len(pts) == len(locs):
+        try:
+            vals = [float(p.get('totalDis') or 0.0) for p in pts]
+        except (TypeError, ValueError):
+            vals = []
+        if (len(vals) == len(locs) and vals[-1] > 0
+                and all(b >= a for a, b in zip(vals, vals[1:]))):
+            total = float(run['juli'])
+            scale = total / vals[-1] if vals[-1] else 0.0
+            cum_d = [v * scale for v in vals]
+            cum_d[-1] = total
+
+    if cum_d is None:
+        if span > 0:
+            cum_d = [run['juli'] * t / span for t in cum_t]
+        else:
+            raw = [0.0]
+            for a, b in zip(locs, locs[1:]):
+                raw.append(raw[-1] + _dist_m(a, b))
+            scale = (run['juli'] / raw[-1]) if raw[-1] > 0 else 0.0
+            cum_d = [d * scale for d in raw]
 
     if span <= 0:
         span = 1.0
     total_steps = int(run.get('total_steps') or 0)
-    cum_s = [int(round(total_steps * t / span)) for t in cum_t]
-    if cum_s:
-        cum_s[-1] = total_steps
+    cum_s = None
+    windows = run.get('step_freq_json') or []
+    if windows and len(cum_t) > 1:
+        # Steps must come from the step windows, not from time.  Spreading
+        # total_steps linearly over the clock made every lap report the exact
+        # same cadence (150.0 spm on every split) while the stride column
+        # still moved, which no real watch produces.
+        bounds = []
+        for w in windows:
+            b = max(0.0, (float(w.get('beginTime', 0)) - t0) / 1000.0)
+            e = max(b, (float(w.get('endTime', 0)) - t0) / 1000.0)
+            bounds.append((b, e, max(0.0, float(w.get('stepsNum') or 0))))
+        out = []
+        j = 0
+        done = 0.0
+        for t in cum_t:
+            while j < len(bounds) and t >= bounds[j][1]:
+                done += bounds[j][2]
+                j += 1
+            extra = 0.0
+            if j < len(bounds) and t > bounds[j][0]:
+                b, e, n = bounds[j]
+                extra = n * (t - b) / max(1e-6, e - b)
+            out.append(int(round(done + extra)))
+        out[-1] = total_steps
+        cum_s = out
+    if cum_s is None:
+        cum_s = [int(round(total_steps * t / span)) for t in cum_t]
+        if cum_s:
+            cum_s[-1] = total_steps
     return cum_d, cum_t, cum_s
 
 

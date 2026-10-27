@@ -334,6 +334,9 @@ def do_forge(acct, cps, wps, args, start_ms=None):
     log('[3/6] 造数...')
     try:
         alt = _altitude_kwargs(args)
+        raw_kt = str(getattr(args, 'km_times', '') or '').strip()
+        km_times = ([float(x) for x in raw_kt.split(',') if x.strip()]
+                    if raw_kt else None)
         run = generate_run_data(
             distance_km=args.km, pace_min_per_km=args.pace,
             cadence=args.cadence,
@@ -343,6 +346,7 @@ def do_forge(acct, cps, wps, args, start_ms=None):
             altitude_base=getattr(args, 'altitude', 25.0),
             start_ms=start_ms,
             run_uuid=new_run_uuid(getattr(acct, 'platform', None)),
+            km_times=km_times,
             **alt)
     except ValueError as e:
         raise SystemExit(_fail('造数参数无效: %s' % e, 1))
@@ -554,7 +558,9 @@ def main(argv=None, client_factory=None):
     run_g = ap.add_argument_group('跑步')
     run_g.add_argument('--km', type=float, default=2.5)
     run_g.add_argument('--pace', type=float, default=6.0, help='分钟/公里')
-    run_g.add_argument('--cadence', type=int, default=172)
+    run_g.add_argument('--cadence', type=int, default=150)
+    run_g.add_argument('--km-times', default='', metavar='S1,S2,...',
+                       help='每公里用时（秒），逗号分隔；覆盖 --pace 的总时长')
     run_g.add_argument('--weight', type=float, default=health.DEFAULT_WEIGHT_KG)
     run_g.add_argument('--altitude', type=float, default=25.0,
                        help='海拔基准（auto 模式）或固定海拔（fixed 模式），米')

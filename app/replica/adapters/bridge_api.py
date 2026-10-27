@@ -755,8 +755,8 @@ class ReplicaApi:
         return self._post(self.iydsj, '/api/v70260/runnings/save/record',
                           payload, headers=C.upload_headers())
 
-    def build_run_data(self, distance_km=2.5, pace=6.0, cadence=172,
-                       lat=None, lng=None, seed=None):
+    def build_run_data(self, distance_km=2.5, pace=6.0, cadence=150,
+                       lat=None, lng=None, seed=None, km_times=None):
         import random as _random
         if lat is None or lng is None:
             d = self._read_session()
@@ -765,11 +765,12 @@ class ReplicaApi:
         if not self._center_ok(lat, lng):
             raise ValueError('校区坐标未解析，不能生成跑步数据')
         rng = _random.Random(seed) if seed is not None else None
-        return generate_run_data(distance_km, pace, cadence, lat, lng, rng=rng)
+        return generate_run_data(distance_km, pace, cadence, lat, lng, rng=rng,
+                                 km_times=km_times)
 
     # -- replica extras (not in the 71; needed to drive tasks end-to-end) --
     def run_task_submit(self, sid, km=2.5, pace=6.0, geetoken='',
-                        cadence=172):
+                        cadence=150):
         """Create a run task, build forged data, upload, update task status."""
         t = self._task('run', {'sid': sid, 'km': km})
         tid = t['data']['task_uuid']
@@ -1815,8 +1816,8 @@ class ReplicaApi:
             return _ok(out)
         return _fail('; '.join(out['errors']) or '未取到围栏', data=out)
 
-    def preview_route(self, km=2.5, pace=6.0, cadence=172, waypoints=None,
-                      closed=True):
+    def preview_route(self, km=2.5, pace=6.0, cadence=150, waypoints=None,
+                      closed=True, km_times=None):
         """Local track preview (no network): plan through waypoints."""
         try:
             wp = [(float(a), float(b)) for a, b in (waypoints or [])]
@@ -1830,12 +1831,14 @@ class ReplicaApi:
             run = generate_run_data(float(km), float(pace), int(cadence),
                                     center_lat=lat, center_lng=lng,
                                     waypoints=wp or None,
-                                    closed=bool(closed))
+                                    closed=bool(closed),
+                                    km_times=km_times)
             return _ok({
                 'allLocJson': run['allLocJson'],
                 'km': run['km'],
                 'sportTime': run['sportTime'],
                 'juli': run['juli'],
+                'splits': run.get('km_splits') or [],
                 'points': len(run['allLocJson']),
             })
         except Exception as e:  # noqa: BLE001
@@ -2565,12 +2568,13 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001
             return _fail('诊断包生成失败: %s' % e)
 
-    def real_preview_model(self, km=2.5, pace=6.0, cadence=172,
+    def real_preview_model(self, km=2.5, pace=6.0, cadence=150,
                            altitude=25.0, waypoints=None, checkpoints=None,
                            days_ago=0, start_time=None,
                            daily_runs=None, daily_source=None, date=None,
                            closed=True, altitude_mode='auto',
-                           altitude_range=None, altitude_profile=None):
+                           altitude_range=None, altitude_profile=None,
+                           km_times=None):
         """Evaluate the user-entered rules against a local preview run.
 
         This is offline (no server call).  It lets the UI show a real score
@@ -2623,6 +2627,7 @@ class ReplicaApi:
                 altitude_profile=altitude_profile or None,
                 start_ms=start_ms,
                 closed=bool(closed),
+                km_times=km_times,
                 run_uuid=new_run_uuid(
                     self._effective_device(d).get('platform')))
             if daily_runs is None:
@@ -2650,6 +2655,7 @@ class ReplicaApi:
                           'date': S.to_beijing(start_ms).strftime('%Y-%m-%d')},
                 'run': {'km': run.get('km'), 'sportTime': run.get('sportTime'),
                         'juli': run.get('juli'),
+                        'splits': run.get('km_splits') or [],
                         'points': len(run.get('allLocJson') or [])},
             })
         except Exception as e:  # noqa: BLE001
@@ -2678,12 +2684,13 @@ class ReplicaApi:
             return _fail('吸附失败: %s' % e)
         return _ok(res)
 
-    def real_submit_run(self, km=2.5, pace=6.0, cadence=172,
+    def real_submit_run(self, km=2.5, pace=6.0, cadence=150,
                         waypoints=None, geeToken='', use_points=True,
                         altitude=25.0, snap_route=True,
                         days_ago=0, start_time=None, date=None,
                         closed=True, altitude_mode='auto',
-                        altitude_range=None, altitude_profile=None):
+                        altitude_range=None, altitude_profile=None,
+                        km_times=None):
         """Forge a run, sign it with the official scheme, submit it for real,
         then read the record back so the caller sees the completion checklist.
 
@@ -2832,6 +2839,7 @@ class ReplicaApi:
                                     altitude_profile=altitude_profile or None,
                                     start_ms=start_ms,
                                     closed=bool(closed),
+                                    km_times=km_times,
                                     run_uuid=new_run_uuid(
                                         getattr(acct, 'platform', None)))
         except Exception as e:  # noqa: BLE001

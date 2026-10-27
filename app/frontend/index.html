@@ -494,8 +494,17 @@
               <div class="params">
                 <div class="field"><label for="inKm" title="总距离；画好路线后会自动按线路长度填写，手动修改后保留你的值">目标距离</label><input id="inKm" type="number" inputmode="decimal" min="0.1" max="42.2" step="0.01" value="2.5"><span class="unit">km</span></div>
                 <div class="field"><label for="inPace">配速</label><input id="inPace" type="number" inputmode="decimal" min="2" max="20" step="0.01" value="6.00"><span class="unit">min/km</span></div>
-                <div class="field"><label for="inCad">步频</label><input id="inCad" type="number" inputmode="numeric" min="60" max="260" step="1" value="172"><span class="unit">spm</span></div>
+                <div class="field"><label for="inCad">步频</label><input id="inCad" type="number" inputmode="numeric" min="60" max="260" step="1" value="150"><span class="unit">spm</span></div>
                 <div class="field" id="inAltField"><label for="inAlt"><span id="inAltLabelText">基准海拔</span><em id="inAltUse">自动使用</em></label><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span class="unit">m</span></div>
+              </div>
+
+              <div class="splits-card" id="splitsCard" hidden>
+                <div class="splits-head">
+                  <b>每公里用时</b>
+                  <span class="mini" id="splitsNote">直接改数字，总配速会跟着变</span>
+                  <button type="button" class="btn small ghost" id="splitsReset">恢复自动</button>
+                </div>
+                <div class="splits-list" id="splitsList"></div>
               </div>
 
               <div class="alt-card" id="altCard">

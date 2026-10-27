@@ -7,9 +7,10 @@ Evidence (mock_db实测 + 反汇编局部变量表, see 逆向分析完整报告
 - segmentJson: 5 segments {180s/500m, speedColor=#4CAF50}
 - fivePoint: 5 calibration points, every 6th track point
 - juli/km, sportTime, sportunid
-- sample: 2.5km/900s, speed ~2.7-2.9 m/s, steps ~172/min
+- sample: 2.5km/900s, speed ~2.7-2.9 m/s, steps ~150/min
 - route: circular random route, drift +-0.0004deg, altitude 20-50m
 """
+import bisect
 import json
 import math
 import random
@@ -37,6 +38,24 @@ FIVE_EVERY = 6
 #: profile block in :func:`generate_run_data`.
 PACE_TAU_S = 24.0
 PACE_SIGMA = 0.020
+
+#: GPS-level pace noise, on top of the physiological drift above.  The
+#: account's own 4 km traces (2026-09/10) have a 10 s window distance CV of
+#: 0.19-0.52, and it tracks pace almost exactly like ``0.20 * (pace/6)^1.5``
+#: (6'05" -> 0.19, 7'25" -> 0.41, 8'57" -> 0.52): a fixed GPS position error
+#: hurts the measured distance more the slower the window moves.  A smooth OU
+#: with 2% sd produced 0.03-0.07, i.e. a mathematically perfect pace curve that
+#: no phone ever records.
+WINDOW_TAU_S = 10.0
+WINDOW_SIGMA = 0.20
+
+#: Cadence drifts on a slower clock than pace, so per-kilometre splits end up
+#: with different average cadences (real laps differ by several spm).  Keep the
+#: drift fast enough that it does not park on one side of a whole kilometre:
+#: an earlier 45 s / 9% setting produced 120 and 183 spm laps in the same
+#: 6'00" run.
+CADENCE_TAU_S = 30.0
+CADENCE_SIGMA = 0.035
 
 
 def new_run_uuid(platform: str | None = None) -> str:
@@ -96,9 +115,9 @@ def _trim_polyline(poly: list, target_m: float) -> list:
 def _rotate_polyline(poly: list, start_m: float) -> list:
     """Start the closed path at `start_m`, keeping it continuous.
 
-    `_point_at` with `% total` jumps from the trimmed end back to the original
-    start, which `validate_run_data` sees as a teleport.  Rotating the point
-    list is seamless: the cut point is appended on both sides.
+    Sampling at ``f % total`` would jump from the trimmed end back to the
+    original start, which ``validate_run_data`` sees as a teleport.  Rotating
+    the point list is seamless: the cut point is appended on both sides.
     """
     if not poly or start_m <= 0:
         return poly
@@ -153,20 +172,6 @@ def _loop_start_for_waypoints(loop: list, target_m: float, rng,
     want = preferred_m if preferred_m > 0 else rng.uniform(20.0, 50.0)
     off = min(want, slack)
     return (base - off) % lap
-
-
-def _point_at(poly: list, seg_lens: list, target_m: float) -> tuple:
-    """Interpolate the (lat, lng) sitting `target_m` along the polyline."""
-    walked = 0.0
-    for k, seg in enumerate(seg_lens):
-        if walked + seg >= target_m or k == len(seg_lens) - 1:
-            frac = (target_m - walked) / seg if seg > 0 else 0.0
-            frac = min(max(frac, 0.0), 1.0)
-            a, b = poly[k], poly[k + 1]
-            return (a[0] + (b[0] - a[0]) * frac,
-                    a[1] + (b[1] - a[1]) * frac)
-        walked += seg
-    return poly[-1]
 
 
 def build_loop(waypoints: list, target_m: float) -> list:
@@ -237,8 +242,29 @@ def _sample_loop(poly: list, n_points: int, target_m: float | None,
     span = min(target_m, total) if target_m else total
     if not dist_fractions:
         dist_fractions = [i / max(1, n_points - 1) for i in range(n_points)]
-    return [_point_at(poly, seg_lens, span * f)
-            for f in dist_fractions[:n_points]]
+
+    # Cumulative lengths + bisect: walking the polyline from the start for
+    # every one of the 400-700 samples was ~0.5 s per run (the loop can have
+    # thousands of vertices), and the UI previews a run on every keystroke.
+    cum = []
+    acc = 0.0
+    for seg in seg_lens:
+        acc += seg
+        cum.append(acc)
+    last = len(seg_lens) - 1
+
+    out = []
+    for f in dist_fractions[:n_points]:
+        target = span * max(0.0, min(1.0, f))
+        k = min(bisect.bisect_right(cum, target), last)
+        prev = cum[k - 1] if k else 0.0
+        seg = seg_lens[k]
+        frac = (target - prev) / seg if seg > 0 else 0.0
+        frac = min(max(frac, 0.0), 1.0)
+        a, b = poly[k], poly[k + 1]
+        out.append((a[0] + (b[0] - a[0]) * frac,
+                    a[1] + (b[1] - a[1]) * frac))
+    return out
 
 
 def _passes_near(pts: list[dict], lat: float, lng: float,
@@ -302,33 +328,80 @@ def _snap_to_waypoints(pts: list[dict], waypoints: list, limit_m: float = 35.0):
             })
 
 
-def _altitudes(n: int, rng, base: float = 25.0) -> list[float]:
-    """Barometric altitude as an Ornstein-Uhlenbeck process around `base`.
+def _altitudes(n: int, rng, base: float = 25.0,
+               distance_km: float | None = None) -> list[float]:
+    """Terrain-shaped barometric altitude around `base`.
 
-    Ported from `src/track/generator.rs`:
+    The account's real traces span 19-23 m over 4 km, and a 1.3 km trace spans
+    10 m, so the target peak-to-peak grows with distance instead of being one
+    fixed band.
 
-        alt      = base + uniform(-1, 1)
-        alt_sigma = uniform(3.8, 6.2) / (0.40 * n_est)      # n_est = dur / 5
-        each point: alt += 0.04 * (base - alt) + gauss(0, alt_sigma)
+    The shape is deliberately not a clean sum of sines (that reads as a
+    generated wave on the elevation chart):
 
-    The previous version drew a full sine over the run, which gives a clean
-    climb-and-descend arc.  A flat campus run does not do that — the barometer
-    sits near the local elevation and jitters by a few centimetres.
+    * 3 waves with different periods (0.5-6 cycles per run);
+    * a slow barometric drift;
+    * 0-2 short ramps (bridge / underpass / stairs) that create a plateau and
+      a shoulder instead of a smooth crest;
+    * a gentle correlated sensor wander (~25 s), which is what makes a real
+      altitude trace look "alive" at 30 m resolution.
 
-    `base` is the local elevation in metres, not a constant: 25 m is a rough
-    figure for this part of 江门, and can be overridden from the CLI.
+    The terrain part is finally rescaled to the distance-derived peak-to-peak,
+    so the requested span is exact before the (small) sensor wander is added.
     """
-    n_est = max(1, n)
-    sigma = rng.uniform(3.8, 6.2) / (0.40 * n_est)
-    alt = base + rng.uniform(-1.0, 1.0)
+    n = max(1, int(n))
+    km = float(distance_km) if distance_km else n * 0.0084
+    km = max(0.3, min(20.0, km))
+    span = (rng.uniform(7.5, 9.5)
+            + rng.uniform(2.6, 3.6) * min(km, 8.0))
+
+    waves = [
+        (rng.uniform(0.30, 0.60), rng.uniform(0.5, 1.3),
+         rng.uniform(0.0, 2.0 * math.pi)),
+        (rng.uniform(0.15, 0.35), rng.uniform(1.6, 3.2),
+         rng.uniform(0.0, 2.0 * math.pi)),
+        (rng.uniform(0.05, 0.15), rng.uniform(4.0, 7.0),
+         rng.uniform(0.0, 2.0 * math.pi)),
+    ]
+    drift = rng.uniform(-0.9, 0.9)
+    ramps = [(rng.uniform(0.12, 0.88),
+              rng.choice((-1.0, 1.0)) * rng.uniform(1.2, 3.0),
+              rng.uniform(0.008, 0.022))
+             for _ in range(rng.randint(0, 2))]
+
+    phi = math.exp(-3.0 / 25.0)
+    rough_sigma = rng.uniform(0.06, 0.14)
+    rough = 0.0
+    terrain = []
+    for i in range(n):
+        u = i / max(1, n - 1)
+        v = sum(a * math.sin(2.0 * math.pi * c * u + p)
+                for a, c, p in waves) + drift * u
+        for pos, height, width in ramps:
+            v += height / (1.0 + math.exp(-(u - pos) / width))
+        terrain.append(v)
+
+    lo, hi = min(terrain), max(terrain)
+    if hi - lo < 1e-9:
+        terrain = [0.0] * n
+        mid, scale = 0.0, 0.0
+    else:
+        mid = (hi + lo) / 2.0
+        scale = span / (hi - lo)
+
+    # Roughness is added in metres AFTER the rescale.  Scaling it with the
+    # terrain was a trap: when the waves nearly cancelled, the scale factor
+    # blew the sensor wander up to +-20 m and the ascent column read 170-600 m.
     out = []
-    for _ in range(n):
-        alt += 0.04 * (base - alt) + rng.gauss(0.0, sigma)
-        out.append(round(alt, 1))
+    for v in terrain:
+        rough = (phi * rough
+                 + rng.gauss(0.0, rough_sigma * math.sqrt(1.0 - phi * phi)))
+        out.append(round(base + (v - mid) * scale + rough
+                         + rng.gauss(0.0, 0.03), 1))
     return out
 
 
-#: Altitude modes exposed by the CLI/UI.  `auto` keeps the OU barometer;
+#: Altitude modes exposed by the CLI/UI.  `auto` is the synthetic terrain;
 #: `fixed` is one value (zero climb); `range` maps the synthetic profile to a
 #: chosen min/max; `template` follows a user-selected local GPX/JSON profile.
 ALTITUDE_MODES = ('auto', 'fixed', 'range', 'template')
@@ -455,7 +528,8 @@ def resample_profile(values: list[float], n: int) -> list[float]:
 def make_altitudes(n: int, rng, base: float = 25.0,
                    mode: str = 'auto',
                    alt_range: list | tuple | None = None,
-                   profile: list[float] | None = None) -> list[float]:
+                   profile: list[float] | None = None,
+                   distance_km: float | None = None) -> list[float]:
     """Altitude sequence for one run.
 
     ``auto``     – OU barometer around `base` (legacy behaviour).
@@ -500,7 +574,7 @@ def make_altitudes(n: int, rng, base: float = 25.0,
     if mode == 'range':
         if rng_range is None:
             raise ValueError('海拔区间模式需要 MIN MAX')
-        raw = _altitudes(n, rng, base=0.0)
+        raw = _altitudes(n, rng, base=0.0, distance_km=distance_km)
         mapped = _map_profile(raw, *rng_range)
         lo, hi = rng_range
         return [min(hi, max(lo, round(v, 1))) for v in mapped]
@@ -522,7 +596,7 @@ def make_altitudes(n: int, rng, base: float = 25.0,
             out.append(v)
         return out
 
-    return _altitudes(n, rng, base=base)
+    return _altitudes(n, rng, base=base, distance_km=distance_km)
 
 
 def _apply_gps_jitter(pts: list[dict], rng, rho: float = 0.72,
@@ -697,7 +771,9 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
                 p['index'] = i
 
         alts = make_altitudes(len(pts), rng, base=alt_base, mode=alt_mode,
-                              alt_range=alt_range, profile=alt_profile)
+                              alt_range=alt_range, profile=alt_profile,
+                              distance_km=(float(target_m) / 1000.0
+                                           if target_m else None))
         for p, a in zip(pts, alts):
             p['alt'] = a
         if _adjacent_ok(pts):
@@ -705,13 +781,101 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
     return pts
 
 
+def _distinct_seconds(vals: list[int], total: int | None = None) -> list[int]:
+    """Nudge equal splits apart by one second.
+
+    Two laps that both read 6'00" are the exact complaint that started this
+    work: the profile behind them is different, but the table is not.  When
+    ``total`` is given the borrowed seconds are taken back from the longest
+    splits (never landing on another lap's value), so the run duration does
+    not move.
+    """
+    used = set()
+    out = []
+    extra = 0
+    for v in vals:
+        while v in used:
+            v += 1
+            extra += 1
+        used.add(v)
+        out.append(v)
+    guard = 0
+    while total is not None and extra > 0 and guard < 500:
+        guard += 1
+        moved = False
+        for k in sorted(range(len(out)), key=lambda i: -out[i]):
+            cand = out[k] - 1
+            if cand > 0 and cand not in used:
+                used.discard(out[k])
+                out[k] = cand
+                used.add(cand)
+                extra -= 1
+                moved = True
+                break
+        if not moved:
+            break
+    return out
+
+
+def _km_cadence_factors(n_km: int, rng) -> list[float]:
+    """One multiplicative cadence level per kilometre.
+
+    Steps used to be a pure function of distance, so every lap divided back to
+    the same 150.0 spm even though the stride column moved.  Adjacent
+    kilometres are forced at least 2% apart so the table never looks copied.
+    """
+    n_km = max(1, int(n_km))
+    out = []
+    prev = 1.0
+    for k in range(n_km):
+        f = min(1.04, max(0.96, 1.0 + rng.gauss(0.0, 0.025)))
+        if k:
+            gap = f - prev
+            if abs(gap) < 0.008:
+                step = 0.008 if gap >= 0.0 else -0.008
+                f = prev + step
+                if not (0.96 <= f <= 1.04):
+                    f = prev - step
+        out.append(f)
+        prev = f
+    return out
+
+
+def _km_pace_factors(n_km: int, rng) -> list[float]:
+    """One multiplicative pace factor per kilometre.
+
+    Four laps that all read exactly 6'00" are the clearest "generated" tell in
+    the record.  Real splits wander: warm-up, a hill, a light, a push at the
+    end.  The walk is AR(1)-ish around 1.0 (adjacent kilometres still
+    correlate) with a hard floor on the neighbour gap, then renormalised so
+    the mean stays 1.0.  The caller rescales the draws to the requested total,
+    so a wide spread costs nothing in the header.
+    """
+    n_km = max(1, int(n_km))
+    out = []
+    prev = 1.0
+    for k in range(n_km):
+        f = min(1.12, max(0.88, 1.0 + rng.gauss(0.0, 0.060)))
+        if k:
+            gap = f - prev
+            if abs(gap) < 0.030:
+                step = 0.030 if gap >= 0.0 else -0.030
+                f = prev + step
+                if not (0.88 <= f <= 1.12):
+                    f = prev - step
+        out.append(f)
+        prev = f
+    mean = sum(out) / len(out)
+    return [f / mean for f in out]
+
+
 def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
-                      cadence: int = 172, center_lat: float | None = None,
+                      cadence: int = 150, center_lat: float | None = None,
                       center_lng: float | None = None,
                       rng: random.Random | None = None,
                       waypoints: list | None = None,
                       n_points: int | None = None,
-                      sample_seconds: float = 5.0,
+                      sample_seconds: float = 3.0,
                       checkpoints: list | None = None,
                       weight_kg: float = health.DEFAULT_WEIGHT_KG,
                       altitude_base: float = 25.0,
@@ -720,7 +884,8 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       altitude_profile: list[float] | None = None,
                       start_ms: int | None = None,
                       closed: bool = True,
-                      run_uuid: str | None = None) -> dict:
+                      run_uuid: str | None = None,
+                      km_times: list[float] | None = None) -> dict:
     """Full forged record. 2.5km default mirrors the verified mock sample.
 
     waypoints=[(lat,lng),...] routes through those checkpoints; ``closed``
@@ -739,6 +904,12 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
       * ``range`` – synthetic profile mapped into ``altitude_range``;
       * ``template`` – ``altitude_profile`` (parsed from local GPX/JSON),
         optionally mapped into ``altitude_range``.
+
+    ``km_times`` is the edited split table: seconds per kilometre, one entry
+    per full kilometre plus the remainder (``ceil(distance_km)`` entries).
+    When present it fixes the duration at the sum of the entries.  Without it
+    each kilometre is drawn independently around ``pace_min_per_km`` and the
+    draws are rescaled so the duration is exactly ``distance * pace``.
     """
     # There is deliberately no built-in campus here.  Callers either pass the
     # account's real fence centre or a route whose first point is the centre;
@@ -763,18 +934,54 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                          % (pace_min_per_km,))
     if not (cadence > 0):
         raise ValueError('cadence must be > 0 (got %r)' % (cadence,))
-    total_seconds = int(distance_km * pace_min_per_km * 60)
-    if total_seconds <= 0:
-        raise ValueError('duration rounds to 0 s (distance*pace too small)')
     total_meters = int(distance_km * 1000)
-    speed = round(distance_km * 1000 / total_seconds, 2)
+
+    # ---- per-kilometre targets -------------------------------------------
+    # ``km_times`` (seconds per kilometre, one entry per full km plus the
+    # remainder) is what the UI's split editor sends back.  Without it each
+    # kilometre gets its own random draw centred on the requested pace.  Either
+    # way the run duration is the sum of the split times, and the distance is
+    # the sum of the segment lengths.
+    n_km = max(1, int(math.ceil(distance_km - 1e-9)))
+    seg_m = [1000.0] * n_km
+    seg_m[-1] = max(1.0, float(total_meters) - 1000.0 * (n_km - 1))
+    if km_times is not None:
+        vals = [float(x) for x in km_times]
+        if len(vals) != n_km:
+            raise ValueError(
+                'km_times needs %d entries for %.2f km (got %d)'
+                % (n_km, distance_km, len(vals)))
+        if any(not math.isfinite(v) or v <= 0 for v in vals):
+            raise ValueError('km_times must be positive seconds')
+        total_seconds = int(round(sum(vals)))
+        if total_seconds <= 0:
+            raise ValueError('km_times sum rounds to 0 s')
+        seg_t = [max(1, int(round(v))) for v in vals]
+        seg_t[-1] = max(1, seg_t[-1] + total_seconds - sum(seg_t))
+        seg_t = _distinct_seconds(seg_t, total_seconds)
+    else:
+        target = int(distance_km * pace_min_per_km * 60)
+        if target <= 0:
+            raise ValueError('duration rounds to 0 s (distance*pace too small)')
+        base_t = [m / 1000.0 * pace_min_per_km * 60.0 for m in seg_m]
+        raw_t = [t * f for t, f in zip(base_t, _km_pace_factors(n_km, rng))]
+        # Each kilometre is its own random draw (up to +-12%, so the splits
+        # visibly differ); they are then scaled together so the sum is exactly
+        # the duration the pace field promises.
+        scale = target / max(1e-9, sum(raw_t))
+        seg_t = [max(1, int(round(t * scale))) for t in raw_t]
+        seg_t[-1] = max(1, seg_t[-1] + target - sum(seg_t))
+        seg_t = _distinct_seconds(seg_t, target)
+    total_seconds = sum(seg_t)
+    pace_min_per_km = total_seconds / 60.0 / max(1e-9, distance_km)
+    speed = round(float(total_meters) / total_seconds, 2)
     total_steps = int(total_seconds / 60 * cadence)
 
     if n_points is None:
         n_points = max(N_POINTS, int(round(total_seconds / max(0.5, sample_seconds))))
     n_points = int(n_points)
 
-    # ---- pace profile (10 s buckets) --------------------------------------
+    # ---- pace profile (1 s clock, 10 s windows) ---------------------------
     # Built BEFORE the track: the sampled points must follow the same
     # acceleration / fatigue curve.  The old order produced a perfectly
     # constant per-point speed (6.5941 km/h for all 444 points), which is a
@@ -789,34 +996,94 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     avg_mps = total_meters / max(1, total_seconds)
     phi = math.exp(-SEG_SECONDS / PACE_TAU_S)
     innovation = PACE_SIGMA * math.sqrt(1.0 - phi * phi)
+    win_phi = math.exp(-SEG_SECONDS / WINDOW_TAU_S)
+    win_sigma = min(0.55, max(0.15, WINDOW_SIGMA
+                                  * (pace_min_per_km / 6.0) ** 1.5))
+    win_innovation = win_sigma * math.sqrt(1.0 - win_phi * win_phi)
+
+    seg_bounds = [0]
+    for t in seg_t:
+        seg_bounds.append(seg_bounds[-1] + t)
+    k_of = [0] * total_seconds
+    for k in range(n_km):
+        for j in range(seg_bounds[k], seg_bounds[k + 1]):
+            k_of[j] = k
+
+    shapes = [1.0] * total_seconds
     pace_dev = 0.0
-    raw_d = []
-    for i in range(n_buckets):
-        t = i / max(1, n_buckets - 1)
+    window_dev = 0.0
+    for j in range(total_seconds):
+        if j % SEG_SECONDS == 0:
+            pace_dev = phi * pace_dev + rng.gauss(0.0, innovation)
+            window_dev = (win_phi * window_dev
+                          + rng.gauss(0.0, win_innovation))
+        t = j / max(1, total_seconds - 1)
         ramp = 0.86 + 0.14 * min(1.0, t / 0.06)
         fatigue = 1.0 - 0.06 * t
-        pace_dev = phi * pace_dev + rng.gauss(0.0, innovation)
-        raw_d.append(avg_mps * SEG_SECONDS * ramp * fatigue * (1.0 + pace_dev))
-    d_scale = total_meters / max(0.001, sum(raw_d))
-    bucket_m = [x * d_scale for x in raw_d]
+        # A negative window can otherwise push (1 + window_dev) below zero at
+        # slow paces (sigma grows with pace); a negative speed second made
+        # totalDis go backwards and silently forced laps back to a time-linear
+        # distance.
+        shapes[j] = max(0.0, ramp * fatigue
+                        * (1.0 + pace_dev) * (1.0 + window_dev))
+
+    # ---- stops -----------------------------------------------------------
+    # Real traces are bimodal: either no pause at all, or ~6% of the 10 s
+    # windows under 1 m (a light or a crossing).  The generator used to emit a
+    # run that never stopped.
+    if total_seconds >= 80 and rng.random() < 0.55:
+        for _ in range(rng.randint(1, 3)):
+            start = rng.randint(max(1, total_seconds // 10),
+                                max(1, total_seconds - 30))
+            for j in range(start, min(total_seconds,
+                                      start + rng.randint(12, 30))):
+                shapes[j] *= rng.uniform(0.0, 0.04)
+
+    # Normalise inside each kilometre so it covers exactly ``seg_m[k]`` metres
+    # in ``seg_t[k]`` seconds.  A pause is absorbed by the rest of its own
+    # split instead of shifting the requested total, and the split table the
+    # operator edits is what the record actually reports.
+    norm = [0.0] * n_km
+    for j in range(total_seconds):
+        norm[k_of[j]] += shapes[j]
+    for k in range(n_km):
+        span = max(1, seg_bounds[k + 1] - seg_bounds[k])
+        norm[k] = max(1e-9, norm[k] / span)
+
     cum_before = [0.0]
-    for x in bucket_m:
-        cum_before.append(cum_before[-1] + x)
+    for j in range(total_seconds):
+        k = k_of[j]
+        v = (seg_m[k] / seg_t[k]) * shapes[j] / norm[k]
+        cum_before.append(cum_before[-1] + v)
+    drift = total_meters - cum_before[-1]
+    if abs(drift) > 1e-6:
+        # Float accumulation only; spread it evenly so the kilometre knots
+        # move by a fraction of a millimetre, never by a step.
+        for j in range(1, total_seconds + 1):
+            cum_before[j] += drift * j / total_seconds
+
+    bucket_m = []
+    for i in range(n_buckets):
+        a = i * SEG_SECONDS
+        b = min(a + SEG_SECONDS, total_seconds)
+        bucket_m.append(cum_before[b] - cum_before[a])
 
     def dist_at(sec):
         if sec <= 0:
             return 0.0
         if sec >= total_seconds:
             return cum_before[-1]
-        pos = sec / SEG_SECONDS
-        i = min(int(pos), n_buckets - 1)
-        return cum_before[i] + bucket_m[i] * (pos - i)
+        i = int(sec)
+        frac = sec - i
+        return cum_before[i] + (cum_before[i + 1] - cum_before[i]) * frac
 
     def frac_at(sec):
         return dist_at(sec) / max(0.001, cum_before[-1])
 
-    # ---- sample times: 4-6 s apart, normalised to the run duration --------
-    intervals = [rng.uniform(4.0, 6.0) for _ in range(max(0, n_points - 1))]
+    # ---- sample times: 2-4 s apart, normalised to the run duration --------
+    # Real device samples land every 2.2-3.4 s; the old fixed 5 s grid left
+    # roughly half the points a phone would have recorded.
+    intervals = [rng.uniform(2.2, 3.8) for _ in range(max(0, n_points - 1))]
     if intervals:
         k = total_seconds / max(1e-6, sum(intervals))
         times = [0.0]
@@ -869,7 +1136,16 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
 
     fracs_geo = [g / total_geo for g in geo]
     fracs_geo[-1] = 1.0
-    point_times = [time_at_frac(f) for f in fracs_geo]
+    if len(locs) == len(times):
+        # The sample clock is the truth.  Re-deriving it from the jittered
+        # geometry collapsed every stop (all the points share one position, so
+        # they all mapped to the same instant) and left 1 s / 23 s gaps around
+        # a traffic light.  ``times`` already carries the 2-4 s device grid.
+        point_times = list(times)
+    else:
+        # A checkpoint snap inserted a point: fall back to the geometric
+        # mapping so the inserted sample still lands between its neighbours.
+        point_times = [time_at_frac(f) for f in fracs_geo]
 
     # retime points across the run duration; last point lands EXACTLY on
     # t0 + total_ms so that stopTime == last ten-second bucket's endTime.
@@ -893,7 +1169,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             locs[i]['ts'] = locs[i - 1]['ts'] + 1000
         elif i < n_locs - 1 and locs[i]['ts'] - locs[i - 1]['ts'] < 2000:
             # A snapped checkpoint can land less than a second after its
-            # neighbour; real samples are 4-6 s apart, so keep a 2 s floor.
+            # neighbour; real samples are 2-4 s apart, so keep a 2 s floor.
             locs[i]['ts'] = locs[i - 1]['ts'] + 2000
     locs[-1]['ts'] = t0 + total_ms_run
     # The 2 s floor is best-effort: when the last samples are crowded, it can
@@ -907,9 +1183,35 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     speed_json = []
     # StepsPerTenSec: {stepsNum,beginTime,endTime,flag,id,maxDiff,minDiff,avgDiff,state,queueNum}
     step_freq_json = []
-    per_seg_steps = round(cadence * SEG_SECONDS / 60)
-    raw_s = [per_seg_steps + rng.randint(-2, 2) for _ in range(n_buckets)]
-    s_scale = total_steps / max(1, sum(raw_s))
+    # Steps follow the same distance profile (a stopped window has no steps)
+    # plus a slow cadence drift.  The old +-2 steps per window made the step
+    # column a rescale of the distance column with almost no variance of its
+    # own (CV 0.06-0.11; real traces sit at 0.18-0.36).
+    per_seg_steps = cadence * SEG_SECONDS / 60.0
+    mean_bucket = max(1e-6, sum(bucket_m) / n_buckets)
+    cad_phi = math.exp(-SEG_SECONDS / CADENCE_TAU_S)
+    cad_innovation = CADENCE_SIGMA * math.sqrt(1.0 - cad_phi * cad_phi)
+    cad_dev = 0.0
+    # Each kilometre gets its own cadence level, and stride follows the pace:
+    # speed = cadence * stride, and real runners take most of a pace change in
+    # stride, not cadence.  With stride ~ speed^0.8 the lap cadence only moves
+    # as speed^0.2, plus the independent per-km flavour.  Steps used to be a
+    # pure function of distance, so every lap divided back to exactly 150.0 spm
+    # while the stride column still moved.
+    avg_speed = total_meters / max(1, total_seconds)
+    cad_flavour = _km_cadence_factors(n_km, rng)
+    stride_km = [((seg_m[k] / seg_t[k]) / avg_speed) ** 0.8
+                 for k in range(n_km)]
+    raw_s = []
+    for i in range(n_buckets):
+        cad_dev = cad_phi * cad_dev + rng.gauss(0.0, cad_innovation)
+        ratio = bucket_m[i] / mean_bucket
+        k = k_of[min(total_seconds - 1, i * SEG_SECONDS)]
+        step = (per_seg_steps * ratio / max(0.5, stride_km[k])
+                * cad_flavour[k] * (1.0 + cad_dev))
+        step *= 1.0 + rng.gauss(0.0, 0.05)
+        raw_s.append(max(0.0, step))
+    s_scale = total_steps / max(1e-6, sum(raw_s))
     stop_ms = t0 + total_seconds * 1000
     for i in range(n_buckets):
         b = t0 + i * SEG_SECONDS * 1000
@@ -918,7 +1220,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         speed_json.append({
             'beginTime': b,
             'endTime': e,
-            'distance': round(raw_d[i] * d_scale, 4),
+            'distance': round(bucket_m[i], 4),
             'flag': t0,
             'id': 0,
             'queueNum': 0,
@@ -1064,8 +1366,10 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
 
     loc_points = []
     for i, p in enumerate(locs):
-        frac = fracs_geo[i]
-        dis = round(total_meters * frac, 3)
+        # Distance comes from the profile at this point's sample time, not from
+        # the jittered geometry: the GPS error would otherwise be counted as
+        # progress and the stop windows would disappear from totalDis.
+        dis = round(dist_at(point_times[i]), 3)
         # Derive the stats clock from the final (possibly compressed) track
         # timestamp: after the 2 s floor is pulled back, point_times is no
         # longer the value the server will read from allLocJson.
@@ -1080,8 +1384,11 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         else:
             mps = avg_mps
         # A snapped checkpoint can insert a point a few metres after the
-        # previous one; without this clamp that looks like 90 km/h.
-        mps = min(max(mps, avg_mps * 0.6), avg_mps * 1.6)
+        # previous one; without the upper clamp that looks like 90 km/h.  The
+        # lower bound stays at 0: a stop window really does report ~0 m/s, and
+        # flattening it to 60% of the average is what made every record look
+        # like it was run by a metronome.
+        mps = min(mps, avg_mps * 1.6)
         bd_lat, bd_lng = coords.gcj02_to_bd09(p['lat'], p['lng'])
         # Bearing of travel, the way the client gets it from AMap.  The last
         # sample has no successor, so it keeps the heading it arrived with.
@@ -1177,6 +1484,16 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         'allLocJson': json.dumps(loc_points, separators=(',', ':')),
     }
 
+    # What the record will actually report per kilometre.  The split editor
+    # sends this list back as ``km_times``, so the table the operator edits and
+    # the laps in the record are the same numbers.
+    km_splits = [{
+        'index': k + 1,
+        'km': round(seg_m[k] / 1000.0, 3),
+        'seconds': seg_t[k],
+        'pace': round(seg_t[k] / max(1e-9, seg_m[k] / 1000.0), 1),
+    } for k in range(n_km)]
+
     return {
         'allLocJson': locs,
         'locPoints': loc_points,
@@ -1189,6 +1506,8 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         'fivePoint': five_point,
         'fivePointJson': point_json_entity,
         'fixed_point_json': point_json_entity,
+        'km_splits': km_splits,
+        'km_times': [s['seconds'] for s in km_splits],
         'juli': total_meters,
         'km': distance_km,
         'sportTime': total_seconds,
