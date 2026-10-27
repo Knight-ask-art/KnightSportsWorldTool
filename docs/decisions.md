@@ -399,6 +399,6 @@ base 上会得到 `.../download/v0.1.4/haoxiangpao_v0.1.3_win64.zip`，是 404�
 `make_latest.py` 增加 `--rollback-base-url` 与 `--rollback-mirror-base-url`，
 默认仍沿用主 base（相对路径场景不受影响）。
 
-发布资产：setup 56,034,276 B / `aa52889b…f96a`；zip 79,796,102 B / `816d04e6…c0ab1`；
+发布资产：setup 56,035,019 B / `fff74439…a831`；zip 79,796,101 B / `556e459b…501c`；
 v0.1.3 回滚 zip 79,749,401 B / `cb026f6b…24e39c`。装包实测：全新静默安装、
 0.1.3→0.1.4 覆盖升级、静默卸载三条路径都保留 `data\`，`--check` 均返回 0。

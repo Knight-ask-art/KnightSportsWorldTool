@@ -35,6 +35,19 @@ python packaging\make_latest.py --dist dist --out ..\github-release\latest.json
 所以不会出现「版本号对了、哈希是旧的」。安装包不存在时只写 zip，并在 stderr
 提示，不会伪造一个下载项。
 
+回滚资产需要自己的下载前缀：`--base-url` 是 v0.1.4 时，把 v0.1.3 的文件名拼
+上去会得到 `.../download/v0.1.4/haoxiangpao_v0.1.3_win64.zip`，是 404。显式
+给回滚前缀（镜像同理）：
+
+```powershell
+python packaging\make_latest.py --dist dist --rollback-version 0.1.3 `
+  --base-url https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v0.1.4 `
+  --rollback-base-url https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v0.1.3
+```
+
+`--rollback-base-url` 省略时沿用 `--base-url`；`--rollback-mirror-base-url`
+可以重复，写进回滚项的 `urls[]`。
+
 ## 结构
 
 ```json
