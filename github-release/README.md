@@ -14,14 +14,14 @@
 去 [Releases](releases/latest) 下最新的安装包 `haoxiangpao_vX.Y.Z_win64_setup.exe`，双击安装。
 不想安装就下 `haoxiangpao_vX.Y.Z_win64.zip`，解压后双击 `好想跑.exe`。
 
-GitHub 打不开时，在完整链接前面加镜像前缀（三选一）：
+GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两个实测可用）：
 
-- `https://gh.llkk.cc/` + 链接
 - `https://gh-proxy.com/` + 链接
 - `https://ghfast.top/` + 链接
+- `https://gh.llkk.cc/` + 链接（时好时坏）
 
 例如：
-`https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.3/haoxiangpao_v0.1.3_win64_setup.exe`
+`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.3/haoxiangpao_v0.1.3_win64_setup.exe`
 
 注意：
 

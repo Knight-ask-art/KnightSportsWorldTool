@@ -147,8 +147,8 @@ https://github.com/<owner>/<repo>/releases/latest/download/haoxiangpao_v0.1.3_wi
 从 `raw.githubusercontent.com/.../github-release/latest.json` 读取，除非资产也
 放在同一个 raw 目录；raw 路径不会自动指向 Release 资产。
 
-国内网络走 `https://gh.llkk.cc/https://github.com/...` 镜像；清单本身保留
-jsDelivr 作为 raw 的回退。
+国内网络走 `https://gh-proxy.com/https://github.com/...`，备选 `https://ghfast.top/`；
+`gh.llkk.cc` 时好时坏，排最后。清单本身保留 jsDelivr 作为 raw 的回退。
 
 ## 发布顺序
 
