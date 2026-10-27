@@ -35,6 +35,7 @@ RELEASE_NOTES = {
         '每公里步频/步幅不再恒定：laps 的 avgCadence 曾每公里都除回 150.0',
         '海拔按距离定标：4 km 约 19–24 m、1.3 km 约 11–14 m，加入短坡与气压抖动',
         '默认步频 172 → 150，匹配账号历史记录（102–154）',
+        '检查更新时对镜像测速，自动选最快的一条；下载失败自动换下一个',
         '修复慢配速下窗口噪声为负导致总距离回退、分段被静默摊平',
         '模型软阈值按真实记录重标（配速波动、停顿、累计爬升）',
         'v0.1.3 保留为回滚版本，latest.json 的 rollback 指向它的 zip',
@@ -129,6 +130,8 @@ def build_manifest(version: str, zip_path: Path, *,
                    notes: list[str] | None = None,
                    rollback_version: str | None = None,
                    rollback_zip: Path | None = None,
+                   rollback_base_url: str = '',
+                   rollback_mirrors: tuple = (),
                    setup_path: Path | None = None,
                    entry: str = DEFAULT_ENTRY) -> dict:
     zip_path = Path(zip_path)
@@ -172,8 +175,9 @@ def build_manifest(version: str, zip_path: Path, *,
         rollback_zip = Path(rollback_zip)
         if rollback_zip.is_file():
             manifest['rollback'] = _asset(
-                rollback_zip, base_url, rollback_version, entry=entry,
-                mirrors=mirrors)
+                rollback_zip, rollback_base_url or base_url,
+                rollback_version, entry=entry,
+                mirrors=rollback_mirrors or mirrors)
         else:
             print(f'warning: rollback zip not found: {rollback_zip}',
                   file=sys.stderr)
@@ -231,8 +235,13 @@ def main(argv=None) -> int:
                     help='ISO-8601; defaults to now in Beijing time')
     ap.add_argument('--notes-file', default=None,
                     help='JSON array of release notes; defaults to built-in notes')
-    ap.add_argument('--rollback-version', default='0.1.2',
+    ap.add_argument('--rollback-version', default='',
                     help='include this older zip as rollback; empty disables')
+    ap.add_argument('--rollback-base-url', default='',
+                    help='download base for the rollback zip; defaults to --base-url')
+    ap.add_argument('--rollback-mirror-base-url', action='append', default=[],
+                    metavar='URL',
+                    help='extra download base for the rollback zip (repeatable)')
     args = ap.parse_args(argv)
 
     dist = Path(args.dist).resolve()
@@ -266,6 +275,8 @@ def main(argv=None) -> int:
         notes=notes,
         rollback_version=rollback_version,
         rollback_zip=rollback_zip,
+        rollback_base_url=args.rollback_base_url,
+        rollback_mirrors=tuple(args.rollback_mirror_base_url or ()),
         setup_path=setup_path,
     )
     out = Path(args.out) if args.out else dist / 'latest.json'
