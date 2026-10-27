@@ -1191,18 +1191,20 @@ class ReplicaApi:
     def real_check_session(self):
         """Verify the stored token against the real server (envelope-decoded).
 
-        Uses GET api/v70100/user/info — the cheapest endpoint that proves both
-        the token AND our crypto stack are live, because its reply is a real
-        NetSecKit envelope that we must decrypt with the native w1228 entry.
+        Uses GET user/info — the cheapest endpoint that proves both the token
+        AND our crypto stack are live, because its reply is a real NetSecKit
+        envelope that we must decrypt with the native w1228 entry.  7.4.0 moved
+        it to ``v70400``; the older ``v70100`` is kept as a 404-only fallback
+        (see ``replica/transport/routes.py``).
         """
         acct = self._real_account()
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
         from ..transport import realclient as R
+        from ..transport.routes import request_user_info
         try:
             rc = R.RealClient()
-            res = rc.request(acct, 'api/v70100/user/info', method='GET',
-                             retries=2)
+            res = request_user_info(rc, acct, method='GET', retries=2)
         except Exception as e:  # noqa: BLE001
             return _fail(f'sidecar 启动失败: {e}')
         status = res.get('status')

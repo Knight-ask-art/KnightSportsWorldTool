@@ -51,7 +51,7 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 | 极验预处理 | `api/v31/security/login/geepreprocess` | POST | upstream |
 | 极验校验 | `api/v70270/security/geevalidate` | POST | upstream |
 | 登录 | `api/v70100/login` | POST | upstream |
-| 用户信息 | `api/v70100/user/info` | GET | upstream |
+| 用户信息 | `api/v70400/user/info`（7.4.0 起；404 时回退 `v70100`） | GET | 7.4.0 dex |
 | 校区列表 | `api/v61101/campus/zonelist?unid=` | GET | upstream |
 | 跑步策略 | `api/v70103/runModePolicy` | POST | upstream |
 | 校园打卡点 | `api/v560/get/1/distance/<目标米>` | POST | upstream / PR #106 |

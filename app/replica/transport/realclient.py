@@ -19,6 +19,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, asdict
 
+from .routes import request_user_info
 from .sidecar import get_sidecar
 
 HOST = 'run.gxapp.iydsj.com'
@@ -558,8 +559,7 @@ class RealClient:
             return {'ok': False, 'stage': 'logout', 'logout': res,
                     'verify': None}
         try:
-            chk = self.request(acct, 'api/v70100/user/info', method='GET',
-                               retries=0)
+            chk = request_user_info(self, acct, method='GET', retries=0)
         except Exception as e:  # noqa: BLE001
             return {'ok': False, 'stage': 'verify-error', 'logout': res,
                     'verify': {'error': repr(e)}}

@@ -483,7 +483,8 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
 ### P0-7 退出登录验证（用户申请只读数据的前置条件）
 
 - `RealClient.logout_and_verify()`：先调 `api/v70100/logout`，再用
-  `GET api/v70100/user/info` 验证 token 已失效（401/业务错误才算成功）；
+  `GET user/info`（7.4.0 起 `v70400`，404 时回退 `v70100`）验证 token 已失效
+  （401/业务错误才算成功）；
 - 验证不通过就保留本地 token，返回失败，绝不假装登出；
 - `replica_api.real_logout` 成功后才清空 `accounts_emu.json` 的 token/uid；
 - 旧 UI 已有「退出登录」按钮；CLI：
@@ -508,7 +509,8 @@ UI 端在 `submitRun()` 里先确认 token、日期/时间；当日次数只提�
   - `%TEMP%` 下含旧账号的 `jhp_*` 测试目录已删除。
   当前没有任何可用的旧 token；`_real_account()` 也不会再拿到旧会话。
 - `replica/tokenkeeper.py`：后台保活。默认每 6 小时用
-  `GET api/v70100/user/info` 探测一次；成功更新 `last_ok_at`，401/业务拒绝标记
+  `GET user/info`（`v70400`，404 回退 `v70100`）探测一次；成功更新 `last_ok_at`，
+  401/业务拒绝标记
   `token_expired`；网络/解密错误只记失败次数，不误判 token 死亡。
 - 官方接口**没有 refresh-token 端点**，所以“保活”不能凭空延长固定 TTL：
   - 探测只能证明 token 还活着 / 提前发现失效；

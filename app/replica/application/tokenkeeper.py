@@ -135,7 +135,7 @@ def _token_from_payload(payload) -> str:
 def probe_real_session(session: dict, proxy: str | None = None,
                        client_factory=None,
                        store_dir: str | None = None) -> dict:
-    """Default real-server probe: ``GET api/v70100/user/info``.
+    """Default real-server probe: ``GET user/info`` (v70400, then v70100).
 
     Returns a small dict (never the raw response):
       ``ok``           token accepted
@@ -152,6 +152,7 @@ def probe_real_session(session: dict, proxy: str | None = None,
         return {'ok': False, 'auth_failed': False, 'message': '未配置 token'}
 
     from ..transport.realclient import Account, RealClient
+    from ..transport.routes import request_user_info
     from . import device_profile as DP
 
     try:
@@ -184,8 +185,7 @@ def probe_real_session(session: dict, proxy: str | None = None,
                 'message': '客户端初始化失败: %s' % e}
 
     try:
-        res = client.request(acct, 'api/v70100/user/info', method='GET',
-                             retries=1)
+        res = request_user_info(client, acct, method='GET', retries=1)
     except Exception as e:  # noqa: BLE001
         return {'ok': False, 'auth_failed': False,
                 'message': '网络错误: %s' % e}

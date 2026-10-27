@@ -149,7 +149,7 @@ UI 的「记录 → 提交回执」提供 **只读核对**：按开始时间（�
 
 ### 2.8 个人主页与违规自查
 
-- `real_profile` 先读 `api/v70100/user/info`，再读学期汇总；任一半失败都会
+- `real_profile` 先读 `api/v70400/user/info`（旧 `v70100` 仅在 404 时回退），再读学期汇总；任一半失败都会
   返回 `errors`，不会把失败伪装成 0。
 - `real_violations` 只读 `api/v78/cheat/cheatlist`，不重试、不写任何文件。
   返回状态是显式的：`none_found`（明确返回空）、`violations`（有记录）、
