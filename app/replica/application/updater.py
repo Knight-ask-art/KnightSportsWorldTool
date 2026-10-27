@@ -48,11 +48,11 @@ USER_AGENT = 'haoxiangpao-updater'
 ENTRY_NAME = '好想跑.exe'
 
 #: Mirror ranking.  One ranged 64 KB request per mirror, measured on first
-#: byte plus first-chunk throughput; the whole probe has a 2.5 s budget and
+#: byte plus first-chunk throughput; the whole probe has a 6 s budget and
 #: only runs when the operator actually clicks download.
 PROBE_BYTES = 64 * 1024
-PROBE_TIMEOUT = (2.0, 2.5)
-PROBE_BUDGET = 2.5
+PROBE_TIMEOUT = (4.0, 6.0)
+PROBE_BUDGET = 6.0
 PROBE_MAX_MIRRORS = 4
 #: A captive portal or a broken proxy answers 200 with an HTML page.  Check
 #: the first bytes instead of waiting for a 76 MB sha256 mismatch.

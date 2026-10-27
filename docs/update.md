@@ -122,7 +122,7 @@ python packaging\make_latest.py --dist dist --out ..\github-release\latest.json
 
 客户端 0.1.4 起，在用户点「下载更新」时对每个 `urls` 发一个
 `GET` + `Range: bytes=0-65535`，收到第一块就断开，用
-`ttfb + 64KB / 首块速度` 排序；2.5 秒预算内没答完的排到后面，全部失败就按清单
+`ttfb + 64KB / 首块速度` 排序；6 秒预算内没答完的排到后面，全部失败就按清单
 顺序来。选中的地址只是首选，下载后照常校验 `size` 和 `sha256`，不对就换下一个
 ——坏镜像最多浪费一次流量，装不进坏包。
 

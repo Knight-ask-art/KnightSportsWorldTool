@@ -328,7 +328,7 @@ if (this.mCachePoint < 1 && lineBean2.getType() == lineBean.getType()
 不少 CDN 对 HEAD 走缓存，几毫秒就返回 200，GET 正文照样慢。
 
 下载前对每个镜像发 `GET` + `Range: bytes=0-65535`，收到第一块就断开，用
-`ttfb + 64KB / 首块速度` 排序。整轮探测 2.5 秒预算，没答完的排到后面，全挂就
+`ttfb + 64KB / 首块速度` 排序。整轮探测 6 秒预算（连接 4 s / 读取 6 s），没答完的排到后面，全挂就
 按清单顺序来。首块还要校验文件头（zip 是 `PK\x03\x04`，exe 是 `MZ`）——被劫持
 的代理常返回一个 200 的 HTML 页面，等 sha256 失败要多下 76 MB 才知道。
 
