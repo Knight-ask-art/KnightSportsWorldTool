@@ -173,3 +173,39 @@ Chromium。前者是 150MB 只为一条路径，后者解决不了 `w` 字段问
 **手动兜底的边界**：它兜的是「答案不对」（CV 认错缺口、或认对了但被判低信任），
 不兜「协议变了」——两条路共用 `build_payload`，字段集一变会一起失败、一起落盘。
 这是刻意的：兜底路径如果自带第二套协议实现，它自己就会腐烂，而且坏了没人知道。
+
+---
+
+## 10. 轨迹点类型是一个封闭集合（2026-10-27）
+
+「灰线」不是渲染 bug。官方详情页把每个点的 `type` 直接交给地图 SDK：
+
+```java
+// mvi/run/mode/RunHistoryDetailPImpl.java:382
+if (p.getType() != -1) {
+    list.add(new LineBean(latlng, p.getType(), p.getSpeed(), p.getBdD()));
+}
+// mvi/sport/BaseDueRunPImpl.java:1171（实时绘线同理）
+```
+
+值是客户端**产出的全集**，不是随意填的：
+
+| 值 | 来源 | 含义 |
+|---|---|---|
+| `0` | `passPointAndBackType()` 默认返回（`BaseRunPImpl:1351`、`BaseDueRunPImpl:1307`） | 普通点 |
+| `1` / `2` | 真的进入必经点范围时 `isFixed == 1 ? 2 : 1`（`RunRandomPImpl:358`） | 打卡 |
+| `5` | `initPoint.setType(5)` | 起点 |
+| `6` | `location.setType(6)` | 终点 |
+| `-1` | `myLocation.setType(-1)` | 无效，详情页直接丢弃 |
+
+全仓库没有任何一处 `setType(3)`，也没有 7、8、9。上游工具在默认模式下生成
+39% 的 `type=3`，SDK 认不出 → 落回灰色兜底，夹在 `type=0` 中间就成了「一段绿一段灰」
+（上游 issue #103 / PR #55）。
+
+我们原来的 `rundata.py` 也有两个越界值：后 1/3 以 6% 概率撒 `[1, 1, 2, 8]`。`8` 不在
+这个客户端的取值域里；`1/2` 则是在**没真的经过必经点**的地方断言「打过卡」。
+现在改成：只有 `fivePoint.isPass` 为真、且最近轨迹点确实在那个点位上的，才写 `1/2`，
+并加了一条生成期断言（`legal_types = {0, 1, 2, 5, 6}`），越界直接抛错。
+
+我们自己看不见灰线，是因为 `readonly.parse_track()` 把这些字段丢了，前端只画单色线——
+所以这条只能靠 payload 断言守，不能靠看界面发现。

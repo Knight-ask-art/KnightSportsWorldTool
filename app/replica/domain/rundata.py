@@ -248,6 +248,18 @@ def _passes_near(pts: list[dict], lat: float, lng: float,
     return False
 
 
+def _nearest_index(pts: list[dict], lat: float, lng: float) -> int:
+    """Index of the sample closest to a GCJ-02 point."""
+    cos_lat = math.cos(math.radians(lat))
+
+    def d2(p):
+        dy = (p['lat'] - lat) * 110540.0
+        dx = (p['lng'] - lng) * 111320.0 * cos_lat
+        return dx * dx + dy * dy
+
+    return min(range(len(pts)), key=lambda i: d2(pts[i]))
+
+
 def _snap_to_waypoints(pts: list[dict], waypoints: list, limit_m: float = 35.0):
     """Guarantee every checkpoint is physically passed (isPass uses 40 m)."""
     def d2(a, b):
@@ -976,6 +988,29 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                 'position': k,
             })
 
+    # Checkpoint passes, recorded the way the official client records them.
+    #
+    # `passPointAndBackType()` in RunRandomPImpl / RunSequencePImpl returns 1
+    # or 2 only when the track actually enters a checkpoint ring
+    # (`isFixed == 1 ? 2 : 1`); BaseRunPImpl and BaseDueRunPImpl always return
+    # 0.  Nothing else writes a type: the complete domain this client emits is
+    # {0 normal, 1/2 checkpoint, 5 start, 6 end, -1 dropped by the history
+    # page}.
+    #
+    # The old code scattered [1, 1, 2, 8] over the last third on a 6% coin
+    # flip.  That asserted "checkpoint passed" at places the track never
+    # visited, and 8 is not a value any implementation produces -- an unknown
+    # type falls through the map SDK's fallback and paints grey (the "灰线"
+    # upstream issue #103).
+    checkpoint_marks = {}
+    for fp in five_point:
+        if not fp.get('isPass'):
+            continue
+        idx = _nearest_index(locs, fp['glat'], fp['glon'])
+        if idx <= 1 or idx >= len(locs) - 1:     # start/end sentinels win
+            continue
+        checkpoint_marks[idx] = 2 if fp.get('isFixed') else 1
+
     # PointJsonEntity: {fivePointJson,freedomShowFence,geoFencesJson,runAreaId,useZip}
     point_json_entity = {
         'useZip': False,
@@ -1047,7 +1082,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             'stepDistance': 0.0,
             'totalDis': dis,
             'totalTime': tsec,
-            'type': 0,
+            'type': checkpoint_marks.get(i, 0),
             'validDis': dis,
             'validTime': tsec,
         })
@@ -1078,21 +1113,23 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         sp['totalTime'] = 0
         sp['validTime'] = 0
 
-        # scattered 1/2/8 in the last third (these are what paint the trail
-        # segments on the map)
-        start = int(len(loc_points) * 0.67)
-        for i in range(start, max(start, len(loc_points) - 2)):
-            if rng.random() < 0.06:
-                loc_points[i]['type'] = rng.choice([1, 1, 2, 8])
-                loc_points[i]['locType'] = 1
-
-        # index 2: first real point; keep its own speed, only bound it.
+        # index 2 is the first real point; keep its own speed, only bound it.
         # (The old `totalDis / 1.0` treated metres as km/s => every record
         # reported 21.6 km/h on this one point.)
         if len(loc_points) > 3:
             p2 = loc_points[2]
             p2['avgSpeed'] = round(min(6.0, max(1.8, p2['avgSpeed'])), 4)
             p2['speed'] = round(p2['avgSpeed'] * 3.6, 4)
+
+    # Keep the domain closed.  The history page hands `type` straight to the
+    # map SDK, and a value the client never emits (3, 7, 8, ...) falls through
+    # to its fallback colour -- that is the grey segment.  Failing here is
+    # cheaper than shipping a record nobody can explain later.
+    legal_types = {0, 1, 2, 5, 6}
+    bad_types = sorted({p['type'] for p in loc_points} - legal_types)
+    if bad_types:
+        raise ValueError('track point type outside the client domain: %s'
+                         % bad_types)
 
     # The record's allLocJson column is itself Gson(LocJsonEntity):
     #   {"useZip":false,"allLocJson":"<List<MyLocation> as a string>"}
