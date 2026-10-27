@@ -11,12 +11,23 @@
 
 ## 下载
 
-去 [Releases](releases) 下最新的 `haoxiangpao_vX.Y.Z_win64.zip`，解压，双击 `好想跑.exe`。
+去 [Releases](releases/latest) 下最新的安装包 `haoxiangpao_vX.Y.Z_win64_setup.exe`，双击安装。
+不想安装就下 `haoxiangpao_vX.Y.Z_win64.zip`，解压后双击 `好想跑.exe`。
 
-注意两点：
+GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两个实测可用）：
+
+- `https://gh-proxy.com/` + 链接
+- `https://ghfast.top/` + 链接
+- `https://gh.llkk.cc/` + 链接（时好时坏）
+
+例如：
+`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.3/haoxiangpao_v0.1.3_win64_setup.exe`
+
+注意：
 
 - 只支持 Windows 10 / 11 64 位
-- 解压后整个文件夹一起用；`好想跑.exe` 旁边的 DLL、`frontend` 等依赖不要删，也别只把 exe 拖出来
+- 便携版解压后整个文件夹一起用；`好想跑.exe` 旁边的 DLL、`frontend` 等依赖不要删，也别只把 exe 拖出来
+- 安装版升级和卸载都不会动 `data\`（登录状态、提交回执、设备指纹）
 
 ## 第一次打开
 
@@ -33,9 +44,12 @@
 
 ## 更新
 
-程序启动后会自动检查更新。有新版时，左下角版本号旁边会出现一个下载图标，点开按提示下载并更新即可：程序会自动解压、重启，`data` 不会丢。
+程序启动后会自动检查更新。有新版时，左下角版本号旁边会出现一个下载图标，点开按提示下载并更新即可：
 
-也可以手动下新的压缩包，解压覆盖旧目录，`data` 留着别删。
+- 安装版：下载新的安装包，静默安装并重启；
+- 便携版：下载新 zip，自动解压替换并重启。
+
+两种方式都不会动 `data`。也可以手动下新的安装包或压缩包，覆盖旧目录，`data` 留着别删。
 
 仓库里的 `latest.json` 是给程序检查更新用的，普通使用不用管。
 
