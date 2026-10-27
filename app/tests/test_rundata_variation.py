@@ -46,6 +46,16 @@ def test_per_point_speed_actually_varies():
     assert max(speeds) <= 16.2
 
 
+def test_bearing_tracks_the_route():
+    run = _run()
+    pts = run['locPoints']
+    dirs = [p['bdD'] for p in pts[2:-1]]
+    # Every point used to report 0.0 -- due north for the whole record.
+    assert len({round(d) for d in dirs}) > 10, dirs[:10]
+    assert all(0.0 <= d < 360.0 for d in dirs), dirs[:10]
+    assert pts[1]['bdD'] == 0.0, 'the setStartPoint marker must stay all-zero'
+
+
 def test_totals_stay_exact():
     run = _run()
     last = run['locPoints'][-1]

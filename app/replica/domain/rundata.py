@@ -255,6 +255,20 @@ def _passes_near(pts: list[dict], lat: float, lng: float,
     return False
 
 
+def _bearing_deg(a: dict, b: dict) -> float:
+    """Compass bearing from ``a`` to ``b``, degrees clockwise from north.
+
+    ``MyLocation.bdD`` is ``bdDirection`` -- what AMap hands the client in the
+    location callback -- and it reaches the renderer as the fourth argument of
+    ``LineBean(latLng, type, speed, bdD)``.  Writing 0.0 for every point means
+    every record faces due north for its whole length.
+    """
+    dy = b['lat'] - a['lat']
+    dx = (b['lng'] - a['lng']) * math.cos(
+        math.radians((a['lat'] + b['lat']) / 2.0))
+    return round(math.degrees(math.atan2(dx, dy)) % 360.0, 2)
+
+
 def _nearest_index(pts: list[dict], lat: float, lng: float) -> int:
     """Index of the sample closest to a GCJ-02 point."""
     cos_lat = math.cos(math.radians(lat))
@@ -1069,10 +1083,18 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         # previous one; without this clamp that looks like 90 km/h.
         mps = min(max(mps, avg_mps * 0.6), avg_mps * 1.6)
         bd_lat, bd_lng = coords.gcj02_to_bd09(p['lat'], p['lng'])
+        # Bearing of travel, the way the client gets it from AMap.  The last
+        # sample has no successor, so it keeps the heading it arrived with.
+        if i + 1 < len(locs):
+            heading = _bearing_deg(p, locs[i + 1])
+        elif i:
+            heading = _bearing_deg(locs[i - 1], p)
+        else:
+            heading = 0.0
         loc_points.append({
             'avgSpeed': round(mps, 4),
             'bdA': round(float(p.get('alt', 0.0)), 2),
-            'bdD': 0.0,
+            'bdD': heading,
             'bdG': 0,
             'bdS': round(mps, 4),
             'coorType': 'gcj02',
@@ -1121,6 +1143,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         sp['speed'] = 0.0
         sp['avgSpeed'] = 0.0
         sp['bdS'] = 0.0
+        sp['bdD'] = 0.0        # the all-zero setStartPoint marker has no heading
         sp['totalDis'] = 0.0
         sp['validDis'] = 0.0
         sp['totalTime'] = 0

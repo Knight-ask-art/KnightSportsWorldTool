@@ -188,7 +188,7 @@ if (p.getType() != -1) {
 // mvi/sport/BaseDueRunPImpl.java:1171（实时绘线同理）
 ```
 
-值是客户端**产出的全集**，不是随意填的：
+值是客户端**产出**的全集，不是随意填的：
 
 | 值 | 来源 | 含义 |
 |---|---|---|
@@ -196,19 +196,52 @@ if (p.getType() != -1) {
 | `1` / `2` | 真的进入必经点范围时 `isFixed == 1 ? 2 : 1`（`RunRandomPImpl:358`） | 打卡 |
 | `5` | `initPoint.setType(5)` | 起点 |
 | `6` | `location.setType(6)` | 终点 |
-| `-1` | `myLocation.setType(-1)` | 无效，详情页直接丢弃 |
+| `-1` | `myLocation.setType(-1)` | 无效，详情页丢弃并**断开线** |
 
-全仓库没有任何一处 `setType(3)`，也没有 7、8、9。上游工具在默认模式下生成
-39% 的 `type=3`，SDK 认不出 → 落回灰色兜底，夹在 `type=0` 中间就成了「一段绿一段灰」
-（上游 issue #103 / PR #55）。
+**渲染器认识的值和客户端产出的值不是同一个集合。** 这一点之前只能靠上游 PR #55 的
+注释推断，2026-10-27 在公开仓库 `Coaixy/android_wh_physicalfitness_analyse`
+（对应下面这份反编译快照）里拿到了实际画线代码 `GaoDeRunPointControl.addLine()`：
 
-我们原来的 `rundata.py` 也有两个越界值：后 1/3 以 6% 概率撒 `[1, 1, 2, 8]`。`8` 不在
+```java
+// com/zjwh/map/gaode/GaoDeRunPointControl.java
+if (this.mCachePoint < 1 && lineBean2.getType() == lineBean.getType()
+        && Math.abs(lineBean.getBdD() - lineBean2.getBdD()) <= 10.0f) {
+    this.mCachePoint++;                    // 合并顶点，不上色
+} else {
+    int i = (lineBean2.getType() == 3 || lineBean2.getType() == 4) ? -4868683
+          : (lineBean2.getType() == 10 || lineBean2.getType() == 7) ? SupportMenu.CATEGORY_MASK
+          : -16727669;
+    ...colorValues(arrayList2)...
+}
+```
+
+| 颜色 | 常量 | RGB | 触发条件 |
+|---|---|---|---|
+| 灰 | `-4868683` | `#B5B5B5` | `type == 3` 或 `4` |
+| 红 | `0xFFFF0000` | `#FF0000` | `type == 7` 或 `10` |
+| 绿 | `-16727669` | `#00C18B` | **其它所有值**（`-1` 已被跳过） |
+
+所以「灰线」的确切条件是 `type ∈ {3, 4}`，不是「未知值兜底」——这一点我此前说错过，
+现在按源码更正。上游工具在默认模式下生成 39% 的 `type=3`，正好命中灰色分支，
+夹在 `type=0` 的绿色中间就是「一段绿一段灰」（上游 issue #103 / PR #55）。
+
+**`bdD` 也真的参与绘制。** 上面那条 `Math.abs(bdD1 - bdD2) <= 10°` 决定相邻点是否
+合并成同一个顶点。我们原来所有点都写 `0.0`，等于恒等于「方向没变」，每个同类型段都会
+被合并掉一个顶点。现在按相邻点算真实方位角（`Utils.initPoint(..., bdDirection, ...)`
+→ `MyLocation.bdD` → `LineBean.bdD`）。
+
+我们原来的 `rundata.py` 还有两个越界值：后 1/3 以 6% 概率撒 `[1, 1, 2, 8]`。`8` 不在
 这个客户端的取值域里；`1/2` 则是在**没真的经过必经点**的地方断言「打过卡」。
 现在改成：只有 `fivePoint.isPass` 为真、且最近轨迹点确实在那个点位上的，才写 `1/2`，
 并加了一条生成期断言（`legal_types = {0, 1, 2, 5, 6}`），越界直接抛错。
 
 我们自己看不见灰线，是因为 `readonly.parse_track()` 把这些字段丢了，前端只画单色线——
 所以这条只能靠 payload 断言守，不能靠看界面发现。
+
+**证据的边界**：颜色表和 `bdD` 合并规则来自 2026-05 的公开反编译快照
+（`GaoDeRunPointControl.java`，classes8.dex）。手上这份 596 MB 的当前 APK 被网易易盾
+加固，`classes.dex` 只有 30 个壳类，无法静态复核；如果哪天当前版本的配色变了，
+以 `static_path` 式的实测为准，不要拿这段当永久真理。
 
 ---
 
