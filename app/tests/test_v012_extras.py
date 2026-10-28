@@ -276,6 +276,6 @@ def test_frontend_exposes_the_new_controls():
     js = (ROOT / 'frontend' / 'js' / 'app.js').read_text(encoding='utf-8')
     for token in ('altitude_mode', 'altitude_profile', 'fenceOutside',
                   'maybeShowOnboard', 'loadAppVersion', '本模式不用',
-                  'routeClosed = false', '不建议使用「自动」'):
+                  'routeClosed = false', '不建议自动'):
         assert token in js, token
     assert 'id="closeState">关<' in html

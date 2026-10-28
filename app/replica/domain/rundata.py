@@ -856,6 +856,10 @@ def _km_pace_factors(n_km: int, rng) -> list[float]:
     prev = 1.0
     for k in range(n_km):
         f = min(1.12, max(0.88, 1.0 + rng.gauss(0.0, 0.060)))
+        if n_km >= 3 and k == 0:
+            f += rng.uniform(0.035, 0.080)       # warm-up lap
+        if n_km >= 3 and k == n_km - 1:
+            f -= rng.uniform(0.015, 0.055)       # push / fade at the end
         if k:
             gap = f - prev
             if abs(gap) < 0.030:
@@ -1241,8 +1245,34 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         })
     # absorb rounding drift so sum(stepsNum) == totalSteps exactly
     if step_freq_json:
+        # Real phone step counters occasionally drop a window (the official
+        # chart has 36 spm valleys) and occasionally spike.  Cap the spike
+        # first, then punch 2-4 dropouts and spread the removed steps over the
+        # other windows so the total does not move.
+        for item in step_freq_json:
+            item['stepsNum'] = min(34, max(0, int(item['stepsNum'])))
+        if len(step_freq_json) >= 12:
+            picks = rng.sample(range(2, len(step_freq_json) - 2),
+                               k=min(len(step_freq_json) // 40 + 2, 4))
+            for idx in picks:
+                old = int(step_freq_json[idx]['stepsNum'])
+                if old <= 2:
+                    continue
+                drop = max(1, min(old - 1, int(round(old * rng.uniform(0.35, 0.55)))))
+                step_freq_json[idx]['stepsNum'] = old - drop
         drift = total_steps - sum(x['stepsNum'] for x in step_freq_json)
-        step_freq_json[-1]['stepsNum'] += drift
+        idx = 0
+        while drift:
+            item = step_freq_json[idx % len(step_freq_json)]
+            if drift > 0:
+                item['stepsNum'] += 1
+                drift -= 1
+            elif item['stepsNum'] > 0:
+                item['stepsNum'] -= 1
+                drift += 1
+            idx += 1
+            if idx > len(step_freq_json) * 4:
+                break
     #                   intervalStepModel,originAvgStep,speedStandard,startTime,state}
     seg_s = max(1, total_seconds // 5)
     segment_json = [{
@@ -1519,6 +1549,228 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         'avgPower': health.avg_power(weight_kg, total_meters, total_seconds),
         'totalAscent': health.total_ascent([p.get('alt', 0.0) for p in locs]),
         'weight_kg': weight_kg,
+    }
+
+
+def _series_stats(series: list[dict], total_distance_m: float,
+                  total_seconds: int, total_steps: int,
+                  ascent: float | None = None) -> dict:
+    """Summary numbers shared by the pre-submit preview and record detail."""
+    cadence = [s['cadence'] for s in series if s.get('cadence') is not None]
+    stride = [s['stride'] for s in series if s.get('stride') is not None]
+    alt = [s['alt'] for s in series if s.get('alt') is not None]
+    pace = [s['pace'] for s in series if s.get('pace') is not None]
+    distance_km = total_distance_m / 1000.0
+    avg_pace = (total_seconds / 60.0) / distance_km if distance_km > 0 else None
+    avg_stride = (total_distance_m / total_steps * 100.0
+                  if total_steps > 0 else None)
+    return {
+        'duration_s': int(total_seconds),
+        'distance_m': round(float(total_distance_m), 1),
+        'avg_pace': round(avg_pace, 3) if avg_pace else None,
+        'min_pace': round(min(pace), 3) if pace else None,
+        'max_pace': round(max(pace), 3) if pace else None,
+        'avg_cadence': round(sum(cadence) / len(cadence), 1) if cadence else None,
+        'max_cadence': round(max(cadence), 1) if cadence else None,
+        'min_cadence': round(min(cadence), 1) if cadence else None,
+        'avg_stride': round(avg_stride, 1) if avg_stride else None,
+        'max_stride': round(max(stride), 1) if stride else None,
+        'min_stride': round(min(stride), 1) if stride else None,
+        'alt_min': round(min(alt), 1) if alt else None,
+        'alt_max': round(max(alt), 1) if alt else None,
+        'ascent': round(float(ascent), 1) if ascent is not None else None,
+        'total_steps': int(total_steps or 0),
+    }
+
+
+def _downsample_series(series: list[dict], limit: int = 240) -> list[dict]:
+    """Keep the shape (and both ends) when a long run has too many windows."""
+    if len(series) <= limit:
+        return series
+    step = max(1, math.ceil(len(series) / limit))
+    out = series[::step]
+    if out[-1] is not series[-1]:
+        out.append(series[-1])
+    return out
+
+
+def preview_series(run: dict, limit: int = 240) -> dict:
+    """Official-style 10 s chart series for a generated run.
+
+    This is display-only: it never changes the record that is submitted.  The
+    numbers come from the same ``speed_json`` / ``step_freq_json`` /
+    ``allLocJson`` the upload uses, so the preview and the record cannot drift
+    apart just because the UI recomputed pace differently.
+    """
+    locs = [p for p in (run.get('allLocJson') or []) if isinstance(p, dict)]
+    speeds = [s for s in (run.get('speed_json') or []) if isinstance(s, dict)]
+    steps = {int(s.get('beginTime') or 0): s
+             for s in (run.get('step_freq_json') or [])
+             if isinstance(s, dict)}
+    alt_points = [(int(p.get('ts') or 0), float(p.get('alt') or 0.0))
+                  for p in locs if p.get('alt') is not None]
+
+    def alt_at(ms: int, start: int, end: int):
+        vals = [v for t, v in alt_points if start <= t <= end]
+        if vals:
+            return sum(vals) / len(vals)
+        if not alt_points:
+            return None
+        return min(alt_points, key=lambda x: abs(x[0] - ms))[1]
+
+    first_ms = int(speeds[0]['beginTime']) if speeds else 0
+    series = []
+    for s in speeds:
+        begin = int(s.get('beginTime') or 0)
+        end = int(s.get('endTime') or begin)
+        dt = max(0.001, (end - begin) / 1000.0)
+        dist = float(s.get('distance') or 0.0)
+        st = steps.get(begin) or {}
+        n_steps = float(st.get('stepsNum') or 0.0)
+        pace = (dt / 60.0) / (dist / 1000.0) if dist > 0 else None
+        cadence = n_steps / (dt / 60.0) if n_steps > 0 else None
+        stride = dist / n_steps * 100.0 if n_steps > 0 else None
+        alt = alt_at(end, begin, end)
+        series.append({
+            't': round((begin - first_ms) / 1000.0, 1),
+            'pace': round(pace, 3) if pace is not None else None,
+            'cadence': round(cadence, 1) if cadence is not None else None,
+            'stride': round(stride, 1) if stride is not None else None,
+            'alt': round(alt, 1) if alt is not None else None,
+        })
+
+    splits = []
+    cumulative = 0
+    for item in (run.get('km_splits') or []):
+        cumulative += int(item.get('seconds') or 0)
+        splits.append({
+            'km': round(float(item.get('km') or 0), 3),
+            'seconds': int(item.get('seconds') or 0),
+            'cumulative': cumulative,
+            'pace': round(float(item.get('pace') or 0), 3),
+        })
+
+    total_distance = float(run.get('juli') or 0)
+    total_seconds = int(run.get('sportTime') or 0)
+    total_steps = int(run.get('total_steps') or 0)
+    stats = _series_stats(series, total_distance, total_seconds, total_steps,
+                          run.get('totalAscent'))
+    stats['kcal'] = run.get('calorie')
+    stats['avg_power'] = run.get('avgPower')
+    return {
+        **stats,
+        'series': _downsample_series(series, limit),
+        'splits': splits,
+    }
+
+
+def track_series(track: list[dict], limit: int = 240) -> dict | None:
+    """Derive the same chart series from a server record's parsed track.
+
+    ``parse_track`` already normalises ``totalTime`` / ``totalDis`` / ``steps``
+    / ``bdA``; this function only resamples at 10 s so an old record looks like
+    the app's own record page.  It returns ``None`` when the server did not
+    send enough fields to compute an honest series.
+    """
+    pts = []
+    for p in (track or []):
+        if not isinstance(p, dict):
+            continue
+        t = p.get('duration_s')
+        d = p.get('distance_m')
+        if t is None or d is None:
+            continue
+        try:
+            pts.append({
+                't': max(0.0, float(t)),
+                'd': max(0.0, float(d)),
+                's': max(0.0, float(p.get('steps') or 0)),
+                'alt': (float(p.get('altitude'))
+                        if p.get('altitude') is not None else None),
+            })
+        except (TypeError, ValueError):
+            continue
+    if len(pts) < 2:
+        return None
+    pts.sort(key=lambda x: x['t'])
+    total_seconds = int(round(pts[-1]['t']))
+    total_distance = max(x['d'] for x in pts)
+    total_steps = int(round(max(x['s'] for x in pts)))
+    if total_seconds <= 0 or total_distance <= 0:
+        return None
+
+    def interp(key: str, t: float):
+        prev = pts[0]
+        for cur in pts[1:]:
+            if cur['t'] >= t:
+                span = cur['t'] - prev['t']
+                k = (t - prev['t']) / span if span > 0 else 0.0
+                a, b = prev.get(key), cur.get(key)
+                if a is None or b is None:
+                    return b if b is not None else a
+                return a + (b - a) * k
+            prev = cur
+        return pts[-1].get(key)
+
+    series = []
+    prev_t = prev_d = prev_s = 0.0
+    for t in range(10, total_seconds + 1, 10):
+        d = interp('d', t)
+        n = interp('s', t)
+        alt = interp('alt', t)
+        dt = t - prev_t
+        wd = max(0.0, float(d or 0) - prev_d)
+        wn = max(0.0, float(n or 0) - prev_s)
+        pace = (dt / 60.0) / (wd / 1000.0) if wd > 0 else None
+        cadence = wn / (dt / 60.0) if wn > 0 else None
+        stride = wd / wn * 100.0 if wn > 0 else None
+        series.append({
+            't': float(t),
+            'pace': round(pace, 3) if pace is not None else None,
+            'cadence': round(cadence, 1) if cadence is not None else None,
+            'stride': round(stride, 1) if stride is not None else None,
+            'alt': round(float(alt), 1) if alt is not None else None,
+        })
+        prev_t, prev_d, prev_s = t, float(d or 0), float(n or 0)
+
+    splits = []
+    prev_t = 0.0
+    cumulative_d = 0.0
+    while cumulative_d + 1000.0 <= total_distance + 0.5:
+        cumulative_d += 1000.0
+        t = None
+        prev = pts[0]
+        for cur in pts[1:]:
+            if cur['d'] >= cumulative_d:
+                span = cur['d'] - prev['d']
+                k = (cumulative_d - prev['d']) / span if span > 0 else 0.0
+                t = prev['t'] + (cur['t'] - prev['t']) * k
+                break
+            prev = cur
+        if t is None:
+            break
+        splits.append({
+            'km': 1.0,
+            'seconds': int(round(t - prev_t)),
+            'cumulative': int(round(t)),
+            'pace': round((t - prev_t) / 60.0, 3),
+        })
+        prev_t = t
+    if total_distance - cumulative_d > 1.0:
+        rest = total_distance - cumulative_d
+        sec = max(0, total_seconds - int(round(prev_t)))
+        splits.append({
+            'km': round(rest / 1000.0, 3),
+            'seconds': sec,
+            'cumulative': total_seconds,
+            'pace': round((sec / 60.0) / (rest / 1000.0), 3) if rest else 0,
+        })
+
+    stats = _series_stats(series, total_distance, total_seconds, total_steps)
+    return {
+        **stats,
+        'series': _downsample_series(series, limit),
+        'splits': splits,
     }
 
 

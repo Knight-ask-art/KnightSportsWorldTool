@@ -75,7 +75,7 @@ def test_update_icon_is_quiet_until_the_manifest_has_a_newer_build():
     assert 'id="updateDlg"' in HTML
     assert 'id="updateCheckBtn"' in HTML
     assert "liveApi('real_check_update'" in SOURCE
-    assert "liveApi('real_download_update'" in SOURCE
+    assert "liveApi('real_start_download_update'" in SOURCE
     assert "liveApi('real_apply_update'" in SOURCE
     assert "liveApi('real_quit_app'" in SOURCE
     assert 'btn.hidden = !avail' in SOURCE

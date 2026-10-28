@@ -26,6 +26,7 @@ import json
 import time
 
 from ..domain import coords, safety
+from ..domain.rundata import track_series
 
 CHEAT_PATH = 'api/v78/cheat/cheatlist'
 SEMESTER_SUMMARY_PATH = 'api/v55/runnings/recordssummary/semester'
@@ -819,6 +820,7 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
 
     return {'ok': True, 'error': None, 'detail': detail, 'track': track,
             'five_point': five, 'segments': segs, 'stats': stats,
+            'analysis': track_series(track),
             'fields': sorted(obj.keys())}
 
 

@@ -19,10 +19,13 @@ which mode runs.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
+import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -258,10 +261,15 @@ def normalize(manifest, source: str, current: str = VERSION,
         # A source checkout or a hand-built zip can be ahead of the release.
         state, message = 'ahead', '当前版本 v%s 比清单更新' % current
 
+    minimum = str(manifest.get('min_version') or '').strip()
+    required = bool(minimum and is_newer(minimum, current))
+
     return {
         'state': state,
         'current': current,
         'latest': latest,
+        'min_version': minimum,
+        'required': required,
         'file': file_name,
         'url': url,
         'urls': urls,
@@ -318,6 +326,8 @@ def check(current: str = VERSION, manifest_url: str | None = None,
         'state': 'failed',
         'current': current,
         'latest': '',
+        'min_version': '',
+        'required': False,
         'file': '',
         'url': '',
         'size': 0,
@@ -409,50 +419,111 @@ def rank_mirrors(urls, magic: bytes = b'', budget: float = PROBE_BUDGET):
     return ranked, results
 
 
+class DownloadCancelled(RuntimeError):
+    """The operator closed the progress dialog."""
+
+
 def _download_one(url: str, dest_dir: str, name: str, sha256: str,
-                  expected_size: int) -> dict:
-    """One mirror, all the way to a verified file (raises on any mismatch)."""
+                  expected_size: int, progress=None, cancel=None) -> dict:
+    """One mirror, all the way to a verified file.
+
+    A ``.part`` from the same URL/size is resumed with a Range request; every
+    final file still goes through the manifest's sha256, so a corrupt partial
+    can only cost one retry, never a bad install.
+    """
     target = os.path.join(os.path.realpath(dest_dir), name)
     part = target + '.part'
+    meta_path = part + '.meta'
+    resume = 0
+    if os.path.exists(part) and os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding='utf-8') as fh:
+                meta = json.load(fh)
+            if (str(meta.get('url') or '') == url and
+                    (not expected_size or int(meta.get('size') or 0) == expected_size)):
+                resume = os.path.getsize(part)
+        except (OSError, ValueError, TypeError):
+            resume = 0
+    if expected_size and resume > expected_size:
+        resume = 0
+
+    headers = {'User-Agent': USER_AGENT}
+    if resume:
+        headers['Range'] = 'bytes=%d-' % resume
     digest = hashlib.sha256()
     total = 0
+    if resume:
+        try:
+            with open(part, 'rb') as fh:
+                while True:
+                    block = fh.read(1 << 20)
+                    if not block:
+                        break
+                    digest.update(block)
+                    total += len(block)
+        except OSError:
+            resume, total = 0, 0
+            digest = hashlib.sha256()
     try:
+        with open(meta_path, 'w', encoding='utf-8') as fh:
+            json.dump({'url': url, 'size': expected_size}, fh)
         with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT,
-                          headers={'User-Agent': USER_AGENT}) as response:
-            if response.status_code != 200:
+                          headers=headers) as response:
+            if response.status_code == 416 and expected_size and total == expected_size:
+                pass  # already complete; verify below
+            elif response.status_code not in (200, 206):
                 raise RuntimeError('HTTP %s' % response.status_code)
-            with open(part, 'wb') as fh:
-                for chunk in response.iter_content(1 << 20):
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > MAX_DOWNLOAD_BYTES:
-                        raise ValueError('安装包超过大小上限')
-                    digest.update(chunk)
-                    fh.write(chunk)
+            elif resume and response.status_code == 200:
+                # Server ignored Range: restart rather than append twice.
+                resume, total = 0, 0
+                digest = hashlib.sha256()
+            if not (response.status_code == 416 and total == expected_size):
+                mode = 'ab' if resume else 'wb'
+                last_report = 0.0
+                with open(part, mode) as fh:
+                    for chunk in response.iter_content(1 << 20):
+                        if cancel is not None and cancel.is_set():
+                            raise DownloadCancelled('下载已取消')
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            raise ValueError('安装包超过大小上限')
+                        digest.update(chunk)
+                        fh.write(chunk)
+                        now = time.monotonic()
+                        if progress is not None and now - last_report > 0.35:
+                            last_report = now
+                            progress(total, expected_size)
         if expected_size and total != expected_size:
             raise ValueError('大小不一致（%d != %d）' % (total, expected_size))
         actual = digest.hexdigest()
         if sha256 and actual != sha256.lower():
+            # A partial from another mirror can be structurally complete but
+            # wrong; keep it for inspection? No: retry from zero next time.
+            try:
+                os.remove(part)
+                os.remove(meta_path)
+            except OSError:
+                pass
             raise ValueError('sha256 校验失败')
         os.replace(part, target)
-    except Exception:
         try:
-            os.remove(part)
+            os.remove(meta_path)
         except OSError:
             pass
+    except Exception:
+        # Keep `.part` for a resume; a human can delete data/updates manually.
         raise
     return {'file': name, 'path': target, 'size': total, 'sha256': actual}
 
 
 def download(url, dest_dir: str, sha256: str = '', size: int = 0,
-             file: str = '') -> dict:
+             file: str = '', progress=None, cancel=None) -> dict:
     """Stream a package into ``dest_dir``; verify size and sha256 first.
 
-    ``url`` may be a string or a list of mirrors.  Mirrors are ranked by a
-    64 KB probe, then tried in order until one file matches the manifest.
-    A mirror that returns HTML, truncates, or flips a byte is skipped -- the
-    sha256 check makes "wrong mirror" a retry, not a broken install.
+    ``progress(received, total)`` is called while downloading; ``cancel`` is a
+    ``threading.Event`` that turns a closed dialog into a clean stop.
     """
     candidates = [url] if isinstance(url, str) else [
         str(u) for u in (url or []) if u]
@@ -473,9 +544,14 @@ def download(url, dest_dir: str, sha256: str = '', size: int = 0,
     tried = []
     last = None
     for candidate in ranked:
+        if cancel is not None and cancel.is_set():
+            raise DownloadCancelled('下载已取消')
         try:
             info = _download_one(candidate, dest_dir, name, sha256,
-                                 expected_size)
+                                 expected_size, progress=progress,
+                                 cancel=cancel)
+        except DownloadCancelled:
+            raise
         except Exception as e:  # noqa: BLE001 - try the next mirror
             tried.append('%s: %s' % (urlparse(candidate).netloc, e))
             last = e
@@ -485,6 +561,128 @@ def download(url, dest_dir: str, sha256: str = '', size: int = 0,
         info['tried'] = tried
         return info
     raise last if last is not None else RuntimeError('没有可用的下载地址')
+
+
+# --------------------------------------------------------------------------
+# background download job (UI progress + cancel)
+# --------------------------------------------------------------------------
+_DOWNLOAD_LOCK = threading.Lock()
+_DOWNLOAD_THREAD = None
+_DOWNLOAD_CANCEL = threading.Event()
+_DOWNLOAD_STATE = {'state': 'idle'}
+
+
+def _download_state_path(store_dir: str) -> str:
+    return os.path.join(_updates_dir(store_dir), 'download.state.json')
+
+
+def _publish_download_state(store_dir: str, **patch) -> dict:
+    global _DOWNLOAD_STATE
+    with _DOWNLOAD_LOCK:
+        state = dict(_DOWNLOAD_STATE)
+        state.update(patch)
+        state['updated_at'] = int(time.time() * 1000)
+        _DOWNLOAD_STATE = state
+        snapshot = dict(state)
+    try:
+        os.makedirs(_updates_dir(store_dir), exist_ok=True)
+        tmp = _download_state_path(store_dir) + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(snapshot, fh, ensure_ascii=False)
+        os.replace(tmp, _download_state_path(store_dir))
+    except OSError:
+        pass
+    return snapshot
+
+
+def download_status(store_dir: str) -> dict:
+    with _DOWNLOAD_LOCK:
+        state = dict(_DOWNLOAD_STATE)
+    if state.get('state') in (None, 'idle'):
+        try:
+            with open(_download_state_path(store_dir), encoding='utf-8') as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            state = {'state': 'idle'}
+    return state
+
+
+def start_download(url, dest_dir: str, sha256: str = '', size: int = 0,
+                   file: str = '', store_dir: str = '') -> dict:
+    """Start a download in a daemon thread and return the initial state."""
+    global _DOWNLOAD_THREAD
+    store = store_dir or dest_dir
+    with _DOWNLOAD_LOCK:
+        if _DOWNLOAD_THREAD is not None and _DOWNLOAD_THREAD.is_alive():
+            return dict(_DOWNLOAD_STATE)
+        _DOWNLOAD_CANCEL.clear()
+        _DOWNLOAD_STATE = {'state': 'probing', 'received': 0,
+                           'total': _int_or_zero(size), 'message': '正在测速…'}
+
+    def job():
+        started = time.monotonic()
+        last = [0.0]
+
+        def progress(received, total):
+            now = time.monotonic()
+            if now - last[0] < 0.25:
+                return
+            last[0] = now
+            elapsed = max(now - started, 0.2)
+            _publish_download_state(
+                store, state='downloading', received=int(received),
+                total=int(total or 0), speed=round(received / elapsed, 1),
+                message='下载中…')
+
+        try:
+            _publish_download_state(store, state='probing',
+                                    message='正在测速并选择线路…')
+            info = download(url, dest_dir, sha256=sha256, size=size,
+                            file=file, progress=progress,
+                            cancel=_DOWNLOAD_CANCEL)
+            _publish_download_state(
+                store, state='done', received=int(info.get('size') or 0),
+                total=int(info.get('size') or size or 0),
+                file=info.get('file') or '', mirror=info.get('mirror') or '',
+                speed=0, message='下载完成，sha256 已校验')
+        except DownloadCancelled:
+            _publish_download_state(store, state='cancelled',
+                                    message='已取消；下次可继续下载')
+        except Exception as e:  # noqa: BLE001
+            _publish_download_state(store, state='failed',
+                                    error=str(e), message='下载失败：%s' % e)
+        finally:
+            _DOWNLOAD_CANCEL.clear()
+
+    _DOWNLOAD_THREAD = threading.Thread(target=job, daemon=True,
+                                        name='hxp-update-download')
+    _DOWNLOAD_THREAD.start()
+    return download_status(store)
+
+
+def cancel_download(store_dir: str) -> dict:
+    _DOWNLOAD_CANCEL.set()
+    return _publish_download_state(store_dir, state='cancelling',
+                                   message='正在取消…')
+
+
+def last_result(store_dir: str) -> dict:
+    path = os.path.join(_updates_dir(store_dir), 'last-result.json')
+    try:
+        with open(path, encoding='utf-8') as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def clear_last_result(store_dir: str) -> None:
+    try:
+        os.remove(os.path.join(_updates_dir(store_dir), 'last-result.json'))
+    except OSError:
+        pass
 
 
 def _updates_dir(store_dir: str) -> str:
@@ -563,32 +761,54 @@ $src = %(src)s
 $dst = %(dst)s
 $exe = %(exe)s
 $log = %(log)s
+$version = %(version)s
 function Write-Log($m) {
   try {
     ('[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) |
       Out-File -FilePath $log -Append -Encoding utf8
   } catch {}
 }
-Write-Log "wait for pid $appPid"
+function Write-Result($state, $message) {
+  try {
+    $dir = Join-Path $dst 'data\updates'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $obj = [ordered]@{ state=$state; version=$version; message=$message;
+      at=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') }
+    ($obj | ConvertTo-Json -Compress) | Out-File -FilePath (Join-Path $dir 'last-result.json') -Encoding utf8
+  } catch {}
+}
+Write-Log "zip update: wait for pid $appPid"
 $gone = $false
 for ($i = 0; $i -lt 60; $i++) {
   if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) { $gone = $true; break }
   Start-Sleep -Milliseconds 500
 }
-if (-not $gone) { Write-Log 'still running; abort'; exit 2 }
+if (-not $gone) { Write-Result 'failed' '旧进程没有退出'; Write-Log 'still running; abort'; exit 2 }
 Start-Sleep -Milliseconds 500
+$new = "$dst.__new"
+$old = "$dst.__old"
 try {
-  robocopy $src $dst /E /IS /IT /R:1 /W:1 /XD "$dst\data" /NFL /NDL /NJH /NJS /NP | Out-Null
+  Remove-Item $new -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue
+  robocopy $src $new /E /IS /IT /R:1 /W:1 /XD "$dst\data" /NFL /NDL /NJH /NJS /NP | Out-Null
   if ($LASTEXITCODE -ge 8) { throw "robocopy exit $LASTEXITCODE" }
-  $oldInternal = Join-Path $dst '_internal'
-  if ((Test-Path $oldInternal) -and -not (Test-Path (Join-Path $src '_internal'))) {
-    Remove-Item $oldInternal -Recurse -Force -ErrorAction SilentlyContinue
+  if (-not (Test-Path (Join-Path $new '好想跑.exe'))) { throw '新目录里没有 好想跑.exe' }
+  if (Test-Path (Join-Path $dst 'data')) {
+    Move-Item (Join-Path $dst 'data') (Join-Path $new 'data')
   }
+  Move-Item $dst $old
+  Move-Item $new $dst
   Start-Process -FilePath $exe -WorkingDirectory $dst
-  Remove-Item $src -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Result 'ok' '更新完成'
+  Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue
   Write-Log 'ok'
 } catch {
-  Write-Log ('failed: ' + $_.Exception.Message)
+  $msg = $_.Exception.Message
+  Write-Log ('failed: ' + $msg)
+  if (-not (Test-Path $dst) -and (Test-Path $old)) {
+    try { Move-Item $old $dst } catch {}
+  }
+  Write-Result 'failed' $msg
   exit 1
 }
 Start-Sleep -Milliseconds 300
@@ -603,11 +823,22 @@ _INSTALLER_SCRIPT_TEMPLATE = r"""$ErrorActionPreference = 'Stop'
 $appPid = %(pid)d
 $setup = %(setup)s
 $exe = %(exe)s
+$install = %(install)s
 $log = %(log)s
+$version = %(version)s
 function Write-Log($m) {
   try {
     ('[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) |
       Out-File -FilePath $log -Append -Encoding utf8
+  } catch {}
+}
+function Write-Result($state, $message) {
+  try {
+    $dir = Join-Path $install 'data\updates'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $obj = [ordered]@{ state=$state; version=$version; message=$message;
+      at=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') }
+    ($obj | ConvertTo-Json -Compress) | Out-File -FilePath (Join-Path $dir 'last-result.json') -Encoding utf8
   } catch {}
 }
 Write-Log "installer: wait for pid $appPid"
@@ -616,22 +847,24 @@ for ($i = 0; $i -lt 120; $i++) {
   if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) { $gone = $true; break }
   Start-Sleep -Milliseconds 500
 }
-if (-not $gone) { Write-Log 'still running; abort'; exit 2 }
+if (-not $gone) { Write-Result 'failed' '旧进程没有退出'; Write-Log 'still running; abort'; exit 2 }
 Start-Sleep -Milliseconds 800
 try {
   $proc = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru -Wait
   Write-Log ("setup exit " + $proc.ExitCode)
-  if ($proc.ExitCode -ne 0) { exit 1 }
+  if ($proc.ExitCode -ne 0) { throw ("安装包退出码 " + $proc.ExitCode) }
   for ($i = 0; $i -lt 80; $i++) {
     if (Test-Path $exe) { break }
     Start-Sleep -Milliseconds 250
   }
-  if (-not (Test-Path $exe)) { Write-Log 'new exe missing'; exit 1 }
+  if (-not (Test-Path $exe)) { throw '安装后没有找到 好想跑.exe' }
   Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
+  Write-Result 'ok' '更新完成'
   Remove-Item $setup -Force -ErrorAction SilentlyContinue
   Write-Log 'ok'
 } catch {
   Write-Log ('failed: ' + $_.Exception.Message)
+  Write-Result 'failed' $_.Exception.Message
   exit 1
 }
 Start-Sleep -Milliseconds 300
@@ -658,12 +891,12 @@ def _spawn(script: str, cwd: str) -> None:
 
 
 def apply(package: str, store_dir: str, install_dir: str | None = None,
-          pid: int | None = None) -> dict:
+          pid: int | None = None, version: str = '') -> dict:
     """Hand the swap to a detached PowerShell script.
 
-    ``package`` is either the release zip (portable copy) or the NSIS
-    installer (installed copy).  The extension decides; the caller does not
-    have to pass the format around.
+    The script is written to the system temp directory, not ``data/updates``:
+    a portable swap moves the whole install directory (including ``data``)
+    and a running .ps1 inside it would lock the move on Windows.
     """
     if os.name != 'nt':
         raise RuntimeError('自动更新只支持 Windows')
@@ -673,11 +906,12 @@ def apply(package: str, store_dir: str, install_dir: str | None = None,
     from ..build_info import app_root
     install = os.path.realpath(install_dir or app_root())
     if str(package).lower().endswith('.exe'):
-        return _apply_installer(package, store_dir, install, pid)
+        return _apply_installer(package, store_dir, install, pid, version)
 
     staged = stage(package, store_dir)
     updates = _updates_dir(store_dir)
-    script = os.path.join(updates, 'apply-update.ps1')
+    script = os.path.join(tempfile.gettempdir(),
+                          'hxp-update-%s.ps1' % time.time_ns())
     log = os.path.join(updates, 'apply-update.log')
     app_pid = int(pid if pid is not None else os.getpid())
     text = _ZIP_SCRIPT_TEMPLATE % {
@@ -686,17 +920,19 @@ def apply(package: str, store_dir: str, install_dir: str | None = None,
         'dst': _quote(install),
         'exe': _quote(os.path.join(install, ENTRY_NAME)),
         'log': _quote(log),
+        'version': _quote(version),
     }
     with open(script, 'w', encoding='utf-8-sig', newline='\r\n') as fh:
         fh.write(text)
-    _spawn(script, updates)
+    _spawn(script, tempfile.gettempdir())
     return {'format': 'zip', 'staging': staged['path'],
             'files': staged['files'], 'install': install,
-            'script': script, 'log': log, 'pid': app_pid}
+            'script': script, 'log': log, 'pid': app_pid,
+            'version': version}
 
 
 def _apply_installer(package: str, store_dir: str, install: str,
-                     pid: int | None = None) -> dict:
+                     pid: int | None = None, version: str = '') -> dict:
     """Run the NSIS installer silently after this process exits."""
     updates = _updates_dir(store_dir)
     real = os.path.realpath(package)
@@ -708,20 +944,24 @@ def _apply_installer(package: str, store_dir: str, install: str,
         if fh.read(2) != b'MZ':
             raise ValueError('安装包不是有效的 Windows 程序')
 
-    script = os.path.join(updates, 'apply-installer.ps1')
+    script = os.path.join(tempfile.gettempdir(),
+                          'hxp-update-%s.ps1' % time.time_ns())
     log = os.path.join(updates, 'apply-update.log')
     app_pid = int(pid if pid is not None else os.getpid())
     text = _INSTALLER_SCRIPT_TEMPLATE % {
         'pid': app_pid,
         'setup': _quote(real),
         'exe': _quote(os.path.join(install, ENTRY_NAME)),
+        'install': _quote(install),
         'log': _quote(log),
+        'version': _quote(version),
     }
     with open(script, 'w', encoding='utf-8-sig', newline='\r\n') as fh:
         fh.write(text)
-    _spawn(script, updates)
+    _spawn(script, tempfile.gettempdir())
     return {'format': 'installer', 'package': real, 'install': install,
-            'script': script, 'log': log, 'pid': app_pid}
+            'script': script, 'log': log, 'pid': app_pid,
+            'version': version}
 
 
 def self_test() -> list[tuple[str, bool, str]]:

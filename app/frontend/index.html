@@ -8,31 +8,95 @@
 <link rel="apple-touch-icon" href="logo-128.png">
 <!-- No external webfont: use the installed Kaiti/STKaiti hand font so the exe
      opens instantly and works offline. -->
+<link rel="stylesheet" href="css/fonts.css">
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/splash.css">
 </head>
 <body class="login-locked">
-<div class="login-gate" id="loginGate" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
-  <section class="login-intro" aria-hidden="true">
-    <div class="login-kicker">
-      <span class="brand brand-logo"><img src="logo-128.png" alt="好想跑"></span>
-      <span>好想跑 / 本地工作台</span>
+<!-- boot splash: white plate, logo construction + access control -->
+<div class="boot" id="bootSplash" role="dialog" aria-modal="true" aria-label="HAOXIANGPAO startup">
+  <div class="boot-cam" aria-hidden="true">
+    <div class="boot-stage">
+      <svg class="boot-mark" viewBox="40 100 432 312" aria-hidden="true">
+        <path class="p3" pathLength="1" d="M117,116 58,154 51,163 51,336 57,345 120,387 120,116Z"/>
+        <path class="p2" pathLength="1" d="M130,240 131,246 227,315 331,396 336,396 337,318 334,308 324,297 194,206 182,208Z"/>
+        <path class="p4" pathLength="1" d="M224,323 221,322 134,383 129,389 211,390 220,386 224,378Z"/>
+        <path class="p1" pathLength="1" d="M231,184 230,189 235,196 278,227 287,228 390,163 399,161 405,168 404,220 393,234 343,266 340,272 342,285 376,313 382,316 388,316 447,279 458,263 460,256 460,202 454,188 446,180 423,164 363,127 350,124 333,124 318,128Z"/>
+        <image class="boot-mark-ghost" href="logo.png" x="0" y="0" width="512" height="512"/>
+        <image class="boot-mark-img" href="logo.png" x="0" y="0" width="512" height="512"/>
+      </svg>
     </div>
-    <h1>今天，<br><em>也想跑一跑。</em></h1>
-    <p>登录你的运动世界账号，读取自己的校区围栏、打卡点和今天的跑步记录。</p>
-    <svg class="login-route" viewBox="0 0 430 150" aria-hidden="true">
-      <path class="trail" d="M12 111 C 66 20, 141 143, 212 72 S 333 17, 416 91"/>
-      <path class="trail-strong" d="M270 94 C 299 73, 326 85, 354 62"/>
-      <circle cx="12" cy="111" r="4" fill="var(--ink)"/>
-      <g transform="translate(347 49) rotate(-8)">
-        <path class="pin" d="M9 28 C 4 20, 0 14, 0 9 A 9 9 0 1 1 18 9 C 18 14, 14 20, 9 28 Z"/>
-        <circle class="pin-dot" cx="9" cy="9" r="3"/>
-      </g>
-    </svg>
-  </section>
+  </div>
+  <div class="boot-word" aria-hidden="true">
+    <div class="boot-word-rule"></div>
+    <div class="boot-word-main">HAOXIANGPAO</div>
+    <div class="boot-word-sub">LOCAL WORKBENCH</div>
+  </div>
+  <section class="boot-access" id="bootAccess" aria-labelledby="bootTitle">
+    <header class="acc-brand" aria-hidden="true">
+      <div class="acc-brand-name">HAOXIANGPAO</div>
+      <div class="acc-brand-sub">LOCAL WORKBENCH</div>
+      <div class="acc-brand-sub big">RUN OS</div>
+    </header>
+    <div class="acc-meta" aria-hidden="true">
+      <span>REV 01 · DESKTOP PROFILE</span>
+      <span class="acc-clock" id="bootClock">00:00:00</span>
+    </div>
 
+    <div class="acc-center">
+      <h2 class="acc-title" id="bootTitle">ACCESS PERMISSION REQUIRED</h2>
+      <div class="acc-rule" aria-hidden="true"></div>
+      <p class="acc-sub" id="bootSub">LOCAL WORKBENCH ACCESS</p>
+      <button class="acc-btn" id="bootAction" type="button">
+        <span id="bootActionText">GRANT ACCESS</span>
+      </button>
+      <div class="acc-hint" id="bootHint">PRESS ENTER / SPACE, OR CLICK TO CONTINUE</div>
+    </div>
+
+    <div class="acc-bottom" aria-hidden="true">
+      <div class="acc-bl">
+        <div class="acc-step" id="bootStep">[ 01 / 06 ] AUTHORIZATION</div>
+      </div>
+      <div class="acc-br">
+        <div>· OPERATOR : LOCAL</div>
+        <div>POWERED BY HAOXIANGPAO</div>
+      </div>
+    </div>
+
+    <div class="acc-logwrap" aria-live="polite">
+      <div class="acc-log" id="bootLog">AWAITING OPERATOR CONSENT</div>
+      <div class="acc-log-en" id="bootLogEn">GRANT ACCESS TO CONTINUE</div>
+    </div>
+
+    <div class="acc-stamp" id="bootStamp">AUTHORIZED</div>
+    <div class="acc-progress" aria-hidden="true"><i id="bootProgress"></i></div>
+  </section>
+  <button class="boot-skip" id="bootSkip" type="button">SKIP ▸</button>
+</div>
+<svg class="bi-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><symbol id="bi-house" viewBox="0 0 16 16"><path d="M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293zM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5z"/></symbol><symbol id="bi-person-badge" viewBox="0 0 16 16"><path d="M6.5 2a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1zM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/>
+  <path d="M4.5 0A2.5 2.5 0 0 0 2 2.5V14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V2.5A2.5 2.5 0 0 0 11.5 0zM3 2.5A1.5 1.5 0 0 1 4.5 1h7A1.5 1.5 0 0 1 13 2.5v10.795a4.2 4.2 0 0 0-.776-.492C11.392 12.387 10.063 12 8 12s-3.392.387-4.224.803a4.2 4.2 0 0 0-.776.492z"/></symbol><symbol id="bi-activity" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M6 2a.5.5 0 0 1 .47.33L10 12.036l1.53-4.208A.5.5 0 0 1 12 7.5h3.5a.5.5 0 0 1 0 1h-3.15l-1.88 5.17a.5.5 0 0 1-.94 0L6 3.964 4.47 8.171A.5.5 0 0 1 4 8.5H.5a.5.5 0 0 1 0-1h3.15l1.88-5.17A.5.5 0 0 1 6 2"/></symbol><symbol id="bi-map" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M15.817.113A.5.5 0 0 1 16 .5v14a.5.5 0 0 1-.402.49l-5 1a.5.5 0 0 1-.196 0L5.5 15.01l-4.902.98A.5.5 0 0 1 0 15.5v-14a.5.5 0 0 1 .402-.49l5-1a.5.5 0 0 1 .196 0L10.5.99l4.902-.98a.5.5 0 0 1 .415.103M10 1.91l-4-.8v12.98l4 .8zm1 12.98 4-.8V1.11l-4 .8zm-6-.8V1.11l-4 .8v12.98z"/></symbol><symbol id="bi-journal-text" viewBox="0 0 16 16"><path d="M5 10.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5"/>
+  <path d="M3 0h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2v-1h1v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v1H1V2a2 2 0 0 1 2-2"/>
+  <path d="M1 5v-.5a.5.5 0 0 1 1 0V5h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1zm0 3v-.5a.5.5 0 0 1 1 0V8h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1zm0 3v-.5a.5.5 0 0 1 1 0v.5h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1z"/></symbol><symbol id="bi-person" viewBox="0 0 16 16"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6m2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0m4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4m-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10s-3.516.68-4.168 1.332c-.678.678-.83 1.418-.832 1.664z"/></symbol><symbol id="bi-gear" viewBox="0 0 16 16"><path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492M5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0"/>
+  <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115z"/></symbol><symbol id="bi-plus-lg" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/></symbol><symbol id="bi-pencil" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325"/></symbol><symbol id="bi-arrow-counterclockwise" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2z"/>
+  <path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466"/></symbol><symbol id="bi-magnet" viewBox="0 0 16 16"><path d="M8 1a7 7 0 0 0-7 7v3h4V8a3 3 0 0 1 6 0v3h4V8a7 7 0 0 0-7-7m7 11h-4v3h4zM5 12H1v3h4zM0 8a8 8 0 1 1 16 0v8h-6V8a2 2 0 1 0-4 0v8H0z"/></symbol><symbol id="bi-layers" viewBox="0 0 16 16"><path d="M8.235 1.559a.5.5 0 0 0-.47 0l-7.5 4a.5.5 0 0 0 0 .882L3.188 8 .264 9.559a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882L12.813 8l2.922-1.559a.5.5 0 0 0 0-.882zm3.515 7.008L14.438 10 8 13.433 1.562 10 4.25 8.567l3.515 1.874a.5.5 0 0 0 .47 0zM8 9.433 1.562 6 8 2.567 14.438 6z"/></symbol><symbol id="bi-crosshair" viewBox="0 0 16 16"><path d="M8.5.5a.5.5 0 0 0-1 0v.518A7 7 0 0 0 1.018 7.5H.5a.5.5 0 0 0 0 1h.518A7 7 0 0 0 7.5 14.982v.518a.5.5 0 0 0 1 0v-.518A7 7 0 0 0 14.982 8.5h.518a.5.5 0 0 0 0-1h-.518A7 7 0 0 0 8.5 1.018zm-6.48 7A6 6 0 0 1 7.5 2.02v.48a.5.5 0 0 0 1 0v-.48a6 6 0 0 1 5.48 5.48h-.48a.5.5 0 0 0 0 1h.48a6 6 0 0 1-5.48 5.48v-.48a.5.5 0 0 0-1 0v.48A6 6 0 0 1 2.02 8.5h.48a.5.5 0 0 0 0-1zM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4"/></symbol><symbol id="bi-arrow-clockwise" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
+  <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/></symbol><symbol id="bi-cloud-arrow-down" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M7.646 10.854a.5.5 0 0 0 .708 0l2-2a.5.5 0 0 0-.708-.708L8.5 9.293V5.5a.5.5 0 0 0-1 0v3.793L6.354 8.146a.5.5 0 1 0-.708.708z"/>
+  <path d="M4.406 3.342A5.53 5.53 0 0 1 8 2c2.69 0 4.923 2 5.166 4.579C14.758 6.804 16 8.137 16 9.773 16 11.569 14.502 13 12.687 13H3.781C1.708 13 0 11.366 0 9.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383m.653.757c-.757.653-1.153 1.44-1.153 2.056v.448l-.445.049C2.064 6.805 1 7.952 1 9.318 1 10.785 2.23 12 3.781 12h8.906C13.98 12 15 10.988 15 9.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 4.825 10.328 3 8 3a4.53 4.53 0 0 0-2.941 1.1z"/></symbol><symbol id="bi-x-lg" viewBox="0 0 16 16"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/></symbol><symbol id="bi-check2" viewBox="0 0 16 16"><path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0"/></symbol><symbol id="bi-shield-check" viewBox="0 0 16 16"><path d="M5.338 1.59a61 61 0 0 0-2.837.856.48.48 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.7 10.7 0 0 0 2.287 2.233c.346.244.652.42.893.533q.18.085.293.118a1 1 0 0 0 .101.025 1 1 0 0 0 .1-.025q.114-.034.294-.118c.24-.113.547-.29.893-.533a10.7 10.7 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.8 11.8 0 0 1-2.517 2.453 7 7 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7 7 0 0 1-1.048-.625 11.8 11.8 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 63 63 0 0 1 5.072.56"/>
+  <path d="M10.854 5.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 7.793l2.646-2.647a.5.5 0 0 1 .708 0"/></symbol><symbol id="bi-calendar3" viewBox="0 0 16 16"><path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2M1 3.857C1 3.384 1.448 3 2 3h12c.552 0 1 .384 1 .857v10.286c0 .473-.448.857-1 .857H2c-.552 0-1-.384-1-.857z"/>
+  <path d="M6.5 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2m3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2m3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2m-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2m3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2m3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2m3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2m-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2m3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2m3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2"/></symbol><symbol id="bi-triangle" viewBox="0 0 16 16"><path d="M7.938 2.016A.13.13 0 0 1 8.002 2a.13.13 0 0 1 .063.016.15.15 0 0 1 .054.057l6.857 11.667c.036.06.035.124.002.183a.2.2 0 0 1-.054.06.1.1 0 0 1-.066.017H1.146a.1.1 0 0 1-.066-.017.2.2 0 0 1-.054-.06.18.18 0 0 1 .002-.183L7.884 2.073a.15.15 0 0 1 .054-.057m1.044-.45a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767z"/></symbol><symbol id="bi-chevron-left" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0"/></symbol><symbol id="bi-chevron-right" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708"/></symbol><symbol id="bi-graph-up" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 0h1v15h15v1H0zm14.817 3.113a.5.5 0 0 1 .07.704l-4.5 5.5a.5.5 0 0 1-.74.037L7.06 6.767l-3.656 5.027a.5.5 0 0 1-.808-.588l4-5.5a.5.5 0 0 1 .758-.06l2.609 2.61 4.15-5.073a.5.5 0 0 1 .704-.07"/></symbol><symbol id="bi-clock-history" viewBox="0 0 16 16"><path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022zm2.004.45a7 7 0 0 0-.985-.299l.219-.976q.576.129 1.126.342zm1.37.71a7 7 0 0 0-.439-.27l.493-.87a8 8 0 0 1 .979.654l-.615.789a7 7 0 0 0-.418-.302zm1.834 1.79a7 7 0 0 0-.653-.796l.724-.69q.406.429.747.91zm.744 1.352a7 7 0 0 0-.214-.468l.893-.45a8 8 0 0 1 .45 1.088l-.95.313a7 7 0 0 0-.179-.483m.53 2.507a7 7 0 0 0-.1-1.025l.985-.17q.1.58.116 1.17zm-.131 1.538q.05-.254.081-.51l.993.123a8 8 0 0 1-.23 1.155l-.964-.267q.069-.247.12-.501m-.952 2.379q.276-.436.486-.908l.914.405q-.24.54-.555 1.038zm-.964 1.205q.183-.183.35-.378l.758.653a8 8 0 0 1-.401.432z"/>
+  <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0z"/>
+  <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5"/></symbol><symbol id="bi-geo-alt" viewBox="0 0 16 16"><path d="M12.166 8.94c-.524 1.062-1.234 2.12-1.96 3.07A32 32 0 0 1 8 14.58a32 32 0 0 1-2.206-2.57c-.726-.95-1.436-2.008-1.96-3.07C3.304 7.867 3 6.862 3 6a5 5 0 0 1 10 0c0 .862-.305 1.867-.834 2.94M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10"/>
+  <path d="M8 8a2 2 0 1 1 0-4 2 2 0 0 1 0 4m0 1a3 3 0 1 0 0-6 3 3 0 0 0 0 6"/></symbol><symbol id="bi-arrow-repeat" viewBox="0 0 16 16"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41m-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9"/>
+  <path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5 5 0 0 0 8 3M3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9z"/></symbol><symbol id="bi-save" viewBox="0 0 16 16"><path d="M2 1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H9.5a1 1 0 0 0-1 1v7.293l2.646-2.647a.5.5 0 0 1 .708.708l-3.5 3.5a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L7.5 9.293V2a2 2 0 0 1 2-2H14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h2.5a.5.5 0 0 1 0 1z"/></symbol><symbol id="bi-trash" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+  <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></symbol><symbol id="bi-folder2-open" viewBox="0 0 16 16"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.374 3.334 5.82 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></symbol><symbol id="bi-file-earmark-arrow-up" viewBox="0 0 16 16"><path d="M8.5 11.5a.5.5 0 0 1-1 0V7.707L6.354 8.854a.5.5 0 1 1-.708-.708l2-2a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 7.707z"/>
+  <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2M9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5z"/></symbol><symbol id="bi-box-arrow-up-right" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"/>
+  <path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"/></symbol><symbol id="bi-sliders" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M11.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M9.05 3a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0V3zM4.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M2.05 8a2.5 2.5 0 0 1 4.9 0H16v1H6.95a2.5 2.5 0 0 1-4.9 0H0V8zm9.45 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m-2.45 1a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0v-1z"/></symbol><symbol id="bi-person-vcard" viewBox="0 0 16 16"><path d="M5 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4m4-2.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 1-.5-.5M9 8a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1h-4A.5.5 0 0 1 9 8m1 2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5"/>
+  <path d="M2 2a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM1 4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8.96q.04-.245.04-.5C9 10.567 7.21 9 5 9c-2.086 0-3.8 1.398-3.984 3.181A1 1 0 0 1 1 12z"/></symbol><symbol id="bi-exclamation-triangle" viewBox="0 0 16 16"><path d="M7.938 2.016A.13.13 0 0 1 8.002 2a.13.13 0 0 1 .063.016.15.15 0 0 1 .054.057l6.857 11.667c.036.06.035.124.002.183a.2.2 0 0 1-.054.06.1.1 0 0 1-.066.017H1.146a.1.1 0 0 1-.066-.017.2.2 0 0 1-.054-.06.18.18 0 0 1 .002-.183L7.884 2.073a.15.15 0 0 1 .054-.057m1.044-.45a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767z"/>
+  <path d="M7.002 12a1 1 0 1 1 2 0 1 1 0 0 1-2 0M7.1 5.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0z"/></symbol><symbol id="bi-check-circle" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+  <path d="m10.97 4.97-.02.022-3.473 4.425-2.093-2.094a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05"/></symbol><symbol id="bi-circle" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/></symbol><symbol id="bi-dot" viewBox="0 0 16 16"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"/></symbol></svg>
+<div class="login-gate" id="loginGate" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
   <section class="login-card" aria-labelledby="loginTitle">
-    <div class="login-tape"></div>
+    <button type="button" class="login-tape" id="loginTape" aria-label="收起登录框" aria-expanded="true" title="点击收起/展开登录框"><span class="login-tape-label" id="loginTapeLabel">收起</span></button>
     <div class="login-card-top">
       <span class="tag ok">账号登录</span>
     </div>
@@ -74,7 +138,7 @@
       </button>
     </form>
 
-    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.4</span></div>
+    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.5</span></div>
   </section>
 </div>
 
@@ -122,38 +186,38 @@
       </div>
     </div>
 
-    <button class="new-run" id="newRunBtn"><span class="plus">＋</span><span class="label">新建跑步</span></button>
+    <button class="new-run" id="newRunBtn"><svg class="bi" aria-hidden="true"><use href="#bi-plus-lg"></use></svg><span class="label">新建跑步</span></button>
 
     <nav class="nav">
       <div class="nav-label">工作台</div>
       <button class="nav-item active" data-page="overview">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.4" height="6.4" rx="1.2"/><rect x="13.6" y="4" width="6.4" height="6.4" rx="1.2"/><rect x="4" y="13.6" width="6.4" height="6.4" rx="1.2"/><rect x="13.6" y="13.6" width="6.4" height="6.4" rx="1.2"/></svg>
+        <svg class="bi" aria-hidden="true"><use href="#bi-house"></use></svg>
         <span class="label">总览</span><span class="nav-count" id="navCount" hidden></span>
       </button>
       <button class="nav-item" data-page="accounts">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"/><path d="M5 20c.7-4 3.4-6 7-6s6.3 2 7 6"/></svg>
+        <svg class="bi" aria-hidden="true"><use href="#bi-person-badge"></use></svg>
         <span class="label">账号</span>
       </button>
       <button class="nav-item" data-page="run">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.2c0-1.2 1-2 2.2-2H10l2.2-4 3 2 4 .8c1.6.3 2.6 1.2 2.6 2.6v1.6H4v-1z"/><path d="M4 17.2h17.8"/><path d="M7.2 14.2l1.2 1.4"/></svg>
+        <svg class="bi" aria-hidden="true"><use href="#bi-activity"></use></svg>
         <span class="label">跑步</span><span class="nav-dot" id="runNavDot" title="今天还没跑" hidden></span>
       </button>
       <button class="nav-item" data-page="routes">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19c2.5-1.2 4.4-4.1 4.4-7.2 0-2.7 1.5-4.8 4-4.8 2.1 0 3.4 1.3 3.4 3 0 2.4-2.3 3.4-4.4 3.4"/><circle cx="5" cy="19" r="1.3"/><circle cx="17.6" cy="5.8" r="1.3"/></svg>
+        <svg class="bi" aria-hidden="true"><use href="#bi-map"></use></svg>
         <span class="label">路线库</span>
       </button>
       <button class="nav-item" data-page="records">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4.5h12v15H6z"/><path d="M9 8.5h6M9 12h6M9 15.5h4"/></svg>
+        <svg class="bi" aria-hidden="true"><use href="#bi-journal-text"></use></svg>
         <span class="label">记录</span>
       </button>
       <button class="nav-item" data-page="profile">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.6-3.8 3.2-5.8 6.5-5.8s5.9 2 6.5 5.8"/><path d="M4.5 5.5h3M5.2 4.8v1.4"/></svg>
+        <svg class="bi" aria-hidden="true"><use href="#bi-person"></use></svg>
         <span class="label">我的</span>
       </button>
 
-      <div class="nav-label" style="margin-top:10px">系统</div>
+      <div class="nav-label nav-label-system">系统</div>
       <button class="nav-item" data-page="settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M3.5 12h2.2M18.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></svg>
+        <svg class="bi" aria-hidden="true"><use href="#bi-gear"></use></svg>
         <span class="label">设置</span>
       </button>
     </nav>
@@ -167,10 +231,10 @@
         </div>
       </div>
       <div class="side-meta-row">
-        <div class="side-meta" id="sideVersion">v0.1.4</div>
+        <div class="side-meta" id="sideVersion">v0.1.5</div>
         <button class="update-btn" id="updateBtn" type="button" hidden
                 title="发现新版本" aria-label="发现新版本">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v10.5"/><path d="M7.8 9.8 12 14l4.2-4.2"/><path d="M4.5 18.5h15"/></svg>
+          <svg class="bi" aria-hidden="true"><use href="#bi-cloud-arrow-down"></use></svg>
           <i class="update-dot" aria-hidden="true"></i>
         </button>
       </div>
@@ -394,16 +458,16 @@
 
         <div class="map-tools run-tools">
           <button class="tool" id="penBtn" title="画笔：单击加点" aria-label="画笔">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17.5l3.4-.7L19 5.2a2 2 0 0 0-2.8-2.8L4.7 14.1 4 17.5z"/><path d="M14.8 4.2l2.8 2.8"/></svg>
+            <svg class="bi" aria-hidden="true"><use href="#bi-pencil"></use></svg>
           </button>
           <button class="tool" id="undoTool" title="撤销上一个点" aria-label="撤销">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H5V3"/><path d="M5.2 7.2c1.8-2.2 4.6-3.2 7.4-2.4 3.4 1 5.4 3.8 5.4 7 0 3.9-3.1 7-7 7-2 0-3.8-.8-5.1-2.1"/></svg>
+            <svg class="bi" aria-hidden="true"><use href="#bi-arrow-counterclockwise"></use></svg>
           </button>
           <button class="tool" id="snapTool" title="吸附真实道路" aria-label="吸附">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4.5v6.8a6 6 0 0 0 12 0V4.5h-3.6v6.8a2.4 2.4 0 0 1-4.8 0V4.5H6z"/><path d="M6 7.2h3.6M14.4 7.2H18"/></svg>
+            <svg class="bi" aria-hidden="true"><use href="#bi-magnet"></use></svg>
           </button>
           <button class="tool" id="layerTool" title="切换底图（默认卫星）" aria-label="底图">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l8.5 4.7-8.5 4.7-8.5-4.7 8.5-4.7z"/><path d="M3.5 13l8.5 4.7 8.5-4.7"/></svg>
+            <svg class="bi" aria-hidden="true"><use href="#bi-layers"></use></svg>
           </button>
         </div>
 
@@ -491,56 +555,80 @@
                 <div><span class="eyebrow">预计</span><b id="heroTime">—</b><small id="heroKcal">—</small></div>
               </div>
 
-              <div class="params">
+              <div class="params params-3">
                 <div class="field"><label for="inKm" title="总距离；画好路线后会自动按线路长度填写，手动修改后保留你的值">目标距离</label><input id="inKm" type="number" inputmode="decimal" min="0.1" max="42.2" step="0.01" value="2.5"><span class="unit">km</span></div>
                 <div class="field"><label for="inPace">配速</label><input id="inPace" type="number" inputmode="decimal" min="2" max="20" step="0.01" value="6.00"><span class="unit">min/km</span></div>
                 <div class="field"><label for="inCad">步频</label><input id="inCad" type="number" inputmode="numeric" min="60" max="260" step="1" value="150"><span class="unit">spm</span></div>
-                <div class="field" id="inAltField"><label for="inAlt"><span id="inAltLabelText">基准海拔</span><em id="inAltUse">自动使用</em></label><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span class="unit">m</span></div>
               </div>
 
-              <div class="splits-card" id="splitsCard" hidden>
+              <div class="splits-card auto" id="splitsCard">
                 <div class="splits-head">
-                  <b>每公里用时</b>
-                  <span class="mini" id="splitsNote">直接改数字，总配速会跟着变</span>
-                  <button type="button" class="btn small ghost" id="splitsReset">恢复自动</button>
+                  <div class="split-title"><b>每公里用时</b><span class="split-mode" id="splitsMode">自动</span></div>
+                  <button type="button" class="mini-link" id="splitsToggle" aria-pressed="false">手动微调</button>
                 </div>
-                <div class="splits-list" id="splitsList"></div>
+                <div class="split-auto" id="splitAuto">
+                  <div class="split-chips" id="splitChips"><span class="mini">登录后按配速自动生成</span></div>
+                  <div class="split-total" id="splitTotal">合计 — · 平均 —</div>
+                </div>
+                <div class="split-manual" id="splitManual" hidden>
+                  <div class="split-manual-head"><span class="mini">改数字，总配速会跟着变</span><button type="button" class="mini-link" id="splitsReset">恢复自动</button></div>
+                  <div class="splits-list" id="splitsList"></div>
+                </div>
               </div>
 
               <div class="alt-card" id="altCard">
                 <div class="alt-card-head">
-                  <span class="alt-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18l5.2-8.5 3.4 5 2.9-4L21 18z"/><path d="M8.2 9.5l1.4 2"/></svg>
-                  </span>
+                  <span class="alt-icon" aria-hidden="true"><svg class="bi"><use href="#bi-triangle"></use></svg></span>
                   <div class="alt-head-text">
-                    <b>海拔来源</b>
-                    <span id="altSummary">基准 25 m</span>
+                    <b>海拔</b>
+                    <span id="altSummary">自动 · 基准 25 m</span>
                   </div>
-                  <select id="altMode" aria-label="海拔来源">
-                    <option value="auto">自动</option>
-                    <option value="fixed">固定</option>
-                    <option value="range">区间</option>
-                    <option value="template">模板</option>
-                  </select>
+                  <button type="button" class="mini-link" id="altAdjustToggle" aria-expanded="false">调整</button>
                 </div>
-                <div class="alt-extra alt-template-row" id="altTemplateWrap" hidden>
-                  <button type="button" class="btn small ghost" id="altTemplateBtn">选择 GPX/JSON</button>
-                  <span class="mini" id="altTemplateName">未选择</span>
-                  <input type="file" id="altTemplateFile" accept=".gpx,.json,.geojson,.txt,.csv" hidden>
+                <div class="alt-modes" role="radiogroup" aria-label="海拔来源">
+                  <button type="button" data-alt-mode="auto" class="on">自动</button>
+                  <button type="button" data-alt-mode="fixed">固定</button>
+                  <button type="button" data-alt-mode="range">区间</button>
+                  <button type="button" data-alt-mode="template">模板</button>
                 </div>
-                <div class="alt-extra alt-range-row" id="altRangeWrap" hidden>
-                  <div class="alt-box">
-                    <label for="altMin">最低</label>
-                    <div class="alt-input"><input id="altMin" type="number" inputmode="numeric" min="-100" max="5000" step="1" placeholder="15"><span>m</span></div>
+                <select id="altMode" aria-label="海拔来源" hidden>
+                  <option value="auto">自动</option>
+                  <option value="fixed">固定</option>
+                  <option value="range">区间</option>
+                  <option value="template">模板</option>
+                </select>
+                <div class="alt-body">
+                  <div class="alt-extra alt-base-row" id="altBaseWrap" hidden>
+                    <div class="alt-box">
+                      <label for="inAlt" id="inAltLabelText">基准海拔</label>
+                      <div class="alt-input"><input id="inAlt" type="number" inputmode="numeric" min="-100" max="5000" step="1" value="25"><span>m</span></div>
+                    </div>
+                    <span class="alt-note" id="inAltUse">自动模式使用</span>
                   </div>
-                  <span class="alt-dash">–</span>
-                  <div class="alt-box">
-                    <label for="altMax">最高</label>
-                    <div class="alt-input"><input id="altMax" type="number" inputmode="numeric" min="-100" max="5000" step="1" placeholder="50"><span>m</span></div>
+                  <div class="alt-extra alt-template-row" id="altTemplateWrap" hidden>
+                    <button type="button" class="btn small ghost" id="altTemplateBtn">选择 GPX/JSON</button>
+                    <span class="mini" id="altTemplateName">未选择</span>
+                    <input type="file" id="altTemplateFile" accept=".gpx,.json,.geojson,.txt,.csv" hidden>
                   </div>
-                  <span class="alt-note" id="altRangeNote">必填</span>
+                  <div class="alt-extra alt-range-row" id="altRangeWrap" hidden>
+                    <div class="alt-box">
+                      <label for="altMin">最低</label>
+                      <div class="alt-input"><input id="altMin" type="number" inputmode="numeric" min="-100" max="5000" step="1" placeholder="15"><span>m</span></div>
+                    </div>
+                    <span class="alt-dash">–</span>
+                    <div class="alt-box">
+                      <label for="altMax">最高</label>
+                      <div class="alt-input"><input id="altMax" type="number" inputmode="numeric" min="-100" max="5000" step="1" placeholder="50"><span>m</span></div>
+                    </div>
+                    <span class="alt-note" id="altRangeNote">必填</span>
+                    <div class="alt-quick">
+                      <button type="button" class="mini-link" data-alt-range="10,30">平路</button>
+                      <button type="button" class="mini-link" data-alt-range="20,50">缓坡</button>
+                    </div>
+                  </div>
                 </div>
                 <div class="alt-hint" id="altHint">以基准海拔为中心轻微波动，像真实气压计。</div>
+                <div class="alt-preview" id="altPreview" hidden></div>
               </div>
 
               <div class="params" style="margin-top:9px">
@@ -549,7 +637,7 @@
                   <button type="button" class="date-btn" id="dateBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="datePop" aria-labelledby="dateLabel dateMain">
                     <span class="date-main" id="dateMain">—</span>
                     <span class="date-sub" id="dateSub"></span>
-                    <svg class="date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M7.5 3v4M16.5 3v4M3.5 9.5h17"/></svg>
+                    <svg class="date-icon bi" aria-hidden="true"><use href="#bi-calendar3"></use></svg>
                   </button>
                   <span class="unit">北京</span>
                 </div>
@@ -653,6 +741,7 @@
               <div class="check-list" id="checks"></div>
               <div class="form-actions" style="margin-top:10px">
                 <button class="btn primary" id="submitRun" disabled>提交这次跑步</button>
+                <button class="btn ghost" id="previewRun">预览数据</button>
                 <span class="hint" id="submitHint" style="margin:0">提交后该时段会被回执锁定，不能重复提交。</span>
               </div>
               <div class="submit-flow">
@@ -845,6 +934,7 @@
               <div class="record-map-actions">
                 <button class="btn small ghost" id="rdGpx" disabled>导出 GPX</button>
                 <button class="btn small ghost" id="rdSaveRoute" disabled>存为路线</button>
+                <button class="btn small ghost" id="rdCharts" disabled>数据图表</button>
               </div>
             </div>
             <div class="detail-verdict" id="rdVerdict" hidden></div>
@@ -951,7 +1041,7 @@
         <header class="page-head">
           <div class="crumb">系统 <span style="color:var(--faint)">/</span> <b>设置</b></div>
           <div class="head-row">
-            <h1>设置<span class="date">v0.1.4</span></h1>
+            <h1>设置<span class="date">v0.1.5</span></h1>
           </div>
 
         </header>
@@ -1028,7 +1118,7 @@
 
         <section class="sec">
           <div class="sec-head"><h2>关于</h2></div>
-          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.4</span></div>
+          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.5</span></div>
           <div class="detail-row"><span>构建</span><span id="aboutBuild">—</span></div>
           <div class="detail-row"><span>更新</span><span id="updateState">未检查</span></div>
           <div class="form-actions" style="margin-top:8px">
@@ -1058,6 +1148,67 @@
   <div class="date-pop-foot" id="dateFoot"></div>
 </div>
 
+<div class="data-preview" id="dataPreview" hidden>
+  <div class="onboard-veil" id="dataPreviewVeil"></div>
+  <section class="data-preview-card" role="dialog" aria-modal="true" aria-labelledby="dpTitle">
+    <header class="dp-head">
+      <div>
+        <span class="tag ok" id="dpKicker">提交前预览</span>
+        <h2 id="dpTitle">本次数据</h2>
+      </div>
+      <button type="button" class="onboard-x" id="dpClose" aria-label="关闭数据预览">×</button>
+    </header>
+    <div class="dp-summary" id="dpSummary"></div>
+    <div class="dp-grid">
+      <section class="dp-chart">
+        <div class="dp-chart-head"><b>配速</b><span class="mini" id="dpPaceNote">分/公里</span></div>
+        <div class="dp-canvas" id="dpPace"></div>
+      </section>
+      <section class="dp-chart">
+        <div class="dp-chart-head"><b>步频</b><span class="mini" id="dpCadNote">步/分钟</span></div>
+        <div class="dp-canvas" id="dpCadence"></div>
+      </section>
+      <section class="dp-chart">
+        <div class="dp-chart-head"><b>步幅</b><span class="mini" id="dpStrideNote">厘米</span></div>
+        <div class="dp-canvas" id="dpStride"></div>
+      </section>
+      <section class="dp-chart">
+        <div class="dp-chart-head"><b>海拔</b><span class="mini" id="dpAltNote">米</span></div>
+        <div class="dp-canvas" id="dpAltitude"></div>
+      </section>
+    </div>
+    <div class="dp-table-wrap">
+      <div class="dp-table-head"><b>每公里数据</b><span class="mini" id="dpTableNote"></span></div>
+      <div class="dp-table" id="dpTable"></div>
+    </div>
+    <footer class="dp-foot">
+      <span class="mini" id="dpFootNote">预览按当前参数生成，最终以服务器回读为准。</span>
+      <div class="dp-actions">
+        <button type="button" class="btn ghost" id="dpCancel">返回修改</button>
+        <button type="button" class="btn primary" id="dpConfirm">确认提交</button>
+      </div>
+    </footer>
+  </section>
+</div>
+
+<div class="post-submit" id="postSubmit" hidden>
+  <div class="onboard-veil" id="postSubmitVeil"></div>
+  <section class="post-card" role="dialog" aria-modal="true" aria-labelledby="postTitle">
+    <header class="post-head">
+      <span class="tag ok">提交完成</span>
+      <button type="button" class="onboard-x" id="postClose" aria-label="关闭">×</button>
+    </header>
+    <h2 id="postTitle">这次路线怎么处理？</h2>
+    <div class="post-summary" id="postSummary"></div>
+    <div class="post-actions">
+      <button type="button" class="btn primary" id="postSaveClear">保存到路线库并清空</button>
+      <button type="button" class="btn" id="postClear">直接清空</button>
+      <button type="button" class="mini-link" id="postKeep">暂时保留</button>
+    </div>
+    <div class="hint">保存后可在「路线库 → 记录」找到；清空只清路线，目标距离、配速和日期都会保留。</div>
+  </section>
+</div>
+
 <div class="onboard" id="updateDlg" role="dialog" aria-modal="true" aria-labelledby="updateTitle" hidden>
   <div class="onboard-veil" id="updateVeil"></div>
   <section class="onboard-card">
@@ -1070,11 +1221,16 @@
       <p id="updateSummary"></p>
       <ul id="updateNotes"></ul>
       <div class="onboard-tip" id="updateTip" hidden></div>
+      <div class="update-progress" id="updateProgress" hidden>
+        <div class="update-bar"><i id="updateBar"></i></div>
+        <div class="update-meta"><span id="updatePct">0%</span><span id="updateSpeed"></span></div>
+      </div>
     </div>
     <footer class="onboard-foot">
       <span class="mini" id="updateHint"></span>
       <div class="onboard-actions">
         <button type="button" class="btn small ghost" id="updateLater">稍后</button>
+        <button type="button" class="btn small ghost" id="updateCancel" hidden>取消下载</button>
         <button type="button" class="btn small primary" id="updateGo">下载</button>
       </div>
     </footer>
@@ -1085,7 +1241,7 @@
   <div class="onboard-veil" id="onboardVeil"></div>
   <section class="onboard-card">
     <header class="onboard-head">
-      <span class="tag ok" id="onboardKicker">新手指引 · 4 步</span>
+      <span class="tag ok" id="onboardKicker">新手指引 · 5 步</span>
       <button type="button" class="onboard-x" id="onboardClose" aria-label="关闭新手引导">×</button>
     </header>
     <div class="onboard-dots" id="onboardDots" aria-hidden="true"></div>
@@ -1105,6 +1261,8 @@
 </div>
 
 <script src="vendor/leaflet.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/splash.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

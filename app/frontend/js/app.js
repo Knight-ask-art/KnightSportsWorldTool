@@ -22,6 +22,9 @@ let _pointsSeq = 0, _recordsSeq = 0, _overviewSeq = 0;
 let _receiptsSeq = 0, _dateCountsSeq = 0, _detailSeq = 0, _modelSeq = 0;
 let _profileSeq = 0, _violSeq = 0;
 let _headerDay = '', _modelTimer = null, accountBusy = false;
+let _pointsAutoAt = 0;
+let PENDING_SUBMIT = null;
+let POST_SUBMIT = null;
 let distanceManual = false, lastRouteLength = 0;
 function invalidateLiveRequests(){
   // Bump every request sequence so replies that belong to a previous account
@@ -58,6 +61,8 @@ let livePoints = [];
    `let` block would initialise), so it must be hoisted — see the TDZ note at
    the top of this file. */
 var splitRows = null;           // [{km, seconds}]; null = generated on preview
+var splitAutoRows = [];         // last generated preview rows
+var splitsManual = false;
 var _splitsTimer = null;
 
 function renderPoints(points, opts){
@@ -456,6 +461,7 @@ const RUN_LIMITS = {
 };
 let altProfile = null;
 let altTemplateLabel = '';
+let altAdjustOpen = false;
 function readAltitudeOpts(){
   const mode = ($('#altMode') && $('#altMode').value) || 'auto';
   const loRaw = ($('#altMin') && $('#altMin').value || '').trim();
@@ -532,23 +538,26 @@ function updateAltSummary(){
   if(!el) return;
   const mode = ($('#altMode') && $('#altMode').value) || 'auto';
   const base = +($('#inAlt') && $('#inAlt').value);
+  const safeBase = isFinite(base) ? base : 25;
   if(mode === 'auto'){
-    el.textContent = isFinite(base) ? ('基准 ' + base + ' m · 气压计') : '基准海拔未填写';
+    el.textContent = '自动 · 基准 ' + safeBase + ' m';
   }else if(mode === 'fixed'){
-    el.textContent = isFinite(base) ? ('固定 ' + base + ' m · 零爬升') : '固定海拔未填写';
+    el.textContent = '固定 ' + safeBase + ' m · 零爬升';
   }else if(mode === 'range'){
     const lo = +($('#altMin') && $('#altMin').value);
     const hi = +($('#altMax') && $('#altMax').value);
     el.textContent = (isFinite(lo) && isFinite(hi))
-      ? (lo + '–' + hi + ' m · 合成坡') : '待填写海拔区间';
+      ? ('区间 ' + lo + '–' + hi + ' m') : '区间 · 待填写';
   }else{
     el.textContent = altTemplateLabel
-      ? (altTemplateLabel + ' · 本地模板') : '未选择模板文件';
+      ? ('模板 · ' + altTemplateLabel) : '模板 · 未选择文件';
   }
 }
 function altModeChanged(){
   const mode = ($('#altMode') && $('#altMode').value) || 'auto';
   const usesBase = mode === 'auto' || mode === 'fixed';
+  document.querySelectorAll('[data-alt-mode]').forEach(b =>
+    b.classList.toggle('on', b.dataset.altMode === mode));
   if($('#inAltLabelText')){
     $('#inAltLabelText').textContent = mode === 'fixed' ? '固定海拔' : '基准海拔';
   }
@@ -561,7 +570,12 @@ function altModeChanged(){
     $('#inAlt').readOnly = !usesBase;
     $('#inAlt').setAttribute('aria-disabled', usesBase ? 'false' : 'true');
   }
-  if($('#inAltField')) $('#inAltField').classList.toggle('muted', !usesBase);
+  if($('#altBaseWrap')) $('#altBaseWrap').hidden = !(usesBase && (mode === 'fixed' || altAdjustOpen));
+  if($('#altAdjustToggle')){
+    $('#altAdjustToggle').hidden = !usesBase;
+    $('#altAdjustToggle').textContent = altAdjustOpen ? '收起' : '调整';
+    $('#altAdjustToggle').setAttribute('aria-expanded', altAdjustOpen ? 'true' : 'false');
+  }
   if($('#altRangeWrap')) $('#altRangeWrap').hidden = !(mode === 'range' || mode === 'template');
   if($('#altTemplateWrap')) $('#altTemplateWrap').hidden = mode !== 'template';
   if(mode === 'range' && $('#altMin') && $('#altMax') &&
@@ -650,30 +664,79 @@ function refreshParams(){
 }
 refreshParams();
 
-/* ---------- per-kilometre splits (editable) ---------- */
+/* ---------- per-kilometre splits: automatic by default ---------- */
+function splitLabel(row, i){
+  const dist = +row.km || 0;
+  if(Math.abs(dist - 1) < 0.005) return '第 ' + (i + 1) + ' km';
+  return '最后 ' + kmText(dist) + ' km';
+}
+function splitRowsForView(){
+  return (splitsManual && splitRows && splitRows.length) ? splitRows : splitAutoRows;
+}
 function renderSplits(){
   const card = $('#splitsCard'), list = $('#splitsList');
   if(!card || !list) return;
-  if(!splitRows || !splitRows.length){ card.hidden = true; list.innerHTML = ''; return; }
+  const rows = splitRowsForView();
+  const manual = !!splitsManual;
   card.hidden = false;
-  list.innerHTML = splitRows.map((row, i) => {
+  card.classList.toggle('auto', !manual);
+  if($('#splitsMode')) $('#splitsMode').textContent = manual ? '手动' : '自动';
+  if($('#splitsToggle')){
+    $('#splitsToggle').textContent = manual ? '切回自动' : '手动微调';
+    $('#splitsToggle').setAttribute('aria-pressed', manual ? 'true' : 'false');
+  }
+  if($('#splitAuto')) $('#splitAuto').hidden = manual;
+  if($('#splitManual')) $('#splitManual').hidden = !manual;
+  if($('#splitChips')){
+    $('#splitChips').innerHTML = rows.length
+      ? rows.map((row, i) => '<span class="split-chip">' + splitLabel(row, i) +
+          ' <b>' + splitFmt(row.seconds) + '</b></span>').join('')
+      : '<span class="mini">登录后按配速自动生成</span>';
+  }
+  if($('#splitTotal')){
+    if(rows.length){
+      const sumSec = rows.reduce((a, r) => a + (+r.seconds || 0), 0);
+      const sumKm = rows.reduce((a, r) => a + (+r.km || 0), 0);
+      $('#splitTotal').innerHTML = '合计 <b>' + kmText(sumKm) + ' km</b> · <b>' +
+        splitFmt(sumSec) + '</b> · 平均 ' +
+        _paceText(sumSec / (60 * Math.max(0.001, sumKm))) + '/km';
+    }else{
+      $('#splitTotal').textContent = '合计 — · 平均 —';
+    }
+  }
+  if(!manual){ list.innerHTML = ''; return; }
+  if(!rows.length){ list.innerHTML = '<div class="mini">还没有分段；点「切回自动」恢复生成。</div>'; return; }
+  list.innerHTML = rows.map((row, i) => {
     const dist = +row.km || 0;
-    const label = (Math.abs(dist - 1) < 0.005 ? String(i + 1) : kmText(dist)) + ' km';
     const pace = dist > 0 ? (+row.seconds || 0) / (60 * dist) : 0;
     return '<div class="split-row">' +
-      '<span class="split-km">' + label + '</span>' +
+      '<span class="split-km">' + splitLabel(row, i) + '</span>' +
       '<input class="split-input" data-split="' + i + '" value="' + splitFmt(row.seconds) +
-        '" inputmode="text" aria-label="第 ' + (i + 1) + ' 段用时">' +
+        '" inputmode="text" aria-label="' + splitLabel(row, i) + '用时">' +
+      '<button type="button" class="split-step" data-split-step="-5" data-split="' + i + '" aria-label="减 5 秒">−</button>' +
+      '<button type="button" class="split-step" data-split-step="5" data-split="' + i + '" aria-label="加 5 秒">＋</button>' +
       '<span class="split-hint">' + (dist >= 0.05 ? _paceText(pace) + '/km' : '') + '</span>' +
       '</div>';
   }).join('');
-  const sumSec = splitRows.reduce((a, r) => a + (+r.seconds || 0), 0);
-  const sumKm = splitRows.reduce((a, r) => a + (+r.km || 0), 0);
+  const sumSec = rows.reduce((a, r) => a + (+r.seconds || 0), 0);
+  const sumKm = rows.reduce((a, r) => a + (+r.km || 0), 0);
   list.innerHTML += '<div class="split-total">合计 <b>' + kmText(sumKm) + ' km</b> · <b>' +
     splitFmt(sumSec) + '</b> · 平均 ' +
     _paceText(sumSec / (60 * Math.max(0.001, sumKm))) + '/km</div>';
 }
 
+function setSplitsManual(on){
+  splitsManual = !!on;
+  if(splitsManual){
+    if(!splitRows || !splitRows.length){
+      splitRows = (splitAutoRows || []).map(r => ({km: +r.km, seconds: Math.round(+r.seconds || 0)}));
+    }
+  }else{
+    splitRows = null;
+  }
+  renderSplits();
+  if(!splitsManual) scheduleSplitsPreview();
+}
 function applySplitsToPace(){
   const km = +$('#inKm').value || 0;
   if(!splitRows || !splitRows.length || !km) return;
@@ -701,11 +764,12 @@ async function refreshSplits(){
     km: params.km, pace: params.pace, cadence: params.cadence,
     waypoints: route && route.length >= 2 ? route : null,
     closed: !!routeClosed,
-    km_times: splitRows ? splitRows.map(r => Math.round(+r.seconds || 0)) : null
+    km_times: splitsManual && splitRows ? splitRows.map(r => Math.round(+r.seconds || 0)) : null
   });
-  if(liveOk(j) && j.data && Array.isArray(j.data.splits) && !splitRows){
-    splitRows = j.data.splits.map(s => ({km: +s.km,
-                                         seconds: Math.round(+s.seconds || 0)}));
+  if(liveOk(j) && j.data && Array.isArray(j.data.splits)){
+    splitAutoRows = j.data.splits.map(s => ({km: +s.km,
+                                             seconds: Math.round(+s.seconds || 0)}));
+    if(!splitsManual) splitRows = null;
     renderSplits();
   }
 }
@@ -1011,6 +1075,14 @@ function go(page){
     setTimeout(() => {
       map.invalidateSize();
       if(!runMapFitted){ fitRunMap(); runMapFitted = true; }
+      // Entering the run page is the operator's natural "is my campus still
+      // current?" moment.  The backend has a 300 s cache, so this does not
+      // hammer the points endpoint; 5 s only prevents double-fire from a
+      // click that both navigates and switches the tab.
+      if(hasSession() && Date.now() - _pointsAutoAt > 5000){
+        _pointsAutoAt = Date.now();
+        loadPoints(false, {quiet: true});
+      }
     }, 80);
   }
   if(page === 'routes'){
@@ -1301,6 +1373,11 @@ function enterApp(resetPage){
   // preview also runs on every parameter change, but the first login should
   // not require touching a field to see it.
   scheduleSplitsPreview();
+  // First-run guide only makes sense after the login gate is gone.  The
+  // acknowledgement lives in data/ui_state.json, not localStorage, because
+  // app.py picks a fresh port on every launch.
+  setTimeout(maybeShowOnboard, 900);
+  setTimeout(checkLastUpdateResult, 1200);
 }
 async function requestLogin(username, password){
   const j = await liveApi('real_login', {username, password}, 120000);
@@ -1900,7 +1977,7 @@ function renderSession(){
   $('#sideName').textContent = display;
   $('#sideMeta').textContent = s.disabled ? '旧会话已停用' :
     (logged ? ((s.campusName || '已加载会话') + ' · token') : '等待登录');
-  $('#sideCampus').textContent = logged ? (s.campusName ? ('运动世界 · ' + s.campusName) : '本地工作台') : '本地工作台';
+  $('#sideCampus').textContent = logged ? '运动世界 · 本地工作台' : '本地工作台';
 
   $('#accAvatar').textContent = avatar;
   $('#accName').textContent = display;
@@ -2427,8 +2504,9 @@ async function liveKeepaliveStop(){
 function freeRunOn(){
   return !!($('#freeRun') && $('#freeRun').checked);
 }
-async function loadPoints(force){
-  if(!hasSession()){ toast('先登录后再刷新点位'); return; }
+async function loadPoints(force, opts){
+  opts = opts || {};
+  if(!hasSession()){ if(!opts.quiet) toast('先登录后再刷新点位'); return; }
   const seq = ++_pointsSeq;
   const s = LIVE.session;
   const btn = $('#fetchPoints');
@@ -2444,12 +2522,20 @@ async function loadPoints(force){
   if(seq !== _pointsSeq) return;
   if(btn){ btn.textContent = '刷新'; btn.disabled = false; }
   if(!liveOk(j)){
-    liveLog('围栏/点位加载失败', j.message || '', 'err');
-    setFence([], '跑步围栏');
-    renderPoints([]);
-    LIVE.points = []; LIVE.fence = [];
-    updateFenceChip();
-    refreshChecks();
+    liveLog('围栏/点位加载失败', j.message || '', opts.quiet ? 'warn' : 'err');
+    // A transient refresh failure is not proof that the last known fence is
+    // wrong.  Keep it and say so; only an empty state needs an explicit clear.
+    if(!(LIVE.points.length || LIVE.fence.length)){
+      setFence([], '跑步围栏');
+      renderPoints([]);
+      LIVE.points = []; LIVE.fence = [];
+      updateFenceChip();
+      refreshChecks();
+    }else{
+      const chip = $('#fetchPoints');
+      if(chip) chip.title = '上次刷新失败，仍使用上次点位：' + (j.message || '');
+      refreshChecks();
+    }
     return;
   }
   const d = j.data || {};
@@ -2457,6 +2543,7 @@ async function loadPoints(force){
     .filter(p => p && isFinite(+ (p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
   LIVE.points = (Array.isArray(d.checkpoints) ? d.checkpoints : [])
     .filter(p => p && isFinite(+(p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
+  LIVE.pointsAt = Date.now();
   // Always redraw, even when the server returned an empty list: otherwise the
   // previous campus's fence/points stayed on the map after switching accounts.
   const hasPoints = LIVE.points.length > 0;
@@ -2465,7 +2552,9 @@ async function loadPoints(force){
   if(Array.isArray(d.errors) && d.errors.length){
     liveLog('围栏/点位部分失败', d.errors.join('；'), 'warn');
   }
-  liveLog('围栏/点位已加载', `${LIVE.fence.length} 个围栏顶点 · ${livePoints.length} 个打卡点 · 按校区固定范围拉取（与目标距离无关）`, 'ok');
+  if(!opts.quiet){
+    liveLog('围栏/点位已加载', `${LIVE.fence.length} 个围栏顶点 · ${LIVE.points.length} 个打卡点 · 按校区固定范围拉取（与目标距离无关）`, 'ok');
+  }
   updateFenceChip();
   refreshChecks();
   refreshModelPreview();
@@ -2484,6 +2573,10 @@ function updateFenceChip(){
   if(chip){
     chip.textContent = label;
     chip.className = 'tag ' + (ok ? '' : 'warn');
+    if(LIVE.pointsAt){
+      chip.title = '上次同步：' + new Date(LIVE.pointsAt)
+        .toLocaleTimeString('zh-CN', {hour12:false, hour:'2-digit', minute:'2-digit'});
+    }
   }
   if(top){
     top.textContent = ok ? '围栏已加载' : '围栏未加载';
@@ -3258,6 +3351,7 @@ function clearRecordMap(){
   if(hint) hint.textContent = '选择记录后显示轨迹与打卡点。';
   if($('#rdGpx')) $('#rdGpx').disabled = true;
   if($('#rdSaveRoute')) $('#rdSaveRoute').disabled = true;
+  if($('#rdCharts')) $('#rdCharts').disabled = true;
 }
 function renderRecordMap(detail){
   const track = Array.isArray(detail && detail.track) ? detail.track : [];
@@ -3306,6 +3400,7 @@ function renderRecordMap(detail){
   if(hint) hint.textContent = `${line.length} 个轨迹点 · ${five.length} 个打卡点`;
   if($('#rdGpx')) $('#rdGpx').disabled = false;
   if($('#rdSaveRoute')) $('#rdSaveRoute').disabled = false;
+  if($('#rdCharts')) $('#rdCharts').disabled = false;
 }
 function clearRecordDetail(){
   ['rdPace','rdTime','rdCadence','rdSteps','rdTrack','rdSource','rdCheat','rdPolicy','rdRrid'].forEach(id => {
@@ -3750,6 +3845,17 @@ async function saveDetailAsRoute(){
   LIVE.selectedRoute = LIVE.routes.length - 1;
   renderRouteList(); selectRoute(LIVE.selectedRoute);
   routeSaveToast(ok, '已存为路线');
+}
+
+function openRecordDataPreview(){
+  const d = LIVE.lastDetail;
+  const analysis = d && d.analysis;
+  if(!analysis || !analysis.series || !analysis.series.length){
+    toast('这条记录没有可用的步频/海拔明细');
+    return;
+  }
+  PENDING_SUBMIT = null;
+  renderDataPreview(analysis, 'record', null, '');
 }
 
 async function copyDiagnostics(){
@@ -4437,20 +4543,9 @@ function wireDatePicker(){
 }
 
 function scheduleModelPreview(){ clearTimeout(_modelTimer); _modelTimer = setTimeout(refreshModelPreview, 300); scheduleSplitsPreview(); }
-async function refreshModelPreview(){
-  const seq = ++_modelSeq;
-  if(!hasSession()){
-    LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return;
-  }
-  const ti = selectedTimeInfo();
-  if(!ti.ok){ LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return; }
-  if(!LIVE.rules || !LIVE.rules.configured){ LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return; }
+function previewArgs(params, ti){
   const di = dailyCountInfo();
-  const params = readRunParams();
-  if(validateRunParams(params)){
-    LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return;
-  }
-  const j = await liveApi('real_preview_model', {
+  return {
     km: params.km, pace: params.pace,
     cadence: params.cadence, altitude: params.altitude,
     waypoints: route && route.length >= 2 ? route : null,
@@ -4462,10 +4557,32 @@ async function refreshModelPreview(){
     daily_runs: di.loaded ? di.count : null,
     daily_source: di.loaded ? di.source : null,
     ...altitudeArgs(params)
+  };
+}
+async function refreshModelPreview(){
+  const seq = ++_modelSeq;
+  if(!hasSession()){
+    LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return;
+  }
+  const ti = selectedTimeInfo();
+  if(!ti.ok){ LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return; }
+  if(!LIVE.rules || !LIVE.rules.configured){ LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return; }
+  const params = readRunParams();
+  if(validateRunParams(params)){
+    LIVE.model = null; LIVE.modelWarnings = []; renderModel(); refreshChecks(); return;
+  }
+  const j = await liveApi('real_preview_model', {
+    ...previewArgs(params, ti),
+    with_series: false,
+    seed: LIVE.previewSeed || null
   });
   if(seq !== _modelSeq) return;
   LIVE.model = liveOk(j) ? ((j.data && j.data.model) || null) : null;
   LIVE.modelWarnings = liveOk(j) && j.data ? (j.data.param_warnings || []) : [];
+  if(liveOk(j) && j.data){
+    LIVE.previewSeed = j.data.seed || null;
+    LIVE.previewData = j.data.preview || null;
+  }
   if(!liveOk(j)) liveLog('模型预览失败', j.message || '', 'warn');
   renderModel();
   refreshChecks();
@@ -4752,8 +4869,26 @@ function liveDockClick(){
 }
 
 /* ---------------- submit ---------------- */
+function previewPendingFrom(params, ti, allReady){
+  let di = dailyCountInfo();
+  const dayText = dateDisplay(ti.date);
+  const timeText = ti.time || '09:00–22:00 内随机';
+  const dailyText = di.loaded
+    ? (di.count + ' / ' + (di.cap || '—') +
+       (di.ok ? '' : '（已达上限，仅提醒）'))
+    : '未知（后端会再查）';
+  const missing = allReady ? [] :
+    [...document.querySelectorAll('#checks .check-row.warn .clabel')]
+      .map(x => x.textContent.trim());
+  return {
+    params, ti, allReady, dayText, timeText, dailyText, missing,
+    band: paramWarnings(params.pace, params.cadence),
+    seed: LIVE.previewSeed || null
+  };
+}
 async function submitRun(){
   if(LIVE.submitting) return;
+  if(PENDING_SUBMIT) return;
   if(accountBusy){ toast('账号操作进行中，请稍候'); return; }
   if(!hasSession()){ toast('先登录'); switchRunTab('submit'); return; }
   if(!LIVE.checked || !liveOk(LIVE.checked)){
@@ -4764,64 +4899,213 @@ async function submitRun(){
   }
   const params = readRunParams();
   const invalid = validateRunParams(params);
-  if(invalid){
-    toast(invalid);
-    switchRunTab('params');
-    return;
-  }
-  const {km, pace, cadence, altitude} = params;
+  if(invalid){ toast(invalid); switchRunTab('params'); return; }
   const ti = selectedTimeInfo();
   if(!ti.ok){ toast('开始时间无效：' + ti.note); switchRunTab('params'); return; }
   refreshChecks();
-  const allReady = !!(document.querySelector('#dock') && document.querySelector('#dock').classList.contains('ready'));
+  const allReady = !!(document.querySelector('#dock') &&
+    document.querySelector('#dock').classList.contains('ready'));
   let di = dailyCountInfo();
   if(!di.loaded){
     toast('当日次数还没核对完，正在重试…');
     if(!LIVE.recordsLoaded) await loadRecords();
     di = dailyCountInfo();
-    if(!di.loaded){
-      await refreshDailyCount();
-      di = dailyCountInfo();
+    if(!di.loaded){ await refreshDailyCount(); di = dailyCountInfo(); }
+  }
+  await openDataPreviewForSubmit(previewPendingFrom(params, ti, allReady));
+}
+
+async function openDataPreviewForSubmit(pending){
+  if(!pending) return;
+  PENDING_SUBMIT = pending;
+  if($('#dataPreview')) $('#dataPreview').hidden = false;
+  if($('#dpKicker')) $('#dpKicker').textContent = '提交前预览';
+  if($('#dpTitle')) $('#dpTitle').textContent = '正在生成本次数据…';
+  if($('#dpSummary')) $('#dpSummary').innerHTML = '<div class="mini">按当前参数生成配速、步频、步幅和海拔…</div>';
+  ['#dpPace','#dpCadence','#dpStride','#dpAltitude'].forEach(sel => {
+    const el = $(sel); if(el) el.innerHTML = '';
+  });
+  if($('#dpTable')) $('#dpTable').innerHTML = '';
+  if($('#dpConfirm')){ $('#dpConfirm').hidden = false; $('#dpConfirm').disabled = true; $('#dpConfirm').textContent = '生成中…'; }
+  try{
+    const j = await liveApi('real_preview_model', {
+      ...previewArgs(pending.params, pending.ti),
+      with_series: true,
+      seed: pending.seed || null
+    }, 45000);
+    if(!PENDING_SUBMIT) return; // closed while waiting
+    if(liveOk(j) && j.data && j.data.preview){
+      PENDING_SUBMIT.seed = j.data.seed || pending.seed || null;
+      renderDataPreview(j.data.preview, 'submit', PENDING_SUBMIT);
+    }else{
+      renderDataPreview(null, 'submit', PENDING_SUBMIT, j.message || '预览生成失败');
+    }
+  }catch(e){
+    if(PENDING_SUBMIT) renderDataPreview(null, 'submit', PENDING_SUBMIT, String(e.message || e));
+  }
+}
+
+function renderDataPreview(data, mode, pending, errorText){
+  const isRecord = mode === 'record';
+  const rules = (LIVE.rules && LIVE.rules.rules) || {};
+  const p = pending || {};
+  const d = data || {};
+  const km = d.distance_m ? d.distance_m / 1000 : (+p.params?.km || 0);
+  const duration = d.duration_s || (p.params ? Math.round(+p.params.km * +p.params.pace * 60) : 0);
+  const avgPace = d.avg_pace || (p.params ? +p.params.pace : null);
+  const avgCad = d.avg_cadence || (p.params ? +p.params.cadence : null);
+  const avgStride = d.avg_stride || null;
+  const altText = (d.alt_min != null && d.alt_max != null) ? (d.alt_min + '–' + d.alt_max) : '—';
+  const sum = [
+    ['距离', km ? km.toFixed(2) : '—', 'km'],
+    ['总时长', duration ? hms(duration) : '—', ''],
+    ['平均配速', HXPCharts.fmtPace(avgPace), '/km'],
+    ['平均步频', avgCad ? Math.round(avgCad) : '—', 'spm'],
+    ['平均步幅', avgStride ? Math.round(avgStride) : '—', 'cm'],
+    ['海拔', altText, 'm'],
+    ['累计爬升', d.ascent != null ? d.ascent : '—', 'm'],
+    ['热量', d.kcal != null ? d.kcal : '—', 'kcal']
+  ];
+  if($('#dpSummary')){
+    $('#dpSummary').innerHTML = sum.map(([k,v,u]) =>
+      '<div><span>' + k + '</span><b>' + esc(v) + '</b>' +
+      (u ? '<small>' + u + '</small>' : '') + '</div>').join('');
+  }
+  if($('#dpKicker')) $('#dpKicker').textContent = isRecord ? '记录回看' : '提交前预览';
+  if($('#dpTitle')) $('#dpTitle').textContent = isRecord
+    ? ('记录数据 · ' + (km ? km.toFixed(2) + ' km' : '—'))
+    : ('本次数据 · ' + (km ? km.toFixed(2) + ' km' : '—'));
+  const series = Array.isArray(d.series) ? d.series : [];
+  const paceBand = (rules.pace_min != null && rules.pace_max != null)
+    ? [+rules.pace_min, +rules.pace_max] : null;
+  const cadBand = (rules.step_min != null && rules.step_max != null)
+    ? [+rules.step_min, +rules.step_max] : null;
+  if($('#dpPaceNote')){
+    $('#dpPaceNote').textContent = series.length
+      ? ('平均 ' + HXPCharts.fmtPace(avgPace) +
+         (d.min_pace ? (' · 最快 ' + HXPCharts.fmtPace(d.min_pace)) : ''))
+      : '分/公里';
+  }
+  if($('#dpCadNote')) $('#dpCadNote').textContent = d.avg_cadence
+    ? ('平均 ' + Math.round(d.avg_cadence) + ' · 最大 ' + Math.round(d.max_cadence) +
+       ' · 最小 ' + Math.round(d.min_cadence))
+    : '步/分钟';
+  if($('#dpStrideNote')) $('#dpStrideNote').textContent = d.avg_stride
+    ? ('平均 ' + Math.round(d.avg_stride) + ' · 最大 ' + Math.round(d.max_stride) +
+       ' · 最小 ' + Math.round(d.min_stride))
+    : '厘米';
+  if($('#dpAltNote')) $('#dpAltNote').textContent = (d.alt_min != null)
+    ? (d.alt_min + '–' + d.alt_max + ' 米') : '米';
+  if(errorText){
+    ['#dpPace','#dpCadence','#dpStride','#dpAltitude'].forEach(sel => {
+      const el = $(sel);
+      if(el) el.innerHTML = '<div class="mini" style="padding:10px 0">' + esc(errorText) + '</div>';
+    });
+  }else{
+    HXPCharts.lineChart($('#dpPace'), series, {
+      key:'pace', invert:true, formatY:HXPCharts.fmtPace,
+      band:paceBand, bandNote:paceBand ? ('学校 ' + HXPCharts.fmtPace(paceBand[0]) +
+        '–' + HXPCharts.fmtPace(paceBand[1])) : ''
+    });
+    HXPCharts.barChart($('#dpCadence'), series, {
+      key:'cadence', formatY:v=>Math.round(v),
+      band:cadBand, bandNote:cadBand ? ('下限 ' + Math.round(cadBand[0])) : ''
+    });
+    HXPCharts.barChart($('#dpStride'), series, {key:'stride', formatY:v=>Math.round(v)});
+    HXPCharts.lineChart($('#dpAltitude'), series, {
+      key:'alt', area:true, lineClass:'dp-alt-line', formatY:v=>Math.round(v)
+    });
+  }
+  const rows = Array.isArray(d.splits) ? d.splits : [];
+  let best = -1;
+  rows.forEach((r, i) => {
+    if(!(+r.pace > 0)) return;
+    if(best < 0 || +r.pace < +rows[best].pace) best = i;
+  });
+  if($('#dpTable')){
+    if(!rows.length){
+      $('#dpTable').innerHTML = '<div class="mini" style="grid-column:1/-1;padding:8px 10px">' +
+        (isRecord ? '这条记录没有可用的每公里数据。' : '还没有分段数据；返回参数页重试。') + '</div>';
+    }else{
+      $('#dpTable').innerHTML =
+        '<div class="dp-th">#</div><div class="dp-th">公里</div>' +
+        '<div class="dp-th">分段用时</div><div class="dp-th">累计用时</div><div class="dp-th">配速</div>' +
+        rows.map((r,i) => {
+          const isBest = i === best;
+          return '<div class="dp-row' + (isBest ? ' best' : '') + '">' +
+            '<div class="dp-cell num">' + (i + 1) + '</div>' +
+            '<div class="dp-cell num">' + (+r.km).toFixed(2) + '</div>' +
+            '<div class="dp-cell num">' + splitFmt(r.seconds) + '</div>' +
+            '<div class="dp-cell num">' + splitFmt(r.cumulative || r.seconds) + '</div>' +
+            '<div class="dp-cell num dp-pace">' + HXPCharts.fmtPace(r.pace) + '</div>' +
+            '</div>';
+        }).join('');
     }
   }
-  const dayText = dateDisplay(ti.date);
-  const timeText = ti.time || '09:00–22:00 内随机';
-  const dailyText = di.loaded
-    ? (di.count + ' / ' + (di.cap || '—') +
-       (di.ok ? '' : '（已达上限，仅提醒）'))
-    : '未知（后端会再查）';
-  const missing = allReady ? [] :
-    [...document.querySelectorAll('#checks .check-row.warn .clabel')]
-      .map(x => x.textContent.trim());
-  const warnLine = missing.length
-    ? `\n未通过：${missing.join('、')}\n（后端仍会重新校验）`
-    : '';
-  const band = paramWarnings(pace, cadence);
-  const bandLine = band.length ? `\n参数提醒：${band.join('；')}` : '';
-  if(!confirm(`确认提交 ${km} km @ ${pace.toFixed(2)} min/km？
-提交日期：${dayText}
-开始时间：${timeText}
-当日次数：${dailyText}${warnLine}${bandLine}
-提交后该时段会被回执锁定，不能重复提交。`)) return;
+  if($('#dpTableNote')) $('#dpTableNote').textContent = rows.length
+    ? (rows.length + ' 段 · 最快一公里已标出') : '';
+  if($('#dpFootNote')){
+    if(isRecord){
+      $('#dpFootNote').textContent = '数据从服务器回读轨迹按 10 秒重采样；没有步频字段时显示 —。';
+    }else{
+      const missing = (p.missing || []).length ? (' · 未通过：' + p.missing.join('、')) : '';
+      $('#dpFootNote').textContent = (p.dayText || '') + ' ' + (p.timeText || '') +
+        ' · 当日 ' + (p.dailyText || '未知') + missing +
+        ' · 预览按当前参数生成，最终以服务器回读为准。';
+    }
+  }
+  if($('#dpConfirm')){
+    $('#dpConfirm').hidden = isRecord;
+    $('#dpConfirm').disabled = false;
+    $('#dpConfirm').textContent = errorText ? '仍然提交' : '确认提交';
+  }
+  if($('#dpCancel')) $('#dpCancel').textContent = isRecord ? '关闭' : '返回修改';
+  if($('#altPreview')){
+    if(series.length && series.some(s => s.alt != null)){
+      HXPCharts.spark($('#altPreview'), series, 'alt');
+    }else{
+      $('#altPreview').hidden = true;
+    }
+  }
+  if($('#dataPreview')) $('#dataPreview').hidden = false;
+}
+
+function closeDataPreview(){
+  if($('#dataPreview')) $('#dataPreview').hidden = true;
+}
+function cancelDataPreview(){
+  PENDING_SUBMIT = null;
+  closeDataPreview();
+}
+async function doSubmitRun(pending){
+  if(!pending || LIVE.submitting) return;
+  const {params, ti, band, dayText, timeText} = pending;
+  const {km, pace, cadence, altitude} = params;
+  PENDING_SUBMIT = null;
   LIVE.submitting = true;
   const btn = $('#submitRun');
-  btn.disabled = true; btn.textContent = '提交中…';
-  if(band.length) liveLog('参数提醒', band.join('；'), 'warn');
+  if(btn){ btn.disabled = true; btn.textContent = '提交中…'; }
+  if(band && band.length) liveLog('参数提醒', band.join('；'), 'warn');
   const altModeText = params.altitudeMode === 'fixed' ? ('固定 ' + altitude + ' m')
     : params.altitudeMode === 'range' ? ('区间 ' + (params.altitudeRange || []).join('–') + ' m')
     : params.altitudeMode === 'template' ? ('模板 ' + (altTemplateLabel || '已载入'))
     : ('自动 · 基准 ' + altitude + ' m');
   liveLog('开始提交', `${km} km · ${pace.toFixed(2)} /km · ${cadence} spm · 海拔 ${altModeText} · ${dayText} ${timeText}`, 'info');
-  const j = await liveApi('real_submit_run', {
-    km: km, pace: pace, cadence: cadence, altitude: altitude,
-    waypoints: route && route.length ? route : null,
-    snap_route: true, use_points: !freeRunOn(), geeToken: '',
-    date: ti.date, start_time: ti.time, closed: !!routeClosed,
-    km_times: splitRows ? splitRows.map(r => r.seconds) : null,
-    ...altitudeArgs(params)
-  }, 180000);
-  LIVE.submitting = false;
-  btn.textContent = '提交这次跑步';
+  let j;
+  try{
+    j = await liveApi('real_submit_run', {
+      km: km, pace: pace, cadence: cadence, altitude: altitude,
+      waypoints: route && route.length ? route : null,
+      snap_route: true, use_points: !freeRunOn(), geeToken: '',
+      date: ti.date, start_time: ti.time, closed: !!routeClosed,
+      km_times: splitRows ? splitRows.map(r => r.seconds) : null,
+      seed: pending.seed || null,
+      ...altitudeArgs(params)
+    }, 180000);
+  }finally{
+    LIVE.submitting = false;
+    if(btn){ btn.disabled = false; btn.textContent = '提交这次跑步'; }
+  }
   if(!liveOk(j)){
     const d = j.data || {};
     if(d.model){ _modelSeq++; LIVE.model = d.model; renderModel(); }
@@ -4836,9 +5120,6 @@ async function submitRun(){
   const d = j.data || {};
   LIVE.lastSubmit = d;
   if(d.model){ _modelSeq++; LIVE.model = d.model; renderModel(); }
-  // A 200 from save/record only means "accepted".  The record is not
-  // guaranteed complete until get_one_record says so, and OBS upload can
-  // fail independently.  Report those warnings instead of a flat success.
   const warnings = [];
   if(d.readback_error) warnings.push('回读失败：' + d.readback_error);
   if(!d.readback && !d.readback_error) warnings.push('没有回读结果');
@@ -4846,8 +5127,7 @@ async function submitRun(){
   if(d.readback && d.readback.isCheat) warnings.push('回读标记 isCheat=' + d.readback.isCheat);
   if(d.obs_error) warnings.push('轨迹上传失败：' + d.obs_error);
   if(d.obs && d.obs.of && ((d.obs.uploaded || 0) < d.obs.of || (d.obs.verified || 0) < d.obs.of)){
-    const obsErr = (d.obs.errors && d.obs.errors.length)
-      ? '（' + d.obs.errors[0] + '）' : '';
+    const obsErr = (d.obs.errors && d.obs.errors.length) ? ('（' + d.obs.errors[0] + '）') : '';
     warnings.push('轨迹上传不完整：' + (d.obs.uploaded || 0) + '/' + d.obs.of +
       ' 上传，' + (d.obs.verified || 0) + '/' + d.obs.of + ' 校验' + obsErr);
   }
@@ -4870,6 +5150,7 @@ async function submitRun(){
   }
   refreshChecks();
   switchRunTab('log');
+  openPostSubmit(d, pending, warnings);
   await loadOverview();
   LIVE.daily = null;
   await loadRecords();
@@ -4878,38 +5159,122 @@ async function submitRun(){
   loadReceipts();
 }
 
+/* ---------------- post-submit route cleanup ---------------- */
+function routeLineKey(line){
+  return (line || []).map(p => (+p[0]).toFixed(5) + ',' + (+p[1]).toFixed(5)).join('|');
+}
+function clearCurrentRouteAfterSubmit(message){
+  route = [];
+  redraw();
+  if($('#ptCount')) $('#ptCount').textContent = '0 个控制点';
+  toast(message || '已清空路线，可以画下一条');
+}
+function openPostSubmit(d, pending, warnings){
+  if(!route || route.length < 2) return;
+  POST_SUBMIT = {
+    data: d || {},
+    params: pending.params,
+    rrid: (d && d.rrid) || '',
+    route: route.map(p => [+p[0], +p[1]]),
+    closed: !!routeClosed,
+    warnings: warnings || []
+  };
+  if($('#postSummary')){
+    const km = pending.params.km;
+    const warn = (warnings || []).length
+      ? '<div class="tag warn" style="margin-top:6px">' + esc(warnings[0]) + '</div>' : '';
+    $('#postSummary').innerHTML = 'rrid <b>' + esc(POST_SUBMIT.rrid || '—') + '</b> · ' +
+      km.toFixed(2) + ' km · ' + esc(pending.dayText || '') + ' ' +
+      esc(pending.timeText || '') + warn;
+  }
+  if($('#postSubmit')) $('#postSubmit').hidden = false;
+}
+function closePostSubmit(){
+  if($('#postSubmit')) $('#postSubmit').hidden = true;
+}
+async function postSaveAndClear(){
+  const p = POST_SUBMIT;
+  if(!p) return;
+  const line = capRoutePoints(validRouteLine(p.route));
+  if(line.length < 2){ postClearRoute(); return; }
+  const key = routeLineKey(line);
+  const exists = (LIVE.routes || []).some(r => routeLineKey(validRouteLine(r.line)) === key);
+  if(!exists){
+    const item = {
+      name: '提交路线 ' + beijingTodayKey().slice(5) + ' · ' + (+p.params.km).toFixed(2) + 'km',
+      type: 'record',
+      line: line,
+      closed: !!p.closed,
+      saved_at: beijingTodayKey()
+    };
+    const ok = await persistRoutes((LIVE.routes || []).concat([item]));
+    if(!ok){
+      if($('#postSummary')) $('#postSummary').insertAdjacentHTML('beforeend',
+        '<div class="tag red" style="margin-top:6px">路线库保存失败，路线先保留，可重试</div>');
+      return;
+    }
+    LIVE.selectedRoute = LIVE.routes.length - 1;
+    renderRouteList();
+    selectRoute(LIVE.selectedRoute);
+  }
+  clearCurrentRouteAfterSubmit(exists ? '路线库已有，已清空当前路线' : '已加入路线库并清空当前路线');
+  closePostSubmit();
+  POST_SUBMIT = null;
+}
+function postClearRoute(){
+  clearCurrentRouteAfterSubmit('已清空当前路线');
+  closePostSubmit();
+  POST_SUBMIT = null;
+}
+function postKeepRoute(){
+  closePostSubmit();
+  POST_SUBMIT = null;
+}
+
+
 /* ---------------- wire live controls ---------------- */
 let snapping = false;
 /* ---------------- first-run guide ---------------- */
-const ONBOARD_KEY = 'hxp.onboard.v1';
+const ONBOARD_KEY = 'hxp.onboard.v2';
 const ONBOARD_STEPS = [
   {
     title: '先登录，工具才知道你在哪个校区',
-    body: '<p>手机号登录后，工具会从服务器读取你所在校区的<b>跑步围栏</b>和<b>打卡点</b>。</p>' +
-      '<ul><li>围栏、点位都来自真实接口；没有 token 时不会生成假点位。</li>' +
-      '<li>token 失效时到「账号」页重新验证或登录。</li></ul>',
+    body: '<p>用你自己的手机号登录。工具会从服务器读取所在校区的<b>跑步围栏</b>和<b>打卡点</b>。</p>' +
+      '<ul><li>围栏、点位都来自真实接口；没有 token 不会生成假点位。</li>' +
+      '<li>token 失效时，到「账号」页重新验证或登录。</li></ul>' +
+      '<div class="onboard-legal"><b>使用边界</b><span>仅限本人使用。禁止倒卖、分发安装包、代跑收费或共享账号；不要把 data 目录、token、回执发给他人。</span></div>',
     tip: '第一次登录要在本地解极验，会慢一点；之后一般几秒内完成。'
   },
   {
-    title: '请用手绘路线，自动功能还在开发中',
+    title: '路线：手绘最稳，自动还在开发中',
     body: '<p>跑步页有四种路线：<b>手绘</b>、<b>导入</b>（GPX/GeoJSON/CSV）、<b>田径场</b>，以及仍在开发中的<b>自动</b>。</p>' +
-      '<ul><li><b>请优先使用「手绘」</b>：在地图上逐点画，最可控。</li>' +
-      '<li><b>不建议使用「自动」</b>：目前仍在开发中，生成的路线可能不理想。</li>' +
+      '<ul><li><b>优先手绘</b>：点地图加点，右键删点，最可控。</li>' +
+      '<li><b>不建议自动</b>：目前只是按点位连一圈，路线质量不稳定。</li>' +
       '<li>围栏校验会检查整段路线；提交前看到「越界 0 点 / 0 段」才稳。</li></ul>',
-    tip: '从「手绘」开始：点地图加点，右键删点；需要绕圈时再打开「闭合」。'
+    tip: '从「手绘」开始；需要绕圈时再打开「闭合」。',
+    actions: [{label:'去手绘', goto:'run', tab:'route', mode:'draw'}]
   },
   {
-    title: '填参数，先看模型分',
-    body: '<p>填写距离、配速、步频和海拔。海拔支持<b>自动</b>、<b>固定</b>、<b>区间</b>和<b>模板</b>（本机 GPX/JSON）。</p>' +
-      '<ul><li>保存学校要求后，右侧会显示合格分和逐项检查。</li>' +
+    title: '参数：每公里和海拔默认自动',
+    body: '<p>填目标距离、配速和步频即可。</p>' +
+      '<ul><li><b>每公里用时</b>默认按配速自动分配；想改再点「手动微调」。</li>' +
+      '<li><b>海拔</b>默认自动，以基准海拔轻微起伏，一般不用改。</li>' +
       '<li>配速/步频超出常见范围只是黄色提醒，不会硬拦。</li></ul>',
-    tip: '模板文件只在本机解析，不会上传，也不会写进记录。'
+    tip: '模板海拔只在本机解析，不会上传，也不会写进记录。',
+    actions: [{label:'去填参数', goto:'run', tab:'params'}]
   },
   {
-    title: '自检通过，再提交',
-    body: '<p>提交前先看自检：token、点位、围栏、网络出口、当日次数、合格模型。</p>' +
-      '<ul><li>提交成功后回执会锁住这个时段，<b>不能重复提交</b>。</li>' +
-      '<li>「记录」页可以回放轨迹、看爬升和平台检查项。</li></ul>',
+    title: '提交前先看一遍数据',
+    body: '<p>点「提交这次跑步」会先弹出<b>官方同款数据预览</b>：配速、步频、步幅、海拔四张图，加上每公里用时表。</p>' +
+      '<ul><li>先核对距离、时长、配速和最高/最低值。</li>' +
+      '<li>确认无误再提交；返回修改不会提交任何数据。</li></ul>',
+    tip: '预览按当前参数生成，最终以服务器回读为准。'
+  },
+  {
+    title: '提交后回执锁定，不能重复提交',
+    body: '<p>提交成功后，回执会锁住这个时段；同一时段不能重复提交。</p>' +
+      '<ul><li>「记录」页可以回看轨迹、爬升和平台检查项。</li>' +
+      '<li>刚上传的路线可以选择<b>存进路线库并清空</b>，下一条从空白开始。</li></ul>',
     tip: '出问题在「设置 → 关于」复制诊断包；里面带版本和构建号，不含 token/坐标/IP。'
   }
 ];
@@ -4922,11 +5287,25 @@ function renderOnboard(){
   $('#onboardKicker').textContent = '新手指引 · ' + (onboardIndex + 1) + '/' + ONBOARD_STEPS.length;
   $('#onboardDots').innerHTML = ONBOARD_STEPS.map((_, i) =>
     '<i class="' + (i <= onboardIndex ? 'on' : '') + '"></i>').join('');
+  const actions = (s.actions || []).map(a =>
+    `<button type="button" class="btn small ghost" data-onboard-goto="${a.goto}"` +
+    (a.tab ? ` data-onboard-tab="${a.tab}"` : '') +
+    (a.mode ? ` data-onboard-mode="${a.mode}"` : '') + `>${a.label}</button>`).join('');
   $('#onboardBody').innerHTML = '<h2 id="onboardTitle">' + s.title + '</h2>' + s.body +
-    (s.tip ? '<div class="onboard-tip">' + s.tip + '</div>' : '');
+    (s.tip ? '<div class="onboard-tip">' + s.tip + '</div>' : '') +
+    (actions ? '<div class="onboard-actions-inline">' + actions + '</div>' : '');
   $('#onboardPrev').disabled = onboardIndex === 0;
   $('#onboardNext').textContent =
     onboardIndex === ONBOARD_STEPS.length - 1 ? '开始使用' : '下一步';
+  $('#onboardBody').querySelectorAll('[data-onboard-goto]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const page = btn.dataset.onboardGoto;
+      if(btn.dataset.onboardMode && typeof setMode === 'function') setMode(btn.dataset.onboardMode);
+      if(btn.dataset.onboardTab && typeof switchRunTab === 'function') switchRunTab(btn.dataset.onboardTab);
+      closeOnboard(true);
+      if(page && typeof go === 'function') go(page);
+    });
+  });
 }
 function openOnboard(){
   if(!$('#onboard')) return;
@@ -4940,9 +5319,15 @@ function closeOnboard(remember){
   const box = $('#onboard');
   if(!box || box.hidden) return;
   box.hidden = true;
-  if(remember && $('#onboardNever') && $('#onboardNever').checked){
-    try{ localStorage.setItem(ONBOARD_KEY, 'done'); }catch(e){}
-  }
+  const keep = !!(remember && $('#onboardNever') && $('#onboardNever').checked);
+  try{
+    if(keep) localStorage.setItem(ONBOARD_KEY, 'done');
+    else localStorage.removeItem(ONBOARD_KEY);
+  }catch(e){}
+  // localStorage is scoped to a random localhost port; the backend copy is the
+  // one that actually survives a restart.
+  liveApi('real_set_ui_state', {onboard_done: keep}, 8000).catch(() => {});
+  if(keep) toast('已关闭自动显示；可在「设置 → 关于」重看');
   if(onboardFocus && onboardFocus.focus){
     try{ onboardFocus.focus(); }catch(e){}
   }
@@ -4955,11 +5340,18 @@ function onboardNext(){
 function onboardPrev(){
   if(onboardIndex > 0){ onboardIndex--; renderOnboard(); }
 }
-function maybeShowOnboard(){
-  let seen = '';
-  try{ seen = localStorage.getItem(ONBOARD_KEY) || ''; }catch(e){}
-  if(seen === 'done') return;
-  setTimeout(openOnboard, 700);
+async function maybeShowOnboard(){
+  if(!hasSession()) return;
+  let done = false;
+  try{
+    const j = await liveApi('real_get_ui_state', {}, 8000);
+    if(liveOk(j) && j.data && j.data.onboard_done) done = true;
+  }catch(e){}
+  if(!done){
+    try{ done = localStorage.getItem(ONBOARD_KEY) === 'done'; }catch(e){}
+  }
+  if(done) return;
+  setTimeout(openOnboard, 650);
 }
 
 /* ---------------- version / build ---------------- */
@@ -4987,7 +5379,8 @@ async function loadAppVersion(){
 
 /* ---------------- auto update ---------------- */
 const UPDATE = {data: null, busy: false, downloading: false, applying: false,
-                autoNotified: false, package: '', packageVersion: ''};
+                autoNotified: false, package: '', packageVersion: '',
+                timer: null};
 
 function bytesLabel(n){
   n = +n || 0;
@@ -5095,17 +5488,33 @@ function openUpdateDialog(){
   const go = $('#updateGo');
   const downloaded = !!UPDATE.package &&
     UPDATE.packageVersion === (d.latest || '');
-  go.textContent = downloaded ? '立即更新' : '下载';
+  go.textContent = UPDATE.downloading ? '下载中…' : (downloaded ? '立即更新' : '下载');
   go.dataset.done = downloaded ? '1' : '';
-  go.disabled = false;
-  $('#updateHint').textContent = downloaded
-    ? ('已下载并校验：' + UPDATE.package) : '';
+  go.disabled = !!UPDATE.downloading;
+  if($('#updateCancel')){
+    $('#updateCancel').hidden = !UPDATE.downloading;
+    $('#updateCancel').disabled = false;
+    $('#updateCancel').textContent = '取消下载';
+  }
+  if($('#updateProgress')) $('#updateProgress').hidden = !UPDATE.downloading;
+  if(UPDATE.downloading){
+    $('#updateHint').textContent = '正在下载并校验，请保持窗口打开';
+    startUpdatePoll();
+  }else{
+    $('#updateHint').textContent = downloaded
+      ? ('已下载并校验：' + UPDATE.package) : '';
+  }
   const tip = $('#updateTip');
-  tip.hidden = !downloaded;
+  tip.hidden = !(downloaded || d.required);
   tip.textContent = downloaded
-    ? '更新会关闭程序、自动安装并重启；data 文件夹保留。' : '';
+    ? '更新会关闭程序、自动安装并重启；data 文件夹保留。'
+    : (d.required
+      ? ('当前 v' + (d.current || '?') + ' 低于最低支持版本 v' + d.min_version +
+         '，建议先更新；更新失败不会清空 data。')
+      : '');
+  if($('#updateLater')) $('#updateLater').textContent = d.required ? '暂不更新' : '稍后';
   $('#updateDlg').hidden = false;
-  go.focus();
+  if(!go.disabled) go.focus();
 }
 
 function closeUpdateDialog(){
@@ -5113,6 +5522,107 @@ function closeUpdateDialog(){
   if(dlg) dlg.hidden = true;
 }
 
+function stopUpdatePoll(){
+  if(UPDATE.timer){ clearInterval(UPDATE.timer); UPDATE.timer = null; }
+}
+async function checkLastUpdateResult(){
+  let j;
+  try{ j = await liveApi('real_update_last_result', {}, 10000); }catch(e){ return; }
+  if(!liveOk(j) || !j.data || !j.data.state) return;
+  const st = j.data;
+  if(st.state === 'ok'){
+    toast('已更新到 v' + (st.version || '新版本'));
+    liveLog('上次自动更新完成', 'v' + (st.version || '') + ' · ' + (st.at || ''), 'ok');
+  }else if(st.state === 'failed'){
+    toast('上次自动更新失败，已保留旧版本');
+    liveLog('上次自动更新失败', st.message || '', 'warn');
+  }
+  liveApi('real_clear_update_last_result', {}, 8000).catch(() => {});
+}
+function renderUpdateProgress(st){
+  const box = $('#updateProgress');
+  if(!box) return;
+  const received = +st.received || 0;
+  const total = +st.total || 0;
+  const pct = total ? Math.min(100, Math.max(0, Math.round(received / total * 100))) : 0;
+  box.hidden = false;
+  if($('#updateBar')) $('#updateBar').style.width = pct + '%';
+  if($('#updatePct')) $('#updatePct').textContent = total
+    ? (pct + '% · ' + bytesLabel(received) + ' / ' + bytesLabel(total))
+    : (bytesLabel(received));
+  if($('#updateSpeed')) $('#updateSpeed').textContent = st.speed
+    ? (bytesLabel(st.speed) + '/s') : '';
+}
+function finishUpdateDownload(st){
+  const d = UPDATE.data || {};
+  stopUpdatePoll();
+  UPDATE.downloading = false;
+  UPDATE.package = st.file || '';
+  UPDATE.packageVersion = d.latest || '';
+  const go = $('#updateGo');
+  if(go){
+    go.disabled = false;
+    go.textContent = '立即更新';
+    go.dataset.done = '1';
+  }
+  if($('#updateCancel')) $('#updateCancel').hidden = true;
+  if($('#updateProgress')) $('#updateProgress').hidden = true;
+  if($('#updateHint')) $('#updateHint').textContent = '已下载并校验：' + (st.file || '');
+  if($('#updateTip')){
+    $('#updateTip').hidden = false;
+    $('#updateTip').textContent = '更新会关闭程序、自动安装并重启；data 文件夹保留。';
+  }
+  toast('更新包已下载');
+  let via = '';
+  if(st.mirror){
+    try{ via = new URL(st.mirror).host; }catch(e){ via = st.mirror; }
+  }
+  liveLog('更新包已下载', (st.file || '') +
+    (via ? ' · 线路 ' + via : '') + ' · sha256 已校验', 'ok');
+}
+async function pollUpdateDownload(){
+  const d = UPDATE.data || {};
+  let j;
+  try{ j = await liveApi('real_update_download_status', {}, 12000); }
+  catch(e){ return; }
+  if(!liveOk(j)) return;
+  const st = j.data || {};
+  if(st.state === 'done'){ finishUpdateDownload(st); return; }
+  if(st.state === 'failed'){
+    stopUpdatePoll();
+    UPDATE.downloading = false;
+    if($('#updateGo')){ $('#updateGo').disabled = false; $('#updateGo').textContent = '重试下载'; }
+    if($('#updateCancel')) $('#updateCancel').hidden = true;
+    if($('#updateProgress')) $('#updateProgress').hidden = true;
+    if($('#updateHint')) $('#updateHint').textContent = st.message || st.error || '下载失败';
+    toast('更新包下载失败');
+    return;
+  }
+  if(st.state === 'cancelled'){
+    stopUpdatePoll();
+    UPDATE.downloading = false;
+    if($('#updateGo')){ $('#updateGo').disabled = false; $('#updateGo').textContent = '继续下载'; }
+    if($('#updateCancel')) $('#updateCancel').hidden = true;
+    if($('#updateProgress')) $('#updateProgress').hidden = true;
+    if($('#updateHint')) $('#updateHint').textContent = '已取消；已下载的部分会保留，可继续';
+    return;
+  }
+  if(st.state === 'cancelling'){
+    if($('#updateCancel')){ $('#updateCancel').disabled = true; $('#updateCancel').textContent = '取消中…'; }
+    if($('#updateHint')) $('#updateHint').textContent = '正在取消下载…';
+    return;
+  }
+  if(st.state === 'downloading' || st.state === 'probing'){
+    if($('#updateHint')) $('#updateHint').textContent = st.state === 'probing'
+      ? '正在测速并选择线路…' : '正在下载并校验，请保持窗口打开';
+    renderUpdateProgress(st);
+  }
+}
+function startUpdatePoll(){
+  stopUpdatePoll();
+  UPDATE.timer = setInterval(pollUpdateDownload, 800);
+  pollUpdateDownload();
+}
 async function downloadUpdate(){
   const d = UPDATE.data || {};
   const go = $('#updateGo');
@@ -5123,44 +5633,42 @@ async function downloadUpdate(){
   UPDATE.downloading = true;
   go.disabled = true;
   go.textContent = '下载中…';
-  $('#updateHint').textContent = '正在下载并校验，请保持窗口打开';
+  if($('#updateCancel')){
+    $('#updateCancel').hidden = false;
+    $('#updateCancel').disabled = false;
+    $('#updateCancel').textContent = '取消下载';
+  }
+  if($('#updateHint')) $('#updateHint').textContent = '正在启动下载…';
   try{
-    const j = await liveApi('real_download_update', {
+    const j = await liveApi('real_start_download_update', {
       url: d.url,
       urls: (d.urls && d.urls.length) ? d.urls : [],
       sha256: d.sha256 || '',
       size: d.size || 0,
       file: d.file || ''
-    }, 600000);
+    }, 30000);
     if(!liveOk(j)){
+      UPDATE.downloading = false;
+      go.disabled = false;
       go.textContent = '重试下载';
-      $('#updateHint').textContent = (j && j.message) || '下载失败';
+      if($('#updateCancel')) $('#updateCancel').hidden = true;
+      if($('#updateHint')) $('#updateHint').textContent = (j && j.message) || '下载失败';
       toast('更新包下载失败');
       return;
     }
-    const info = j.data || {};
-    UPDATE.package = info.file || '';
-    UPDATE.packageVersion = d.latest || '';
-    go.textContent = '立即更新';
-    go.dataset.done = '1';
-    $('#updateHint').textContent = '已下载并校验：' + (info.file || '');
-    const tip = $('#updateTip');
-    tip.hidden = false;
-    tip.textContent = '更新会关闭程序、自动安装并重启；data 文件夹保留。';
-    toast('更新包已下载');
-    let via = '';
-    if(info.mirror){
-      try{ via = new URL(info.mirror).host; }catch(e){ via = info.mirror; }
-    }
-    liveLog('更新包已下载', (info.file || '') +
-      (via ? ' · 线路 ' + via : '') + ' · sha256 已校验', 'ok');
-  }finally{
+    startUpdatePoll();
+  }catch(e){
     UPDATE.downloading = false;
     go.disabled = false;
-    if(go.dataset.done !== '1' && go.textContent === '下载中…'){
-      go.textContent = '下载';
-    }
+    go.textContent = '重试下载';
+    if($('#updateCancel')) $('#updateCancel').hidden = true;
+    if($('#updateHint')) $('#updateHint').textContent = String(e.message || e);
   }
+}
+async function cancelUpdateDownload(){
+  if(!UPDATE.downloading) return;
+  if($('#updateCancel')){ $('#updateCancel').disabled = true; $('#updateCancel').textContent = '取消中…'; }
+  try{ await liveApi('real_cancel_update_download', {}, 10000); }catch(e){}
 }
 
 async function applyUpdate(){
@@ -5182,7 +5690,10 @@ async function applyUpdate(){
   go.textContent = '正在更新…';
   $('#updateHint').textContent = '正在准备安装并重启，请不要关闭窗口';
   try{
-    const j = await liveApi('real_apply_update', {file: UPDATE.package}, 180000);
+    const j = await liveApi('real_apply_update', {
+      file: UPDATE.package,
+      version: (UPDATE.data || {}).latest || ''
+    }, 180000);
     if(!liveOk(j)){
       go.disabled = false;
       go.textContent = '重试更新';
@@ -5214,6 +5725,22 @@ function liveWire(){
   if(loginForm){
     loginForm.addEventListener('submit', ev => { ev.preventDefault(); gateLogin(); });
   }
+  function setLoginCollapsed(collapsed){
+    const card = document.querySelector('.login-card');
+    const tape = $('#loginTape'), label = $('#loginTapeLabel');
+    if(!card || !tape) return;
+    card.classList.toggle('collapsed', !!collapsed);
+    tape.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    tape.setAttribute('aria-label', collapsed ? '展开登录框' : '收起登录框');
+    if(label) label.textContent = collapsed ? '登录' : '收起';
+    if(!collapsed){
+      setTimeout(() => { const u = $('#loginUser'); if(u) u.focus(); }, 120);
+    }
+  }
+  if($('#loginTape')) $('#loginTape').addEventListener('click', () => {
+    const card = document.querySelector('.login-card');
+    setLoginCollapsed(!(card && card.classList.contains('collapsed')));
+  });
   const manualBtn = $('#loginManual');
   if(manualBtn) manualBtn.addEventListener('click', openManualCaptcha);
   const gt4Close = $('#gt4Close');
@@ -5354,6 +5881,21 @@ function liveWire(){
     if(d) downloadGpx('记录 ' + shortDate(d.detail && d.detail.start_ms), d.track || []);
   });
   $('#rdSaveRoute').addEventListener('click', saveDetailAsRoute);
+  if($('#rdCharts')) $('#rdCharts').addEventListener('click', openRecordDataPreview);
+  $('#dpClose').addEventListener('click', cancelDataPreview);
+  $('#dpCancel').addEventListener('click', cancelDataPreview);
+  $('#dataPreviewVeil').addEventListener('click', cancelDataPreview);
+  $('#dpConfirm').addEventListener('click', () => {
+    const pending = PENDING_SUBMIT;
+    if(!pending) return;
+    closeDataPreview();
+    doSubmitRun(pending);
+  });
+  $('#postClose').addEventListener('click', postKeepRoute);
+  $('#postKeep').addEventListener('click', postKeepRoute);
+  $('#postClear').addEventListener('click', postClearRoute);
+  $('#postSaveClear').addEventListener('click', postSaveAndClear);
+  $('#postSubmitVeil').addEventListener('click', postKeepRoute);
   $('#diagCopy').addEventListener('click', copyDiagnostics);
   if($('#onboard')){
     $('#onboardClose').addEventListener('click', () => closeOnboard(true));
@@ -5379,7 +5921,6 @@ function liveWire(){
         }
       }
     });
-    maybeShowOnboard();
   }
   const updateBtn = $('#updateBtn');
   if(updateBtn){
@@ -5393,6 +5934,7 @@ function liveWire(){
     if(el) el.addEventListener('click', closeUpdateDialog);
   });
   if($('#updateVeil')) $('#updateVeil').addEventListener('click', closeUpdateDialog);
+  if($('#updateCancel')) $('#updateCancel').addEventListener('click', cancelUpdateDownload);
   if($('#updateGo')) $('#updateGo').addEventListener('click', downloadUpdate);
   if($('#updateCheckBtn')){
     $('#updateCheckBtn').addEventListener('click', () => checkUpdate({silent: false}));
@@ -5453,7 +5995,14 @@ function liveWire(){
     toast('已按线路长度填写；继续画线会同步更新');
   });
   $('#runCheck').addEventListener('click', () => { refreshModelPreview(); scheduleSplitsPreview(); refreshChecks(); toast('已重新检查'); });
-  $('#submitRun').addEventListener('click', submitRun);
+  ['#submitRun', '#previewRun'].forEach(sel => {
+    const el = $(sel);
+    if(el) el.addEventListener('click', submitRun);
+  });
+  $('#splitsToggle').addEventListener('click', () => {
+    setSplitsManual(!splitsManual);
+    if(splitsManual) toast('已进入手动分段；改数字或点 ± 调整');
+  });
   $('#saveRules').addEventListener('click', saveRules);
   $('#saveSemesterGoal').addEventListener('click', saveSemesterGoal);
   ['rSemesterKm'].forEach(id => $('#' + id).addEventListener('keydown', e => {
@@ -5465,7 +6014,9 @@ function liveWire(){
   ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => $('#' + id).addEventListener('input', () => {
     // A new distance or average pace invalidates the split table; the next
     // preview regenerates it from the new target.
-    if(id === 'inKm' || id === 'inPace'){ splitRows = null; renderSplits(); }
+    if(id === 'inKm' || id === 'inPace'){
+      splitsManual = false; splitRows = null; splitAutoRows = []; renderSplits();
+    }
     updateRunDateLabel(); scheduleModelPreview();
   }));
   if($('#splitsList')){
@@ -5483,17 +6034,49 @@ function liveWire(){
       splitRows[i].seconds = sec;
       applySplitsToPace();
     });
+    $('#splitsList').addEventListener('click', ev => {
+      const btn = ev.target.closest('.split-step');
+      if(!btn) return;
+      const i = +btn.dataset.split;
+      const step = +btn.dataset.splitStep || 0;
+      if(!splitRows || !splitRows[i]) return;
+      const next = Math.max(30, Math.min(3600, (+splitRows[i].seconds || 0) + step));
+      splitRows = splitRows.map(r => Object.assign({}, r));
+      splitRows[i].seconds = next;
+      applySplitsToPace();
+    });
     $('#splitsReset').addEventListener('click', () => {
-      splitRows = null; renderSplits(); scheduleModelPreview();
+      setSplitsManual(false);
       toast('已恢复自动分配');
     });
   }
   if($('#altMode')){
     $('#altMode').addEventListener('change', altModeChanged);
+    document.querySelectorAll('[data-alt-mode]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        $('#altMode').value = btn.dataset.altMode;
+        altAdjustOpen = false;
+        altModeChanged();
+      });
+    });
+    if($('#altAdjustToggle')) $('#altAdjustToggle').addEventListener('click', () => {
+      altAdjustOpen = !altAdjustOpen;
+      altModeChanged();
+    });
     ['altMin', 'altMax'].forEach(id => $('#' + id).addEventListener('input', () => {
       updateAltSummary(); scheduleModelPreview(); refreshChecks();
     }));
-    $('#inAlt').addEventListener('input', updateAltSummary);
+    document.querySelectorAll('[data-alt-range]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const [lo, hi] = String(btn.dataset.altRange).split(',').map(Number);
+        if($('#altMin')) $('#altMin').value = lo;
+        if($('#altMax')) $('#altMax').value = hi;
+        updateAltSummary(); scheduleModelPreview(); refreshChecks();
+      });
+    });
+    $('#inAlt').addEventListener('input', () => {
+      updateAltSummary(); scheduleModelPreview(); refreshChecks();
+    });
     $('#altTemplateBtn').addEventListener('click', () => $('#altTemplateFile').click());
     $('#altTemplateFile').addEventListener('change', ev => {
       const f = ev.target.files && ev.target.files[0];

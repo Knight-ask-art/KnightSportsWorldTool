@@ -15,6 +15,8 @@ import datetime as _dt
 import base64
 import json
 import os
+import random
+import secrets
 import tempfile
 import threading
 import time
@@ -28,7 +30,7 @@ from ..application import device_profile as DP
 from ..build_info import VERSION as APP_VERSION  # noqa: F401 - re-exported
 from ..build_info import build_info, version_string
 from ..domain import crypto as C
-from ..domain.rundata import generate_run_data, new_run_uuid
+from ..domain.rundata import generate_run_data, new_run_uuid, preview_series
 from ..transport.realclient import as_dict
 
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
@@ -2470,6 +2472,46 @@ class ReplicaApi:
         info['label'] = version_string()
         return _ok(info)
 
+    # -- small UI state ---------------------------------------------------
+    def _ui_state_path(self) -> str:
+        return os.path.join(self.store_dir, 'ui_state.json')
+
+    def real_get_ui_state(self):
+        """Preferences that must survive a random localhost port.
+
+        `localStorage` is scoped to scheme+host+port; app.py picks a fresh free
+        port on every launch, so a checklist kept only there reappears on the
+        next start.  This file lives with the rest of `data/` and is the source
+        of truth; the frontend cache is only a fast path.
+        """
+        raw = _read_json(self._ui_state_path(), {})
+        data = raw if isinstance(raw, dict) else {}
+        return _ok({
+            'onboard_done': bool(data.get('onboard_done')),
+            'post_submit_route_action': str(
+                data.get('post_submit_route_action') or 'ask'),
+            'onboard_done_at': data.get('onboard_done_at') or '',
+        })
+
+    def real_set_ui_state(self, onboard_done=None, post_submit_route_action=None):
+        path = self._ui_state_path()
+        raw = _read_json(path, {})
+        data = raw if isinstance(raw, dict) else {}
+        if onboard_done is not None:
+            data['onboard_done'] = bool(onboard_done)
+            data['onboard_done_at'] = (time.strftime('%Y-%m-%d %H:%M:%S')
+                                       if onboard_done else '')
+        if post_submit_route_action is not None:
+            action = str(post_submit_route_action)
+            if action not in ('ask', 'save', 'clear'):
+                return _fail('post_submit_route_action 只能是 ask/save/clear')
+            data['post_submit_route_action'] = action
+        try:
+            _write_json(path, data)
+        except OSError as e:
+            return _fail('写入 ui_state 失败: %s' % e)
+        return _ok(data)
+
     # -- auto update ------------------------------------------------------
     def real_check_update(self):
         """Read the release manifest; the four states live in ``data.state``.
@@ -2498,6 +2540,37 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001 - show the reason in the UI
             return _fail('下载失败: %s' % e)
 
+    def real_start_download_update(self, url: str = '', sha256: str = '',
+                                   size: int = 0, file: str = '', urls=None):
+        """Start a resumable background download and return its state."""
+        from ..application import updater
+        targets = urls if isinstance(urls, (list, tuple)) and urls else url
+        try:
+            state = updater.start_download(
+                targets, os.path.join(self.store_dir, 'updates'),
+                sha256=sha256, size=size, file=file,
+                store_dir=self.store_dir)
+            return _ok(state)
+        except Exception as e:  # noqa: BLE001
+            return _fail('启动下载失败: %s' % e)
+
+    def real_update_download_status(self):
+        from ..application import updater
+        return _ok(updater.download_status(self.store_dir))
+
+    def real_cancel_update_download(self):
+        from ..application import updater
+        return _ok(updater.cancel_download(self.store_dir))
+
+    def real_update_last_result(self):
+        from ..application import updater
+        return _ok(updater.last_result(self.store_dir))
+
+    def real_clear_update_last_result(self):
+        from ..application import updater
+        updater.clear_last_result(self.store_dir)
+        return _ok({'cleared': True})
+
     def real_open_updates(self):
         """Open ``data/updates`` (manual fallback when auto-apply fails)."""
         path = os.path.join(self.store_dir, 'updates')
@@ -2509,12 +2582,12 @@ class ReplicaApi:
             return _fail('无法打开更新目录: %s' % e)
         return _ok({'path': path})
 
-    def real_apply_update(self, file: str = ''):
+    def real_apply_update(self, file: str = '', version: str = ''):
         """Stage the downloaded zip and swap files after this process exits."""
         from ..application import updater
         try:
             package = updater.locate_package(self.store_dir, file)
-            return _ok(updater.apply(package, self.store_dir))
+            return _ok(updater.apply(package, self.store_dir, version=version))
         except Exception as e:  # noqa: BLE001 - the dialog shows the reason
             return _fail('自动更新失败: %s' % e)
 
@@ -2574,7 +2647,7 @@ class ReplicaApi:
                            daily_runs=None, daily_source=None, date=None,
                            closed=True, altitude_mode='auto',
                            altitude_range=None, altitude_profile=None,
-                           km_times=None):
+                           km_times=None, with_series=False, seed=None):
         """Evaluate the user-entered rules against a local preview run.
 
         This is offline (no server call).  It lets the UI show a real score
@@ -2616,9 +2689,14 @@ class ReplicaApi:
                                               date=date)
             except ValueError as e:
                 return _fail('开始时间无效: %s' % e)
+            try:
+                run_seed = int(seed) if seed is not None else secrets.randbits(32)
+            except (TypeError, ValueError):
+                run_seed = secrets.randbits(32)
             run = generate_run_data(
                 float(km), float(pace), int(cadence),
                 center_lat=lat, center_lng=lng,
+                rng=random.Random(run_seed),
                 waypoints=wps or None,
                 checkpoints=cps or None,
                 altitude_base=float(altitude),
@@ -2647,6 +2725,8 @@ class ReplicaApi:
             return _ok({
                 'model': model,
                 'param_warnings': plausibility_warnings(pace, cadence),
+                'seed': run_seed,
+                'preview': preview_series(run) if with_series else None,
                 'start': {'ms': start_ms,
                           'text': S.fmt_beijing(start_ms),
                           'days_ago': (S.to_beijing(S.now_ms()).date()
@@ -2690,7 +2770,7 @@ class ReplicaApi:
                         days_ago=0, start_time=None, date=None,
                         closed=True, altitude_mode='auto',
                         altitude_range=None, altitude_profile=None,
-                        km_times=None):
+                        km_times=None, seed=None):
         """Forge a run, sign it with the official scheme, submit it for real,
         then read the record back so the caller sees the completion checklist.
 
@@ -2828,9 +2908,17 @@ class ReplicaApi:
                 'days_ago': start_days_ago}})
 
         try:
+            run_seed = None
+            if seed is not None:
+                try:
+                    run_seed = int(seed)
+                except (TypeError, ValueError):
+                    run_seed = None
             run = generate_run_data(float(km), float(pace), int(cadence),
                                     center_lat=acct.center_lat,
                                     center_lng=acct.center_lng,
+                                    rng=(random.Random(run_seed)
+                                         if run_seed is not None else None),
                                     waypoints=wps or None,
                                     checkpoints=cps or None,
                                     altitude_base=float(altitude),

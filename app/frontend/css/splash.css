@@ -1,0 +1,518 @@
+/* ============================================================================
+   Boot splash — white plate, logo construction, then the access screen.
+
+   Act 1  the four pieces of the HAOXIANGPAO mark draw themselves in
+   Act 2  the mark lands, the wordmark rises
+   Act 3  ACCESS PERMISSION REQUIRED: GRANT ACCESS, CONFIRM IDENTITY, then
+          three automatic read-out steps
+   Act 4  the plate dissolves into the login gate
+
+   White background only: no grid, guides or other line art.  The animation
+   is pure CSS; splash.js handles the interaction, skip, replay and focus.
+   A 60 s failsafe keeps a broken script from trapping the window.
+   ========================================================================== */
+
+.boot {
+  --boot-ink: #24231f;
+  --boot-paper-2: #fbf8f0;
+  --boot-stamp: #b6483c;
+  --boot-rule: rgba(36, 35, 31, .16);
+  --boot-faint: #938b79;
+
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  overflow: hidden;
+  background: #ffffff;
+  color: var(--boot-ink);
+  cursor: default;
+  animation: boot-failsafe 0s linear 60s forwards;
+}
+
+.boot.is-out {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .34s ease, visibility .34s ease;
+}
+
+/* ---- camera ------------------------------------------------------------- */
+
+.boot-cam {
+  position: absolute;
+  inset: 0;
+  animation: boot-cam 3.6s cubic-bezier(.2, .6, .2, 1) forwards;
+}
+
+/* ---- mark --------------------------------------------------------------- */
+
+.boot-stage {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: min(70vw, 70vh, 820px);
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  transition: left .8s cubic-bezier(.2, .7, .2, 1), top .8s cubic-bezier(.2, .7, .2, 1),
+              width .8s cubic-bezier(.2, .7, .2, 1), transform .8s cubic-bezier(.2, .7, .2, 1);
+  animation: boot-stage-in 1s cubic-bezier(.2, .7, .2, 1) .45s both,
+             boot-settle 1s cubic-bezier(.2, .7, .2, 1) 2.3s forwards;
+}
+
+.boot.is-panel .boot-stage {
+  left: 36px;
+  top: 36px;
+  width: 74px;
+  transform: none;
+  animation: none;
+}
+
+.boot-mark {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  filter: drop-shadow(0 10px 22px rgba(36, 35, 31, .10));
+}
+
+.boot-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation:
+    boot-piece .95s cubic-bezier(.16, .84, .24, 1) both,
+    boot-draw 1.1s cubic-bezier(.55, .06, .24, 1) forwards,
+    boot-stroke-fade .4s ease 1.95s forwards;
+}
+
+.boot-mark .p1 { --from-x: 34px; --from-y: -12px; --from-r: 1.6deg; animation-delay: .84s, .84s, 1.95s; }
+.boot-mark .p2 { --from-x: -28px; --from-y: 20px; --from-r: -1.2deg; animation-delay: .60s, .60s, 1.95s; }
+.boot-mark .p3 { --from-x: -24px; --from-y: -16px; --from-r: -1.6deg; animation-delay: .48s, .48s, 1.95s; }
+.boot-mark .p4 { --from-x: 12px; --from-y: 24px; --from-r: 2deg; animation-delay: .72s, .72s, 1.95s; }
+
+.boot-mark-ghost {
+  opacity: 0;
+  animation:
+    boot-ghost-in .55s ease 1.1s forwards,
+    boot-ghost-out .38s ease 1.95s forwards;
+}
+
+.boot-mark-img {
+  opacity: 0;
+  animation: boot-img-in .5s ease 1.95s forwards;
+}
+
+/* ---- wordmark ----------------------------------------------------------- */
+
+.boot-word {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: clamp(74px, 11vh, 118px);
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(90vw, 760px);
+  text-align: center;
+  color: var(--boot-ink);
+  pointer-events: none;
+  transition: opacity .5s ease, transform .5s ease;
+}
+
+.boot.is-panel .boot-word {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-12px);
+}
+
+.boot-word-rule {
+  width: 0;
+  height: 1px;
+  background: rgba(36, 35, 31, .38);
+  animation: boot-rule .65s cubic-bezier(.2, .7, .2, 1) 2.2s forwards;
+}
+
+.boot-word-main {
+  font: 600 clamp(19px, 2.2vw, 26px)/1 var(--mono);
+  letter-spacing: .18em;
+  text-indent: .18em;
+  opacity: 0;
+  filter: blur(3px);
+  animation: boot-word .8s cubic-bezier(.16, .84, .24, 1) 2.35s forwards;
+}
+
+.boot-word-sub {
+  font: 9px/1 var(--mono);
+  letter-spacing: .58em;
+  text-indent: .58em;
+  color: var(--boot-faint);
+  opacity: 0;
+  animation: boot-sub .6s ease 2.55s forwards;
+}
+
+/* ---- access screen ------------------------------------------------------ */
+
+.boot-access {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .64s ease, visibility .64s;
+}
+
+.boot.is-panel .boot-access {
+  opacity: 1;
+  visibility: visible;
+}
+
+.acc-brand {
+  position: absolute;
+  left: 128px;
+  top: 34px;
+  pointer-events: none;
+}
+
+.acc-brand-name {
+  font: 800 27px/.96 var(--sans);
+  letter-spacing: .015em;
+}
+
+.acc-brand-sub {
+  font: 700 10.5px/1.55 var(--sans);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.acc-brand-sub.big {
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.acc-meta {
+  position: absolute;
+  left: 44px;
+  top: 126px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 9px/1 var(--mono);
+  letter-spacing: .12em;
+  color: var(--boot-faint);
+  pointer-events: none;
+}
+
+.acc-clock { color: var(--boot-stamp); }
+
+.acc-center {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: min(940px, 90vw);
+  transform: translate(-50%, -46%);
+  text-align: center;
+  opacity: 0;
+  transition: opacity .7s ease .18s, transform .8s cubic-bezier(.2, .7, .2, 1) .18s;
+  pointer-events: none;
+}
+
+.boot.is-panel .acc-center {
+  opacity: 1;
+  transform: translate(-50%, -50%);
+}
+
+.acc-title {
+  margin: 0;
+  font: 700 clamp(34px, 4.5vw, 62px)/1.05 var(--sans);
+  letter-spacing: -.012em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+
+.acc-title::after {
+  content: "";
+  display: inline-block;
+  width: .22em;
+  height: .22em;
+  margin-left: .14em;
+  background: var(--boot-stamp);
+  vertical-align: baseline;
+}
+
+.acc-rule {
+  width: min(660px, 72vw);
+  height: 1px;
+  margin: 20px auto 13px;
+  background: rgba(36, 35, 31, .34);
+}
+
+.acc-sub {
+  margin: 0;
+  font: 10px/1.6 var(--mono);
+  letter-spacing: .5em;
+  text-indent: .5em;
+  text-transform: uppercase;
+  color: var(--boot-faint);
+}
+
+.acc-btn {
+  margin-top: 38px;
+  padding: 12px 20px;
+  border: 1px solid var(--boot-ink);
+  background: transparent;
+  color: var(--boot-ink);
+  font: 600 11px/1 var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease;
+}
+
+.acc-btn::before { content: "[ "; }
+.acc-btn::after { content: " ]"; }
+
+.acc-btn:hover {
+  background: var(--boot-ink);
+  color: var(--boot-paper-2);
+}
+
+.acc-btn:active { transform: translateY(1px); }
+.acc-btn[hidden] { display: none; }
+
+.acc-hint {
+  margin-top: 14px;
+  min-height: 13px;
+  font: 8.5px/1.5 var(--mono);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgba(36, 35, 31, .38);
+}
+
+/* bottom rail */
+.acc-bottom {
+  position: absolute;
+  left: 44px;
+  right: 44px;
+  bottom: 46px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  pointer-events: none;
+}
+
+.acc-bl { display: grid; gap: 9px; }
+
+.acc-step {
+  font: 9.5px/1 var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--boot-faint);
+}
+
+.acc-step b { color: var(--boot-ink); font-weight: 600; }
+
+.acc-logwrap {
+  position: absolute;
+  left: 50%;
+  bottom: 42px;
+  width: min(440px, 38vw);
+  transform: translateX(-50%);
+  display: grid;
+  gap: 6px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.acc-log {
+  font: 12.5px/1.35 var(--sans);
+  letter-spacing: .01em;
+}
+
+.acc-log-en {
+  font: 8.5px/1.4 var(--mono);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--boot-faint);
+}
+
+.acc-br {
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+  font: 9px/1.3 var(--mono);
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: var(--boot-faint);
+  text-align: right;
+}
+
+.acc-progress {
+  position: absolute;
+  left: 44px;
+  right: 44px;
+  bottom: 28px;
+  height: 2px;
+  background: rgba(36, 35, 31, .08);
+  pointer-events: none;
+}
+
+.acc-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--boot-ink);
+  transition: width .55s cubic-bezier(.2, .7, .2, 1);
+}
+
+/* approval stamp */
+.acc-stamp {
+  position: absolute;
+  right: 10%;
+  top: 56%;
+  padding: 8px 14px;
+  border: 2px solid var(--boot-stamp);
+  color: var(--boot-stamp);
+  font: 600 12px/1 var(--mono);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  transform: rotate(-9deg) scale(.7);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.acc-stamp.is-on {
+  animation: acc-stamp-in .45s cubic-bezier(.2, .9, .2, 1.2) forwards;
+}
+
+/* ---- skip --------------------------------------------------------------- */
+
+.boot-skip {
+  position: absolute;
+  right: clamp(20px, 3vw, 46px);
+  top: clamp(20px, 3vh, 38px);
+  z-index: 10;
+  padding: 6px 2px;
+  border: 0;
+  background: transparent;
+  font: 9px/1 var(--mono);
+  letter-spacing: .24em;
+  color: rgba(36, 35, 31, .48);
+  opacity: 0;
+  cursor: pointer;
+  animation: boot-fade-in .4s ease .8s forwards;
+}
+
+.boot-skip:hover { color: var(--boot-ink); }
+
+/* ---- keyframes ---------------------------------------------------------- */
+
+@keyframes boot-failsafe { to { opacity: 0; visibility: hidden; } }
+
+@keyframes boot-cam {
+  from { transform: scale(1.06); }
+  to { transform: scale(1); }
+}
+
+@keyframes boot-stroke-fade {
+  to { stroke-opacity: 0; }
+}
+
+@keyframes boot-piece {
+  from {
+    opacity: 0;
+    transform: translate(var(--from-x, 0), var(--from-y, 0)) rotate(var(--from-r, 0deg));
+  }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes boot-draw {
+  0% { stroke-dashoffset: 1; }
+  100% { stroke-dashoffset: 0; }
+}
+
+@keyframes boot-ghost-in {
+  to { opacity: .20; }
+}
+
+@keyframes boot-ghost-out {
+  to { opacity: 0; }
+}
+
+@keyframes boot-img-in {
+  to { opacity: 1; }
+}
+
+@keyframes boot-stage-in {
+  from { opacity: 0; transform: translate(-50%, -47%) scale(.95); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes boot-settle {
+  to { transform: translate(-50%, -50%) scale(1.025); }
+}
+
+@keyframes boot-rule {
+  to { width: min(300px, 48vw); }
+}
+
+@keyframes boot-word {
+  from { opacity: 0; filter: blur(3px); letter-spacing: .18em; }
+  to { opacity: 1; filter: blur(0); letter-spacing: .42em; }
+}
+
+@keyframes boot-sub {
+  to { opacity: 1; }
+}
+
+@keyframes boot-fade-in {
+  to { opacity: 1; }
+}
+
+@keyframes acc-stamp-in {
+  0% { opacity: 0; transform: rotate(-9deg) scale(.7); }
+  70% { opacity: 1; transform: rotate(-9deg) scale(1.04); }
+  100% { opacity: .92; transform: rotate(-9deg) scale(1); }
+}
+
+/* ---- reduced motion ----------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .boot { display: none; }
+}
+
+/* ---- narrow / short windows -------------------------------------------- */
+
+@media (max-width: 760px) {
+  .boot-stage { width: min(84vw, 62vh); }
+  .boot.is-panel .boot-stage { width: 48px; left: 24px; top: 24px; }
+  .acc-brand { left: 84px; top: 24px; }
+  .acc-brand-name { font-size: 22px; }
+  .acc-brand-sub.big { font-size: 16px; }
+  .acc-meta { left: 26px; top: 92px; }
+  .acc-title { font-size: clamp(30px, 8vw, 44px); }
+  .acc-bottom { left: 26px; right: 26px; bottom: 38px; }
+  .acc-progress { left: 26px; right: 26px; bottom: 22px; }
+  .acc-br { display: none; }
+  .acc-stamp { right: 6%; top: 58%; }
+}
+
+@media (max-height: 640px) {
+  .boot-stage { width: min(54vh, 72vw); top: 42%; }
+  .boot-word { bottom: 58px; gap: 7px; }
+  .boot-word-sub { display: none; }
+  .acc-center { top: 44%; }
+  .acc-title { font-size: clamp(30px, 4vw, 44px); }
+  .acc-btn { margin-top: 24px; }
+  .acc-bottom { bottom: 34px; }
+  .acc-progress { bottom: 20px; }
+}
