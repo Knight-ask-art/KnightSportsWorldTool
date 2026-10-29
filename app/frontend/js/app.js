@@ -2454,6 +2454,11 @@ async function bootAuth(){
 
 function renderEmptyData(){
   invalidateLiveRequests();
+  // "Skip checkpoints" is an explicit per-run confirmation.  It must never
+  // survive a logout/account switch, or the next account would silently run
+  // without checkpoints.
+  const free = $('#freeRun');
+  if(free) free.checked = false;
   renderPoints([]);
   setFences([], '跑步围栏');
   route = [];

@@ -97,6 +97,12 @@ def test_multi_fence_ui_uses_all_rings_and_marks_invalid_areas():
     assert 'schedulePointsForDistance()' in JS[start:JS.index('});', start)]
 
 
+def test_skip_checkpoints_cannot_leak_into_the_next_account():
+    # "Skip checkpoints" is a per-run confirmation; a logout/account switch
+    # must not leave the next account running without checkpoints.
+    assert 'free.checked = false' in _js_function('renderEmptyData')
+
+
 def test_run_area_selector_matches_the_official_dialog():
     assert 'id="runAreaSel"' in HTML
     assert 'function renderRunAreas' in JS
