@@ -195,6 +195,8 @@ def do_points(client, acct, args, must_points=None, sequential=False,
     if args.no_points and must_points:
         raise ValueError('学校策略要求必经点位，不能使用 --no-points（会生成'
                          '永远不完整的记录）')
+    if args.no_points and sequential:
+        raise ValueError('学校要求顺序经过点位，不能使用 --no-points')
 
     cps = []
     if not args.no_points:
@@ -313,7 +315,10 @@ def do_points(client, acct, args, must_points=None, sequential=False,
     # ---- geofence: the run has to happen inside the campus -----------------
     if pts:
         try:
-            area = POL.select_run_area(policy_data, 0) \
+            area = POL.select_run_area(
+                policy_data, 0,
+                campus_name=acct.campusName,
+                school_name=acct.schoolName) \
                 if policy_data else None
             if area is not None and area.get('valid') is False:
                 raise ValueError('跑区有效时间已更新，请重新选择')
@@ -841,7 +846,8 @@ def main(argv=None, client_factory=None):
         pol['_must_points'] = []
 
     from ..application import policy as POL
-    area = POL.select_run_area(pol, 0)
+    area = POL.select_run_area(
+        pol, 0, campus_name=acct.campusName, school_name=acct.schoolName)
     if area is not None and area.get('valid') is False:
         return _fail('跑区有效时间已更新，请重新选择', 1)
 

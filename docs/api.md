@@ -165,10 +165,12 @@ POST api/v1/getGeoFenceForRun   {"geoFenceUpdateTime": 0}
 > `geoFences` 可能有多条（多校区）。官方不从 `fences[0]` 猜：`runModePolicy`
 > 的 `runAreaModels[].fenceIds` 才是账号跑区对应的围栏 id。官方选跑区用
 > `SportTypeViewModel.selectedPosition`（默认 0），不是 `RunAreaModels.select`
-> ——后者在 1.3.0 反编译源码里没有调用。工具默认取 `runAreaModels[0]`，多跑区
-> 时用下拉框切换；`fenceIds` 命中的全部围栏都保留，任意一条包含轨迹即在内。
-> 没有跑区数据时使用全部围栏。`geoFences` 为空表示学校没有配置围栏，官方
-> 客户端直接视为「在区域内」。
+> ——后者在 1.3.0 反编译源码里没有调用。工具为了多账号自动落位，先用当前
+> 账号的 `campusName`/`schoolName` 匹配 `runAreaModels[].name`（A 广软、
+> B 广州各自匹配），匹配不到才回退 `runAreaModels[0]`；多跑区时也可用下拉框
+> 切换。`fenceIds` 命中的全部围栏都保留，任意一条包含轨迹即在内。没有跑区
+> 数据时使用全部围栏。`geoFences` 为空表示学校没有配置围栏，官方客户端直接
+> 视为「在区域内」。
 >
 > 多跑区时跑步页会显示跑区下拉框（对应官方 `RunningAreaDialog`），选择后
 > 以 `run_area_id` 重拉围栏/点位，提交带同一个 id。`valid == false` 的跑区

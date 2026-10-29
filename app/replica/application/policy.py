@@ -253,26 +253,54 @@ def find_run_area(policy: dict | None, area_id) -> dict | None:
     return None
 
 
-def select_run_area(policy: dict | None,
-                    position: int = 0) -> dict | None:
-    """Return ``runAreaModels[position]``, exactly like the official client.
+def _area_name(value) -> str:
+    return ''.join(str(value or '').split()).lower()
 
-    ``SportTypeViewModel.selectedPosition`` is a static int with no
-    initializer, so its default is 0.  The official app only changes it when
-    the operator picks an entry in ``RunningAreaDialog``; the
-    ``RunAreaModels.getSelect()`` getter has no caller in the decompiled 1.3.0
-    sources.  Therefore
-    this function must not guess from ``select``, the campus name, or
-    ``valid``.  A caller that gets an invalid area back should block the
-    start, just like ``RunCreditFragment.startSport``.
+
+def select_run_area(policy: dict | None, position: int = 0,
+                    campus_name: str = '',
+                    school_name: str = '') -> dict | None:
+    """Pick this account's run area.
+
+    The server already returns ``runAreaModels`` for the current account's
+    ``selectUnid``.  When that list contains several entries (a student can
+    belong to several campuses), the account's own ``campusName`` is the only
+    per-account identifier we have; match it against the area names first so
+    account A (广软) and account B (广州) land on their own areas even if the
+    server orders the list differently.
+
+    If no name matches, fall back to the official default ``selectedPosition``
+    = 0.  ``RunAreaModels.getSelect()`` is not used: the decompiled 1.3.0
+    sources have no caller for it.  An invalid area is returned to the caller,
+    which must block the start like ``RunCreditFragment.startSport``.
 
     ``position == -1`` means "no specific run area"; the official
-    ``LocationGeoFenceHelper`` then uses every fence.  Callers indicate that
-    by passing ``None``/``-1`` or by not filtering with an area at all.
+    ``LocationGeoFenceHelper`` then uses every fence.
     """
     areas = run_area_models(policy)
     if not areas:
         return None
+
+    fallback = None
+    for label in (campus_name, school_name):
+        wanted = _area_name(label)
+        if not wanted:
+            continue
+        exact = [a for a in areas if _area_name(a.get('name')) == wanted]
+        if len(exact) == 1:
+            return exact[0]
+        partial = [a for a in areas
+                   if wanted in _area_name(a.get('name'))
+                   or _area_name(a.get('name')) in wanted]
+        if len(partial) == 1:
+            return partial[0]
+        if fallback is None:
+            # Several names overlap; keep this candidate but try the next
+            # identifier (schoolName) for a unique match first.
+            fallback = (exact or partial or [None])[0]
+    if fallback is not None:
+        return fallback
+
     try:
         index = int(position)
     except (TypeError, ValueError):

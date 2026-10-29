@@ -1971,8 +1971,12 @@ class ReplicaApi:
         # it when the operator explicitly picks another area.
         from ..application import policy as POL
         policy_data = self._fetch_run_policy(rc, acct)
-        area = POL.select_run_area(policy_data, 0) if policy_data else None
-        if run_area_id not in (None, '', 0, '0', -1, '-1'):
+        area = POL.select_run_area(
+            policy_data, 0,
+            campus_name=acct.campusName,
+            school_name=acct.schoolName) \
+            if policy_data else None
+        if run_area_id not in (None, '', -1, '-1'):
             # Operator picked an area in the run page (official
             # RunningAreaDialog).  Only an area the server currently offers
             # may override the default.
@@ -2222,7 +2226,10 @@ class ReplicaApi:
             policy_data = self._fetch_run_policy(rc, acct)
             if policy_data is None:
                 return _fail('无法读取跑步策略，已停止（不会用旧围栏兜底）')
-            area = POL.select_run_area(policy_data, 0)
+            area = POL.select_run_area(
+                policy_data, 0,
+                campus_name=acct.campusName,
+                school_name=acct.schoolName)
             f = P.fetch_fence(rc, acct, policy_data=policy_data,
                               run_area=area)
         except Exception as e:  # noqa: BLE001
@@ -3235,8 +3242,11 @@ class ReplicaApi:
         policy_data = self._fetch_run_policy(rc, acct)
         if not policy_data:
             return _fail('无法读取跑步策略，已停止提交（不会用旧围栏或猜测校区）')
-        area = POL.select_run_area(policy_data, 0)
-        if run_area_id not in (None, '', 0, '0', -1, '-1'):
+        area = POL.select_run_area(
+            policy_data, 0,
+            campus_name=acct.campusName,
+            school_name=acct.schoolName)
+        if run_area_id not in (None, '', -1, '-1'):
             chosen = POL.find_run_area(policy_data, run_area_id)
             if chosen:
                 area = chosen
@@ -3358,6 +3368,9 @@ class ReplicaApi:
             return _fail(f'策略必经点无法解析，已中止: {e}')
         if not use_points and mp:
             return _fail('学校策略要求必经点位，不能跳过打卡点'
+                         '（请取消「跳过打卡点」后重试）')
+        if not use_points and sequential:
+            return _fail('学校要求顺序经过点位，不能跳过打卡点'
                          '（请取消「跳过打卡点」后重试）')
         if mp:
             if sequential:

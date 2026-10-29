@@ -191,12 +191,13 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 2. 点「设为校区」（坐标只写入本机会话，不上传）；
 3. 再点「刷新」拉打卡点；没有打卡点时仍需显式勾选“跳过打卡点”。
 
-多校区学校：`runModePolicy` 返回的 `runAreaModels` 自带 `fenceIds`。工具默认
-取 `runAreaModels[0]`（官方 `selectedPosition` 默认 0）；多跑区时在跑步页
-下拉框选择，无效跑区显示为灰色不可选。跑区拥有的全部围栏都会保留，任意一条
-包含轨迹即算在区域内。选中的跑区 id 会作为 `runAreaId` 随打卡点请求发送。
-没有跑区数据时使用全部围栏；围栏只信 `runModePolicy`，不再用
-`getGeoFenceForRun` 的旧数据兜底。
+多校区学校：`runModePolicy` 返回的 `runAreaModels` 自带 `fenceIds`。工具先用
+当前账号的 `campusName`/`schoolName` 匹配跑区名，A 账号（广软）和 B 账号
+（广州）各自自动落到自己的跑区；匹配不到才回退官方 `selectedPosition=0`。
+多跑区时也可以在跑步页下拉框手动切换，无效跑区显示为灰色不可选。跑区拥有的
+全部围栏都会保留，任意一条包含轨迹即算在区域内。选中的跑区 id 会作为
+`runAreaId` 随打卡点请求发送。没有跑区数据时使用全部围栏；围栏只信
+`runModePolicy`，不再用 `getGeoFenceForRun` 的旧数据兜底。
 
 ### 路线库 / GPX
 

@@ -76,6 +76,25 @@ def test_run_area_uses_position_zero_and_ignores_select():
     assert POL.select_run_area(policy, 99) is None
 
 
+def test_run_area_auto_matches_each_accounts_campus():
+    """Account A (广软) and account B (广州) must not inherit each other."""
+    policy = {'runAreaModels': [
+        {'id': 1, 'name': '广软学校 江门校区', 'valid': True,
+         'fenceIds': [1]},
+        {'id': 2, 'name': '广州学校 天河校区', 'valid': True,
+         'fenceIds': [2]},
+    ]}
+    assert POL.select_run_area(
+        policy, campus_name='广软学校 江门校区')['id'] == 1
+    assert POL.select_run_area(
+        policy, campus_name='广州学校 天河校区')['id'] == 2
+    # schoolName is tried when campusName does not match.
+    assert POL.select_run_area(
+        policy, campus_name='大学城', school_name='广州学校')['id'] == 2
+    # No matching name -> official default position 0.
+    assert POL.select_run_area(policy, campus_name='未知学校')['id'] == 1
+
+
 def test_run_area_keeps_all_fence_ids():
     policy = {
         'runAreaModels': [
@@ -309,6 +328,29 @@ def test_empty_checkpoint_list_can_be_a_valid_answer():
         P.parse_points({'pointsResModels': []})
 
 
+def test_real_fetch_points_draws_all_fences_with_a_manual_anchor(
+        tmp_path, monkeypatch):
+    import replica.transport.realclient as RC
+
+    api = _api(tmp_path)
+    api.real_set_session(uid='1', token='x', lat=31.0005, lon=121.0005,
+                         campusName='某校区', schoolName='某大学', unid=9)
+    policy = {'runAreaModels': [], 'geoFence': {'geoFences': [
+        {'id': 1, 'name': '东', 'points': [
+            {'glat': a, 'glon': b} for a, b in _poly(30.0, 120.0)]},
+        {'id': 2, 'name': '西', 'points': [
+            {'glat': a, 'glon': b} for a, b in _poly(31.0, 121.0)]},
+    ]}}
+    monkeypatch.setattr(api, '_fetch_run_policy', lambda *a, **k: policy)
+    monkeypatch.setattr(RC, 'RealClient', lambda *a, **k: object())
+    monkeypatch.setattr(P, 'fetch_points', lambda *a, **k: [])
+    j = api.real_fetch_points(glat=31.0005, glon=121.0005, distance_m=2000)
+    assert j['code'] == 200, j
+    assert j['data']['fence_count'] == 2
+    assert len(j['data']['fences']) == 2
+    assert j['data']['center']['lat'] == pytest.approx(31.0005)
+
+
 def test_outside_fences_accepts_a_point_in_any_ring():
     from replica.domain import routes as RT
 
@@ -482,7 +524,7 @@ def _submit_api(tmp_path, monkeypatch, policy):
 def test_empty_points_block_unless_operator_skips_them(tmp_path, monkeypatch):
     api, reached = _submit_api(
         tmp_path, monkeypatch,
-        {'policy': 1, 'runRuleModel': {}})
+        {'policy': 0, 'runRuleModel': {}})
     res = api.real_submit_run(km=1.0, pace=6.0)
     assert not reached
     assert res['code'] != 200
@@ -492,6 +534,16 @@ def test_empty_points_block_unless_operator_skips_them(tmp_path, monkeypatch):
     # The explicit checkbox is the only way through.
     res = api.real_submit_run(km=1.0, pace=6.0, use_points=False)
     assert reached, res
+
+
+def test_sequential_school_cannot_skip_points(tmp_path, monkeypatch):
+    api, reached = _submit_api(
+        tmp_path, monkeypatch,
+        {'policy': 1, 'runRuleModel': {}})
+    res = api.real_submit_run(km=1.0, pace=6.0, use_points=False)
+    assert not reached
+    assert res['code'] != 200
+    assert '顺序' in res['message']
 
 
 def test_submit_stops_when_policy_is_unavailable(tmp_path, monkeypatch):
@@ -512,7 +564,7 @@ def test_submit_stops_when_policy_is_unavailable(tmp_path, monkeypatch):
 def test_freeze_warns_but_does_not_block(tmp_path, monkeypatch):
     api, reached = _submit_api(
         tmp_path, monkeypatch,
-        {'policy': 1, 'freezeRunTime': 120,
+        {'policy': 0, 'freezeRunTime': 120,
          'runRuleModel': {'minDistance': 1000}})
     res = api.real_submit_run(km=1.0, pace=6.0, use_points=False)
     assert reached, res
@@ -565,7 +617,7 @@ def test_generic_fence_failure_may_reuse_an_already_saved_centre(
     api.real_set_session(uid='1', token='x', campusName='某校区',
                          schoolName='某大学', unid=9, lat=22.41, lon=112.94)
     monkeypatch.setattr(api, '_fetch_run_policy',
-                        lambda *a, **k: {'policy': 1, 'runRuleModel': {}})
+                        lambda *a, **k: {'policy': 0, 'runRuleModel': {}})
     monkeypatch.setattr(RC, 'RealClient', lambda *a, **k: object())
     monkeypatch.setattr(api, '_ensure_fence',
                         lambda *a, **k: (_ for _ in ()).throw(

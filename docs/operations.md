@@ -131,9 +131,10 @@ UI 的「记录 → 提交回执」提供 **只读核对**：按开始时间（�
   并在提醒区说明。官方自由跑是 serviceType=3 / sportType=4 的另一条链路，
   本工具尚未实现。
 - **多围栏**按账号跑区匹配：`runModePolicy` 返回 `runAreaModels` 和
-  `geoFence`；默认取 `runAreaModels[0]`（官方 `selectedPosition` 默认 0），
-  多跑区时用下拉框切换。跑区 `fenceIds` 命中的**全部**围栏都保留，任意一条
-  包含轨迹即算在区域内；没有跑区数据时用全部围栏。
+  `geoFence`；先用当前账号的 `campusName`/`schoolName` 匹配跑区名（A 广软、
+  B 广州各自落位），匹配不到才回退官方 `selectedPosition=0`；多跑区时也可用
+  下拉框切换。跑区 `fenceIds` 命中的**全部**围栏都保留，任意一条包含轨迹即
+  算在区域内；没有跑区数据时用全部围栏。
 - **围栏只信 policy**：`geoFence` 为空/缺失都视为无围栏，不再回退
   `getGeoFenceForRun`；`runModePolicy` 取不到时直接停止。多围栏且没有
   手动校区/路线首点可判定时也停止，不会挑第一条围栏。

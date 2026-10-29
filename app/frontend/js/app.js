@@ -2980,9 +2980,10 @@ function updateFenceChip(){
     ? (fenceOk ? fenceLabel + ' · 点位读取失败' : '点位读取失败')
     : (LIVE.pointsEmpty ? fenceLabel + ' · 无打卡点（需确认）'
       : fenceLabel + ' · 无点位');
+  else if(freeRunOn()) label = (LIVE.fenceMissing ? '无围栏' : fenceLabel)
+    + ' · 跳过点位';
   else if(LIVE.fenceMissing && LIVE.pointsEmpty) label = '无围栏 · 无打卡点（需确认）';
   else if(LIVE.fenceMissing) label = '无围栏 · 点位已加载';
-  else if(freeRunOn()) label = fenceLabel + ' · 跳过点位';
   else label = fenceLabel + ' · 点位已加载';
   if(chip){
     chip.textContent = label;
@@ -3046,9 +3047,10 @@ function updateCampusControls(){
   // needed when there is no fence, or when several fences make the campus
   // ambiguous; with one fence its centroid is the anchor.
   const btn = $('#setCampusBtn');
+  const count = Math.max(LIVE.fences.length, +LIVE.fenceCount || 0);
   if(btn){
-    btn.hidden = LIVE.fences.length === 1;
-    btn.title = LIVE.fences.length > 1
+    btn.hidden = count === 1;
+    btn.title = count > 1
       ? '检测到多个围栏：把地图拖到你的学校后保存校区中心'
       : '学校没有围栏时：先把地图拖到学校，再点这里保存校区坐标';
   }

@@ -421,13 +421,17 @@ OBS `laps_json` 是分钟/公里（官方 App 读取）。
 坐标 → 手绘路线第一个点；三者都没有才停止。跑步页新增「设为校区」，把当前
 地图中心写入本机会话。
 
-**跑区按 `selectedPosition` 取，默认 0。** 官方
-`SportTypeViewModel.selectedPosition` 是静态 int，没有初始化，默认就是 0；
-只有 `RunningAreaDialog` 用户点击后才改变。`RunAreaModels.getSelect()` 在
-1.3.0 反编译源码里只有定义、没有调用，所以工具不再把 `select`、校区名或
-“第一个有效跑区”当优先级。默认取 `runAreaModels[0]`；多跑区时跑步页下拉框
-对应官方对话框，`valid == false` 的跑区显示为灰色不可选；默认跑区无效时提交
-停止并提示重新选择。
+**跑区先按账号校区匹配，匹配不到再用 `selectedPosition=0`。** 官方
+`SportTypeViewModel.selectedPosition` 是静态 int，默认 0；只有
+`RunningAreaDialog` 用户点击后才改变。`RunAreaModels.getSelect()` 在 1.3.0
+反编译源码里只有定义、没有调用，所以工具不使用 `select`。
+
+服务端返回的 `runAreaModels` 是当前账号的列表，但一个学生可能属于多个校区；
+为了 A 账号（广软）和 B 账号（广州）各自自动落到自己的跑区，工具先用当前
+账号的 `campusName`/`schoolName` 匹配 `runAreaModels[].name`，匹配不到才回退
+官方默认 0。这是工具侧兼容层，不改变官方“按 position 取”的协议；显式下拉
+选择仍然优先。多跑区时跑步页下拉框对应官方对话框，`valid == false` 的跑区
+显示为灰色不可选；默认/匹配到的跑区无效时提交停止并提示重新选择。
 
 拿到跑区后，用它的 `fenceIds` 过滤 `geoFences`，并保留该跑区拥有的**全部**
 围栏，不再按名称/距离只挑一条；`runArea.id` 作为 `runAreaId` 发给打卡点接口。

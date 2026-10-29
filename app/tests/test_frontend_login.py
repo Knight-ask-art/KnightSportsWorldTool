@@ -90,7 +90,7 @@ def test_multi_fence_ui_uses_all_rings_and_marks_invalid_areas():
     assert 'disabled' in _js_function('renderRunAreas')
     assert '（无效）' in _js_function('renderRunAreas')
     assert 'rings.some' in _js_function('fenceOutside')
-    assert 'LIVE.fences.length === 1' in _js_function('updateCampusControls')
+    assert 'count === 1' in _js_function('updateCampusControls')
     assert '非官方自由跑' in HTML
     assert 'setFences' in JS
     start = JS.index("$('#randomParams')")
