@@ -781,37 +781,90 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
     return pts
 
 
-def _distinct_seconds(vals: list[int], total: int | None = None) -> list[int]:
-    """Nudge equal splits apart by one second.
+def _pace_keys(seg_m: list[float], seg_t: list[int]) -> list[int]:
+    """Displayed pace in whole seconds per kilometre (what the table shows).
 
-    Two laps that both read 6'00" are the exact complaint that started this
-    work: the profile behind them is different, but the table is not.  When
-    ``total`` is given the borrowed seconds are taken back from the longest
-    splits (never landing on another lap's value), so the run duration does
-    not move.
+    ``fmtPace`` in the browser rounds half up (Math.round); Python's round()
+    is half-to-even, so 360.5 s/km became 360 here but 6'01" on screen.
     """
-    used = set()
-    out = []
-    extra = 0
-    for v in vals:
-        while v in used:
-            v += 1
-            extra += 1
-        used.add(v)
-        out.append(v)
-    guard = 0
-    while total is not None and extra > 0 and guard < 500:
-        guard += 1
-        moved = False
-        for k in sorted(range(len(out)), key=lambda i: -out[i]):
-            cand = out[k] - 1
-            if cand > 0 and cand not in used:
-                used.discard(out[k])
-                out[k] = cand
-                used.add(cand)
-                extra -= 1
-                moved = True
+    return [int(math.floor(seg_t[i] / max(1e-6, float(seg_m[i]) / 1000.0)
+                            + 0.5))
+            for i in range(len(seg_t))]
+
+
+def _distinct_paces(seg_m: list[float], seg_t: list[int],
+                    total: int | None = None) -> list[int]:
+    """Give every lap a different displayed pace, without moving the duration.
+
+    The old helper compared raw seconds, so a 0.5 km tail at 180 s and a full
+    lap at 360 s both read 6'00"/km.  This walks duplicate groups and moves one
+    lap by a whole number of *pace* seconds, taking the same split seconds back
+    from the longest lap so the sum (and the run duration) never changes.
+
+    The move is expressed in s/km rather than split seconds because a second
+    on a 0.5 km tail is 2 s/km, and on a 0.1 km tail it is 10 s/km -- moving
+    the tail by "one second" used to turn 6'00" into 12'02".
+
+    A wider spread is nicer, but whole seconds are the only unit the split
+    table shows, so the hard rule is that no two laps may display the same
+    pace; asking for a 2 s/km gap is not always reachable.
+    """
+    out = [max(1, int(round(v))) for v in seg_t]
+    n = len(out)
+    if total is not None and n:
+        # A 1 m tail rounds to 1 s by itself; taking the rounding error back
+        # from the longest lap keeps sum(splits) == duration even then.
+        diff = int(total) - sum(out)
+        if diff:
+            k = max(range(n), key=lambda i: out[i])
+            out[k] = max(1, out[k] + diff)
+    if n < 2:
+        return out
+    km = [max(1e-6, float(m) / 1000.0) for m in seg_m]
+    for _ in range(n * 6 + 12):
+        keys = _pace_keys(seg_m, out)
+        seen = {}
+        pair = None
+        for i, k in enumerate(keys):
+            if k in seen:
+                pair = (seen[k], i)
                 break
+            seen[k] = i
+        if pair is None:
+            break
+        i, j = pair
+        # The shorter lap changes pace the fastest per split second, but a
+        # very short tail cannot move by less than 1 s; try both members.
+        order = [i, j] if km[i] <= km[j] else [j, i]
+        moved = False
+        for mag in range(1, n * 2 + 1):
+            if moved:
+                break
+            for sign in (1, -1):
+                dpace = sign * mag
+                for k in order:
+                    dsec = int(round(abs(dpace) * km[k])) or 1
+                    dsec = dsec if dpace > 0 else -dsec
+                    nk = out[k] + dsec
+                    if nk < 1:
+                        continue
+                    for c in sorted(range(n), key=lambda x: -out[x]):
+                        if c == k:
+                            continue
+                        nc = out[c] - dsec
+                        if nc < 1:
+                            continue
+                        trial = list(out)
+                        trial[k] = nk
+                        trial[c] = nc
+                        if len(set(_pace_keys(seg_m, trial))) > len(set(keys)):
+                            out = trial
+                            moved = True
+                            break
+                    if moved:
+                        break
+                if moved:
+                    break
         if not moved:
             break
     return out
@@ -962,7 +1015,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             raise ValueError('km_times sum rounds to 0 s')
         seg_t = [max(1, int(round(v))) for v in vals]
         seg_t[-1] = max(1, seg_t[-1] + total_seconds - sum(seg_t))
-        seg_t = _distinct_seconds(seg_t, total_seconds)
+        seg_t = _distinct_paces(seg_m, seg_t, total_seconds)
     else:
         target = int(distance_km * pace_min_per_km * 60)
         if target <= 0:
@@ -975,7 +1028,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         scale = target / max(1e-9, sum(raw_t))
         seg_t = [max(1, int(round(t * scale))) for t in raw_t]
         seg_t[-1] = max(1, seg_t[-1] + target - sum(seg_t))
-        seg_t = _distinct_seconds(seg_t, target)
+        seg_t = _distinct_paces(seg_m, seg_t, target)
     total_seconds = sum(seg_t)
     pace_min_per_km = total_seconds / 60.0 / max(1e-9, distance_km)
     speed = round(float(total_meters) / total_seconds, 2)
@@ -1245,6 +1298,15 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         })
     # absorb rounding drift so sum(stepsNum) == totalSteps exactly
     if step_freq_json:
+        # A stop window (a light, a breather) still picked up one or two
+        # steps from the old distribution, which the chart drew as a 6 spm
+        # cliff.  Zero the step counter where the phone did not move; the
+        # drift loop below puts those steps back on the running windows.
+        dist_by_begin = {int(s['beginTime']): float(s.get('distance') or 0.0)
+                         for s in speed_json}
+        for item in step_freq_json:
+            if dist_by_begin.get(int(item['beginTime']), 0.0) < 0.6:
+                item['stepsNum'] = 0
         # Real phone step counters occasionally drop a window (the official
         # chart has 36 spm valleys) and occasionally spike.  Cap the spike
         # first, then punch 2-4 dropouts and spread the removed steps over the
@@ -1261,18 +1323,27 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                 drop = max(1, min(old - 1, int(round(old * rng.uniform(0.35, 0.55)))))
                 step_freq_json[idx]['stepsNum'] = old - drop
         drift = total_steps - sum(x['stepsNum'] for x in step_freq_json)
-        idx = 0
-        while drift:
-            item = step_freq_json[idx % len(step_freq_json)]
+        if drift:
+            # Rounding loses a fraction per window; with 100+ windows that is
+            # dozens of steps.  The old round-robin handed them back one per
+            # window from index 0, including the stop windows we just zeroed --
+            # which is exactly how a 10 s stop turned into 1 step / 6 spm.
+            # Spread the remainder over windows that actually moved instead.
+            moving = [i for i in range(len(step_freq_json))
+                      if dist_by_begin.get(int(step_freq_json[i]['beginTime']),
+                                           0.0) >= 0.6]
+            if not moving:
+                moving = list(range(len(step_freq_json)))
             if drift > 0:
-                item['stepsNum'] += 1
-                drift -= 1
-            elif item['stepsNum'] > 0:
-                item['stepsNum'] -= 1
-                drift += 1
-            idx += 1
-            if idx > len(step_freq_json) * 4:
-                break
+                for n in range(drift):
+                    step_freq_json[moving[n % len(moving)]]['stepsNum'] += 1
+            else:
+                order = sorted(moving,
+                               key=lambda i: -step_freq_json[i]['stepsNum'])
+                for n in range(-drift):
+                    i = order[n % len(order)]
+                    if step_freq_json[i]['stepsNum'] > 0:
+                        step_freq_json[i]['stepsNum'] -= 1
     #                   intervalStepModel,originAvgStep,speedStandard,startTime,state}
     seg_s = max(1, total_seconds // 5)
     segment_json = [{
@@ -1624,6 +1695,11 @@ def preview_series(run: dict, limit: int = 240) -> dict:
         begin = int(s.get('beginTime') or 0)
         end = int(s.get('endTime') or begin)
         dt = max(0.001, (end - begin) / 1000.0)
+        # The last bucket is clamped to stop_ms, so it can be 1-3 s long.
+        # Dividing a couple of steps by 2 s produced 6 spm valleys that looked
+        # like a GPS dropout; those tail windows are display noise, not data.
+        if dt < 6.0:
+            continue
         dist = float(s.get('distance') or 0.0)
         st = steps.get(begin) or {}
         n_steps = float(st.get('stepsNum') or 0.0)
@@ -1753,7 +1829,7 @@ def track_series(track: list[dict], limit: int = 240) -> dict | None:
             'km': 1.0,
             'seconds': int(round(t - prev_t)),
             'cumulative': int(round(t)),
-            'pace': round((t - prev_t) / 60.0, 3),
+            'pace': round(t - prev_t, 1),
         })
         prev_t = t
     if total_distance - cumulative_d > 1.0:
@@ -1763,7 +1839,7 @@ def track_series(track: list[dict], limit: int = 240) -> dict | None:
             'km': round(rest / 1000.0, 3),
             'seconds': sec,
             'cumulative': total_seconds,
-            'pace': round((sec / 60.0) / (rest / 1000.0), 3) if rest else 0,
+            'pace': round(sec / (rest / 1000.0), 1) if rest else 0,
         })
 
     stats = _series_stats(series, total_distance, total_seconds, total_steps)

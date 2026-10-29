@@ -1,6 +1,6 @@
 # One-click packaging for the pure-Python build.
 # Usage:  powershell -ExecutionPolicy Bypass -File packaging\build.ps1
-#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 0.1.2
+#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 0.1.5
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Backend pyinstaller
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -MigrateDataFrom dist\好想跑_v0.1.1
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -NoDataMigration
@@ -23,7 +23,9 @@
 #
 # Use -DownloadBaseUrl https://host/path to write absolute asset URLs; without
 # it the manifest uses relative URLs (resolved against the manifest URL).
-# Use -RollbackVersion '' to omit the rollback asset.
+# Use -RollbackVersion '' to omit the rollback asset.  When -DownloadBaseUrl
+# points at the new release, pass -RollbackBaseUrl pointing at the rollback
+# tag (e.g. .../download/v0.1.4); otherwise the rollback URL is a 404.
 #
 # The output is versioned on purpose.  The old `dist/好想跑/` belongs to an
 # existing install and may contain live data; this script never deletes it.
@@ -38,7 +40,8 @@ param(
     [switch]$NoDataMigration,
     [string]$DownloadBaseUrl = '',
     [string]$Channel = 'stable',
-    [string]$RollbackVersion = '0.1.3',
+    [string]$RollbackVersion = '0.1.4',
+    [string]$RollbackBaseUrl = '',
     [ValidateSet('nuitka', 'pyinstaller')]
     [string]$Backend = 'nuitka',
     [switch]$NoInstaller,
@@ -306,6 +309,9 @@ $latestArgs = @($makeLatest, '--dist', $DIST, '--version', $Version,
                 '--rollback-version', $RollbackVersion)
 if ($DownloadBaseUrl) {
     $latestArgs += @('--base-url', $DownloadBaseUrl)
+}
+if ($RollbackBaseUrl) {
+    $latestArgs += @('--rollback-base-url', $RollbackBaseUrl)
 }
 if ($setupBuilt) {
     $latestArgs += @('--setup', $setupBuilt)

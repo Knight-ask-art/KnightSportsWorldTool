@@ -69,6 +69,67 @@ def _fail(message='failed', code=500, data=None):
     return {'code': code, 'message': message, 'data': data}
 
 
+# --------------------------------------------------------------------------
+# login cover image: header-only probes, no Pillow in the frozen build
+# --------------------------------------------------------------------------
+COVER_MAX_BYTES = 8 << 20
+COVER_MIN_WIDTH = 800
+COVER_MIN_AREA = 800 * 400
+
+
+def _image_info(raw: bytes):
+    """Return (mime, width, height) from the first bytes, or None."""
+    if len(raw) < 32:
+        return None
+    if raw[:8] == b'\x89PNG\r\n\x1a\n':
+        try:
+            w = int.from_bytes(raw[16:20], 'big')
+            h = int.from_bytes(raw[20:24], 'big')
+        except (IndexError, ValueError):
+            return None
+        return ('image/png', w, h)
+    if raw[:3] == b'\xff\xd8\xff':
+        i = 2
+        while i + 9 < len(raw):
+            if raw[i] != 0xFF:
+                i += 1
+                continue
+            marker = raw[i + 1]
+            if marker in (0xD8, 0xD9, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            if i + 4 > len(raw):
+                return None
+            seglen = int.from_bytes(raw[i + 2:i + 4], 'big')
+            if seglen < 2:
+                return None
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                          0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                if i + 9 > len(raw):
+                    return None
+                h = int.from_bytes(raw[i + 5:i + 7], 'big')
+                w = int.from_bytes(raw[i + 7:i + 9], 'big')
+                return ('image/jpeg', w, h)
+            i += 2 + seglen
+        return None
+    if raw[:4] == b'RIFF' and raw[8:12] == b'WEBP':
+        kind = raw[12:16]
+        if kind == b'VP8X' and len(raw) >= 30:
+            w = 1 + int.from_bytes(raw[24:27], 'little')
+            h = 1 + int.from_bytes(raw[27:30], 'little')
+            return ('image/webp', w, h)
+        if kind == b'VP8 ' and len(raw) >= 30:
+            w = int.from_bytes(raw[26:28], 'little') & 0x3FFF
+            h = int.from_bytes(raw[28:30], 'little') & 0x3FFF
+            return ('image/webp', w, h)
+        if kind == b'VP8L' and len(raw) >= 25:
+            bits = int.from_bytes(raw[21:25], 'little')
+            w = (bits & 0x3FFF) + 1
+            h = ((bits >> 14) & 0x3FFF) + 1
+            return ('image/webp', w, h)
+    return None
+
+
 #: Product-level plausibility band, deliberately wider than any one school's
 #: rule set.  Outside it the operator gets a yellow reminder, never a block:
 #: the server accepted real runs at 9'06"/km and 112 spm.
@@ -2511,6 +2572,95 @@ class ReplicaApi:
         except OSError as e:
             return _fail('写入 ui_state 失败: %s' % e)
         return _ok(data)
+
+    # -- login cover (settings → 登录页封面) -------------------------------
+    def _cover_path(self) -> str:
+        return os.path.join(self.store_dir, 'login-cover.img')
+
+    def _cover_meta_path(self) -> str:
+        return os.path.join(self.store_dir, 'login-cover.json')
+
+    def _cover_info(self) -> dict:
+        meta = _read_json(self._cover_meta_path(), {})
+        meta = meta if isinstance(meta, dict) else {}
+        path = self._cover_path()
+        if not os.path.isfile(path):
+            return {'has_custom': False, 'url': '', 'width': 0, 'height': 0,
+                    'size': 0, 'updated_at': ''}
+        stamp = str(meta.get('updated_at') or int(os.path.getmtime(path)))
+        return {
+            'has_custom': True,
+            'url': '/login-cover?t=' + stamp,
+            'width': int(meta.get('width') or 0),
+            'height': int(meta.get('height') or 0),
+            'size': int(os.path.getsize(path)),
+            'updated_at': stamp,
+        }
+
+    def real_get_login_cover(self):
+        return _ok(self._cover_info())
+
+    def real_set_login_cover(self, data: str = '', mime: str = '',
+                             width=None, height=None):
+        """Store a landscape cover for the login gate.
+
+        The browser re-encodes large photos to JPEG, but small banners are
+        sent as-is and direct bridge calls may be PNG/WebP.  Only the header is
+        parsed: Pillow is not part of the frozen build, and a 20 MP camera JPEG
+        must not be decoded just to read two integers.
+        """
+        import base64 as _b64
+        import binascii
+        raw_text = str(data or '').strip()
+        if not raw_text:
+            return _fail('没有收到图片数据')
+        if raw_text.startswith('data:'):
+            raw_text = raw_text.split(',', 1)[-1]
+        try:
+            raw = _b64.b64decode(raw_text, validate=False)
+        except (binascii.Error, ValueError):
+            return _fail('图片数据不是有效的 base64')
+        if not raw:
+            return _fail('图片数据为空')
+        if len(raw) > COVER_MAX_BYTES:
+            return _fail('图片超过 %d MB' % (COVER_MAX_BYTES // (1 << 20)))
+        info = _image_info(raw)
+        if info is None:
+            return _fail('只支持 JPEG / PNG / WebP 图片')
+        real_mime, w, h = info
+        if w <= 0 or h <= 0:
+            return _fail('读不出图片尺寸')
+        if w <= h:
+            return _fail('只支持横图（宽必须大于高）')
+        if w < COVER_MIN_WIDTH or w * h < COVER_MIN_AREA:
+            return _fail('图片太小：宽度至少 %d，面积至少 %d×%d'
+                         % (COVER_MIN_WIDTH, COVER_MIN_WIDTH,
+                            COVER_MIN_AREA // COVER_MIN_WIDTH))
+        if w > 8000 or h > 8000:
+            return _fail('图片尺寸过大（最大 8000 像素）')
+        try:
+            os.makedirs(self.store_dir, exist_ok=True)
+            tmp = self._cover_path() + '.tmp'
+            with open(tmp, 'wb') as fh:
+                fh.write(raw)
+            os.replace(tmp, self._cover_path())
+            _write_json(self._cover_meta_path(), {
+                'mime': real_mime, 'width': w, 'height': h,
+                'size': len(raw),
+                'updated_at': int(time.time() * 1000),
+            })
+        except OSError as e:
+            return _fail('保存封面失败: %s' % e)
+        return _ok(self._cover_info())
+
+    def real_clear_login_cover(self):
+        for path in (self._cover_path(), self._cover_meta_path(),
+                     self._cover_path() + '.tmp'):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        return _ok(self._cover_info())
 
     # -- auto update ------------------------------------------------------
     def real_check_update(self):

@@ -669,7 +669,11 @@ def cancel_download(store_dir: str) -> dict:
 def last_result(store_dir: str) -> dict:
     path = os.path.join(_updates_dir(store_dir), 'last-result.json')
     try:
-        with open(path, encoding='utf-8') as fh:
+        # PowerShell 5.1 writes Out-File -Encoding utf8 *with* a BOM; the
+        # update script uses it, so a plain utf-8 json.load would silently
+        # drop every "update finished / failed" notice.  utf-8-sig accepts
+        # both the BOM and a normal file.
+        with open(path, encoding='utf-8-sig') as fh:
             data = json.load(fh)
         if isinstance(data, dict):
             return data
@@ -794,13 +798,25 @@ try {
   if ($LASTEXITCODE -ge 8) { throw "robocopy exit $LASTEXITCODE" }
   if (-not (Test-Path (Join-Path $new '好想跑.exe'))) { throw '新目录里没有 好想跑.exe' }
   if (Test-Path (Join-Path $dst 'data')) {
-    Move-Item (Join-Path $dst 'data') (Join-Path $new 'data')
+    # A release zip must not carry a data folder, but if it ever does, the
+    # operator's data wins: remove the placeholder before the move, otherwise
+    # Move-Item nests data\data and the app starts with an empty profile.
+    $newData = Join-Path $new 'data'
+    if (Test-Path $newData) { Remove-Item $newData -Recurse -Force -ErrorAction SilentlyContinue }
+    Move-Item (Join-Path $dst 'data') $newData
   }
   Move-Item $dst $old
   Move-Item $new $dst
-  Start-Process -FilePath $exe -WorkingDirectory $dst
+  # Record the result before the new process reads it at boot; a start
+  # failure overwrites this with 'failed' in the catch below.
   Write-Result 'ok' '更新完成'
+  Start-Process -FilePath $exe -WorkingDirectory $dst
   Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue
+  # The package and staging copy are no longer needed (last-result.json stays).
+  Remove-Item (Join-Path $dst 'data\updates\staging') -Recurse -Force -ErrorAction SilentlyContinue
+  Get-ChildItem (Join-Path $dst 'data\updates') -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -in '.zip', '.exe' } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
   Write-Log 'ok'
 } catch {
   $msg = $_.Exception.Message
@@ -858,8 +874,8 @@ try {
     Start-Sleep -Milliseconds 250
   }
   if (-not (Test-Path $exe)) { throw '安装后没有找到 好想跑.exe' }
-  Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
   Write-Result 'ok' '更新完成'
+  Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
   Remove-Item $setup -Force -ErrorAction SilentlyContinue
   Write-Log 'ok'
 } catch {

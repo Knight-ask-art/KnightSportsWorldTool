@@ -11,6 +11,7 @@
 
   var splash = document.getElementById('bootSplash');
   if (!splash) return;
+  var loginGate = document.getElementById('loginGate');
 
   var KEY = 'hxp.boot.played';
   var force = /(?:^\?|&)boot=1(?:&|$)/.test(location.search);
@@ -23,7 +24,15 @@
   var played = false;
   try { played = sessionStorage.getItem(KEY) === '1'; } catch (err) { /* private mode */ }
 
-  function drop() { splash.remove(); }
+  function drop() {
+    splash.remove();
+    /* The login gate was inert while the splash owned the window; restore it
+       before handing focus back, then tell app.js the intro is over. */
+    if (loginGate) loginGate.inert = false;
+    try {
+      document.dispatchEvent(new CustomEvent('hxp:boot-done'));
+    } catch (err) { /* older WebView: the visibility poll in app.js still works */ }
+  }
 
   function remember() {
     try { sessionStorage.setItem(KEY, '1'); } catch (err) { /* ignore */ }
@@ -34,6 +43,11 @@
     drop();
     return;
   }
+
+  /* The login gate sits behind the splash; making it inert stops the login
+     auto-focus from stealing the splash's focus and keeps Tab out of the
+     hidden form. */
+  if (loginGate) loginGate.inert = true;
 
   var access = document.getElementById('bootAccess');
   var action = document.getElementById('bootAction');
@@ -219,6 +233,25 @@
   }
 
   function onKey(event) {
+    if (event.key === 'Tab') {
+      // The splash is modal; keep Tab on its own controls instead of walking
+      // into the inert login gate (or the browser chrome).
+      var items = [];
+      try {
+        if (!action.hidden && getComputedStyle(action).visibility !== 'hidden') {
+          items.push(action);
+        }
+      } catch (err) { /* keep going with the skip button */ }
+      items.push(skip);
+      if (!items.length) return;
+      var at = items.indexOf(document.activeElement);
+      var next = at < 0
+        ? (event.shiftKey ? items.length - 1 : 0)
+        : (at + (event.shiftKey ? -1 : 1) + items.length) % items.length;
+      event.preventDefault();
+      items[next].focus();
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       finish();

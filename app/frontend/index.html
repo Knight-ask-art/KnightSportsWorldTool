@@ -6,12 +6,16 @@
 <title>好想跑 · 工作台</title>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="logo-128.png">
-<!-- No external webfont: use the installed Kaiti/STKaiti hand font so the exe
-     opens instantly and works offline. -->
+<!-- Fonts are bundled in css/fonts.css + fonts/ (ZCOOL XiaoWei, Patrick Hand,
+     JetBrains Mono).  No network request, so the exe opens instantly offline. -->
 <link rel="stylesheet" href="css/fonts.css">
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/splash.css">
+<!-- The server injects the stored login cover here (an empty file when there
+     is none), so the first paint already has the right image: no default-cover
+     flash under ?boot=0 or prefers-reduced-motion. -->
+<link rel="stylesheet" href="/login-cover.css" data-login-cover>
 </head>
 <body class="login-locked">
 <!-- boot splash: white plate, logo construction + access control -->
@@ -74,6 +78,7 @@
   </section>
   <button class="boot-skip" id="bootSkip" type="button">SKIP ▸</button>
 </div>
+<!-- Bootstrap Icons 1.13.1 subset (MIT): see vendor/bootstrap-icons-LICENSE.txt -->
 <svg class="bi-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><symbol id="bi-house" viewBox="0 0 16 16"><path d="M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293zM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5z"/></symbol><symbol id="bi-person-badge" viewBox="0 0 16 16"><path d="M6.5 2a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1zM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/>
   <path d="M4.5 0A2.5 2.5 0 0 0 2 2.5V14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V2.5A2.5 2.5 0 0 0 11.5 0zM3 2.5A1.5 1.5 0 0 1 4.5 1h7A1.5 1.5 0 0 1 13 2.5v10.795a4.2 4.2 0 0 0-.776-.492C11.392 12.387 10.063 12 8 12s-3.392.387-4.224.803a4.2 4.2 0 0 0-.776.492z"/></symbol><symbol id="bi-activity" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M6 2a.5.5 0 0 1 .47.33L10 12.036l1.53-4.208A.5.5 0 0 1 12 7.5h3.5a.5.5 0 0 1 0 1h-3.15l-1.88 5.17a.5.5 0 0 1-.94 0L6 3.964 4.47 8.171A.5.5 0 0 1 4 8.5H.5a.5.5 0 0 1 0-1h3.15l1.88-5.17A.5.5 0 0 1 6 2"/></symbol><symbol id="bi-map" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M15.817.113A.5.5 0 0 1 16 .5v14a.5.5 0 0 1-.402.49l-5 1a.5.5 0 0 1-.196 0L5.5 15.01l-4.902.98A.5.5 0 0 1 0 15.5v-14a.5.5 0 0 1 .402-.49l5-1a.5.5 0 0 1 .196 0L10.5.99l4.902-.98a.5.5 0 0 1 .415.103M10 1.91l-4-.8v12.98l4 .8zm1 12.98 4-.8V1.11l-4 .8zm-6-.8V1.11l-4 .8v12.98z"/></symbol><symbol id="bi-journal-text" viewBox="0 0 16 16"><path d="M5 10.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5"/>
   <path d="M3 0h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2v-1h1v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v1H1V2a2 2 0 0 1 2-2"/>
@@ -571,7 +576,7 @@
                   <div class="split-total" id="splitTotal">合计 — · 平均 —</div>
                 </div>
                 <div class="split-manual" id="splitManual" hidden>
-                  <div class="split-manual-head"><span class="mini">改数字，总配速会跟着变</span><button type="button" class="mini-link" id="splitsReset">恢复自动</button></div>
+                  <div class="split-manual-head"><span class="mini">改数字，总配速会跟着变</span></div>
                   <div class="splits-list" id="splitsList"></div>
                 </div>
               </div>
@@ -741,7 +746,6 @@
               <div class="check-list" id="checks"></div>
               <div class="form-actions" style="margin-top:10px">
                 <button class="btn primary" id="submitRun" disabled>提交这次跑步</button>
-                <button class="btn ghost" id="previewRun">预览数据</button>
                 <span class="hint" id="submitHint" style="margin:0">提交后该时段会被回执锁定，不能重复提交。</span>
               </div>
               <div class="submit-flow">
@@ -1096,6 +1100,20 @@
           <div class="detail-row"><span>设备</span><span id="setDevice">—</span></div>
         </section>
 
+        <section class="sec" id="coverSection">
+          <div class="sec-head"><h2>登录页封面</h2><span class="mini" id="coverStatus">默认封面</span></div>
+          <p class="hint" style="margin:-4px 0 9px">换成自己的图片。只支持<b>宽大于高</b>的横图，建议 1600×900 以上；图片只保存在本机 <b>data</b> 目录，不上传、不进记录。</p>
+          <div class="cover-row">
+            <div class="cover-preview"><img id="coverPreview" src="login-bg.jpg" alt="登录页封面预览"></div>
+            <div class="cover-actions">
+              <button type="button" class="btn small primary" id="coverPick">选择图片</button>
+              <button type="button" class="btn small ghost" id="coverReset">恢复默认</button>
+              <span class="hint" id="coverHint" style="margin:0">JPG / PNG / WebP；选择后自动压缩，只存本机 data。</span>
+            </div>
+          </div>
+          <input type="file" id="coverFile" accept="image/jpeg,image/png,image/webp" hidden>
+        </section>
+
         <section class="sec" id="networkSection">
           <div class="sec-head"><h2>网络与吸附</h2><span class="mini" id="netStatus">未配置</span></div>
           <p class="hint" style="margin:-4px 0 9px">代理和高德「Web 服务」Key 都可以在这里直接配置；只写入<b>本次运行的内存</b>，关闭程序后失效。</p>
@@ -1130,10 +1148,10 @@
         </section>
       </div>
     </section>
-
-    <div class="map-toast" id="toast" role="status"></div>
   </div>
 </div>
+
+<div class="map-toast" id="toast" role="status"></div>
 
 <div class="date-pop" id="datePop" role="dialog" aria-label="选择提交日期" hidden>
   <div class="date-pop-head">
@@ -1252,7 +1270,7 @@
         <span>下次不再自动显示</span>
       </label>
       <div class="onboard-actions">
-        <button type="button" class="mini-link" id="onboardSkip">跳过</button>
+        <button type="button" class="mini-link" id="onboardSkip">本次跳过</button>
         <button type="button" class="btn small ghost" id="onboardPrev">上一步</button>
         <button type="button" class="btn small primary" id="onboardNext">下一步</button>
       </div>

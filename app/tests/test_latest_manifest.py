@@ -30,7 +30,7 @@ def test_manifest_has_the_fields_an_updater_needs(tmp_path):
     assert m['schema'] == 1
     assert m['app'] == 'haoxiangpao'
     assert m['version'] == '0.1.2'
-    assert m['min_version'] == '0.1.1'
+    assert m['min_version'] == '0.1.4'
     assert m['channel'] == 'stable'
     assert m['released_at'] == '2026-10-25T12:00:00+08:00'
     assert m['notes']                      # current release cannot be silent

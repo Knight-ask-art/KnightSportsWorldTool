@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / 'frontend'
 HTML = (FRONTEND / 'index.html').read_text(encoding='utf-8')
 JS = (FRONTEND / 'js' / 'app.js').read_text(encoding='utf-8')
+CSS = (FRONTEND / 'css' / 'app.css').read_text(encoding='utf-8')
 SOURCE = HTML + '\n' + JS
 
 
@@ -252,3 +253,30 @@ def test_semester_card_hides_an_empty_progress_bar():
     assert 'bar.parentElement.hidden = !showBar' in JS
     assert 'id="ovSemesterNote"' in HTML
     assert 'id="profSemesterNote"' in HTML
+
+
+def test_first_run_guide_copy_is_written_for_the_post_login_moment():
+    assert '已登录：工具已经知道你在哪个校区' in JS
+    assert '先登录，工具才知道你在哪个校区' not in JS
+    assert "id=\"onboardSkip\">本次跳过" in HTML
+    assert "$('#onboardSkip').addEventListener('click', () => closeOnboard(null));" in JS
+
+
+def test_login_cover_reset_is_disabled_without_a_custom_cover():
+    assert "$('#coverReset').disabled = !hasCustom" in JS
+    assert '<link rel="stylesheet" href="/login-cover.css"' in HTML
+
+
+def test_preview_footer_stays_visible_in_the_card():
+    block = re.search(r'\.dp-foot\{([^}]*)\}', CSS, re.S)
+    assert block and 'position:sticky' in block.group(1)
+
+
+def test_toasts_wait_for_the_boot_splash():
+    assert 'const toastQueue = []' in JS
+    assert 'function flushBootToasts' in JS
+    assert "addEventListener('hxp:boot-done'" in JS
+
+
+def test_version_footer_drops_the_commit_hash():
+    assert "const short = 'v' + (d.version || '?');" in JS

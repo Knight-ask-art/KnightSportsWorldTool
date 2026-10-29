@@ -1,16 +1,77 @@
 /* ---------- tiny helpers ---------- */
 const $ = s => document.querySelector(s);
+/* Keyboard events dispatched on document (tests, extensions) have no
+   Element target; calling closest() there is an uncaught TypeError. */
+const eventTargetEl = ev => {
+  const t = ev && ev.target;
+  return (t && typeof t.closest === 'function') ? t : null;
+};
 const toastEl = $('#toast');
 let toastTimer = null;
+/* The boot splash covers the window for the first seconds.  A toast shown
+   then is invisible, and its 2.6 s life is over before the splash leaves, so
+   "update available" / "updated to vX" used to be lost.  Queue while the
+   splash is visible and let splash.js's hxp:boot-done release the queue. */
+const toastQueue = [];
+let bootFlushTimer = null;
+function bootSplashVisible(){
+  const splash = document.getElementById('bootSplash');
+  if(!splash) return false;
+  const style = getComputedStyle(splash);
+  return style.display !== 'none' && style.visibility !== 'hidden' &&
+         style.opacity !== '0';
+}
+function flushBootToasts(){
+  bootFlushTimer = null;
+  if(!toastQueue.length) return;
+  if(bootSplashVisible()){
+    bootFlushTimer = setTimeout(flushBootToasts, 500);
+    return;
+  }
+  toast(toastQueue.shift());
+  if(toastQueue.length) setTimeout(flushBootToasts, 2700);
+}
 function toast(msg){
+  if(bootSplashVisible()){
+    if(!toastQueue.includes(msg)) toastQueue.push(msg);
+    if(toastQueue.length > 3) toastQueue.shift();
+    if(!bootFlushTimer) bootFlushTimer = setTimeout(flushBootToasts, 500);
+    return;
+  }
   toastEl.textContent = msg;
   toastEl.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
 }
+function focusablesIn(root){
+  if(!root) return [];
+  return [...root.querySelectorAll(
+    'a[href],button:not([disabled]),input:not([disabled]),' +
+    'select:not([disabled]),textarea:not([disabled]),' +
+    '[tabindex]:not([tabindex="-1"])')]
+    .filter(el => !el.hidden && el.offsetParent !== null &&
+                  getComputedStyle(el).visibility !== 'hidden');
+}
+function trapTabIn(root, ev){
+  if(!root || ev.key !== 'Tab') return false;
+  const items = focusablesIn(root);
+  if(!items.length) return false;
+  const first = items[0], last = items[items.length - 1];
+  const active = document.activeElement;
+  if(!root.contains(active)){
+    ev.preventDefault();
+    (ev.shiftKey ? last : first).focus();
+    return true;
+  }
+  if(ev.shiftKey && active === first){ ev.preventDefault(); last.focus(); return true; }
+  if(!ev.shiftKey && active === last){ ev.preventDefault(); first.focus(); return true; }
+  return false;
+}
 /* one delegated handler, so links rebuilt by the checklist keep working */
 document.addEventListener('click', ev => {
-  const el = ev.target.closest('[data-toast]');
+  const t = eventTargetEl(ev);
+  if(!t) return;
+  const el = t.closest('[data-toast]');
   if(!el) return;
   if(el.tagName === 'A') ev.preventDefault();
   toast(el.dataset.toast);
@@ -730,6 +791,9 @@ function setSplitsManual(on){
   if(splitsManual){
     if(!splitRows || !splitRows.length){
       splitRows = (splitAutoRows || []).map(r => ({km: +r.km, seconds: Math.round(+r.seconds || 0)}));
+      // Toggled before the first preview came back: fetch the rows instead of
+      // showing an empty manual editor until the next parameter change.
+      if(!splitRows.length) scheduleSplitsPreview();
     }
   }else{
     splitRows = null;
@@ -770,6 +834,9 @@ async function refreshSplits(){
     splitAutoRows = j.data.splits.map(s => ({km: +s.km,
                                              seconds: Math.round(+s.seconds || 0)}));
     if(!splitsManual) splitRows = null;
+    else if(!splitRows || !splitRows.length){
+      splitRows = splitAutoRows.map(r => ({km: +r.km, seconds: +r.seconds}));
+    }
     renderSplits();
   }
 }
@@ -1110,7 +1177,9 @@ document.querySelectorAll('.nav-item').forEach(btn => {
   btn.addEventListener('click', () => go(btn.dataset.page));
 });
 document.addEventListener('click', ev => {
-  const el = ev.target.closest('[data-goto]');
+  const t = eventTargetEl(ev);
+  if(!t) return;
+  const el = t.closest('[data-goto]');
   if(!el) return;
   if(el.tagName === 'A') ev.preventDefault();
   if(el.dataset.modeTarget) setMode(el.dataset.modeTarget);
@@ -1118,7 +1187,9 @@ document.addEventListener('click', ev => {
   go(el.dataset.goto);
 });
 document.addEventListener('keydown', ev => {
-  const el = ev.target.closest('[data-goto]');
+  const t = eventTargetEl(ev);
+  if(!t) return;
+  const el = t.closest('[data-goto]');
   if(!el) return;
   if(ev.key === 'Enter' || ev.key === ' '){
     ev.preventDefault();
@@ -1157,7 +1228,8 @@ const LIVE = {
   receipts: [], receiptsLoaded: false, receiptsError: null,
   preflight: null, lastDetail: null,
   tokenUpdatedAt: null,
-  log: [], submitting: false, lastSubmit: null
+  log: [], submitting: false, lastSubmit: null,
+  loginCover: '', coverBusy: false
 };
 
 async function liveApi(method, args, timeoutMs){
@@ -1340,9 +1412,143 @@ function showLoginGate(message, tone){
   const err = $('#loginError');
   if(err){ err.hidden = true; err.textContent = ''; }
   setTimeout(() => {
-    if(LOGIN.visible && !LOGIN.busy){ const u = $('#loginUser'); if(u) u.focus(); }
+    // The splash owns focus while it is on screen (the login gate is inert);
+    // stealing it here would put typing into the hidden mobile field.
+    if(LOGIN.visible && !LOGIN.busy && !$('#bootSplash')){
+      const u = $('#loginUser'); if(u) u.focus();
+    }
   }, 80);
 }
+/* ---------- login cover: settings → 登录页封面 ---------- */
+const LOGIN_COVER_DEFAULT = 'login-bg.jpg';
+function coverHintText(hasCustom, info){
+  if(hasCustom && info && info.width){
+    return (info.width + '×' + info.height + ' · ' + bytesLabel(info.size || 0) +
+            ' · 只存在本机 data');
+  }
+  return 'JPG / PNG / WebP；自动压缩，只存本机 data。';
+}
+function applyLoginCover(url){
+  const gate = $('#loginGate');
+  if(gate){
+    gate.classList.toggle('has-custom-cover', !!url);
+    if(url) gate.style.backgroundImage = 'url("' + url + '")';
+    else{
+      gate.style.removeProperty('background-image');
+      // login-cover.css is rendered by the server for the first paint; on a
+      // reset it would keep the old cover, so drop the link and fall back to
+      // the packaged login-bg.jpg.
+      const link = document.querySelector('link[data-login-cover]');
+      if(link) link.remove();
+    }
+  }
+  const img = $('#coverPreview');
+  if(img) img.src = url || LOGIN_COVER_DEFAULT;
+}
+function renderLoginCover(hasCustom, info){
+  if($('#coverStatus')) $('#coverStatus').textContent = hasCustom ? '自定义横图' : '默认封面';
+  if($('#coverHint')) $('#coverHint').textContent = coverHintText(hasCustom, info);
+  if($('#coverReset')) $('#coverReset').disabled = !hasCustom;
+}
+async function loadLoginCover(){
+  let j;
+  try{ j = await liveApi('real_get_login_cover', {}, 8000); }catch(e){ return; }
+  if(!liveOk(j) || !j.data) return;
+  LIVE.loginCover = j.data.has_custom ? (j.data.url || '') : '';
+  applyLoginCover(LIVE.loginCover);
+  renderLoginCover(!!j.data.has_custom, j.data);
+}
+async function pickLoginCover(file){
+  if(!file || LIVE.coverBusy) return;
+  if(!/^image\//.test(file.type || '')){ toast('请选择图片文件'); return; }
+  if(file.size > 20 * 1024 * 1024){ toast('图片太大，请控制在 20 MB 内'); return; }
+  LIVE.coverBusy = true;
+  const pick = $('#coverPick');
+  if(pick){ pick.disabled = true; pick.textContent = '处理中…'; }
+  const objUrl = URL.createObjectURL(file);
+  try{
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('图片解码失败，换一张试试'));
+      el.src = objUrl;
+    });
+    if(!(img.naturalWidth > img.naturalHeight)){
+      toast('只支持横图：宽度必须大于高度');
+      if($('#coverHint')) $('#coverHint').textContent = '这张不是横图，已拒绝。';
+      return;
+    }
+    if(img.naturalWidth > 8000 || img.naturalHeight > 8000){
+      toast('图片尺寸过大（最大 8000 像素）');
+      if($('#coverHint')) $('#coverHint').textContent = '图片尺寸过大（最大 8000 像素）。';
+      return;
+    }
+    // Minimum *area*, not a minimum height: a 3200x600 banner is a perfectly
+    // good cover even though the width cap shrinks it to 1920x360.
+    if(img.naturalWidth < 800 ||
+       img.naturalWidth * img.naturalHeight < 800 * 400){
+      toast('图片太小：宽度至少 800，面积至少 800×400');
+      if($('#coverHint')) $('#coverHint').textContent = '图片太小：宽度至少 800，面积至少 800×400。';
+      return;
+    }
+    // Re-encode large photos so a 12 MP camera shot does not become a 20 MB
+    // base64 POST.  A very wide banner (21:9 and beyond) would drop below the
+    // server's area floor after the width cap; keep its original size instead.
+    let scale = Math.min(1, 1920 / img.naturalWidth);
+    if (img.naturalWidth * img.naturalHeight * scale * scale < 800 * 400) {
+      scale = 1;
+    }
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    // JPEG has no alpha; a transparent PNG would otherwise become a black
+    // rectangle.  Fill with the login gate's own colour first.
+    ctx.fillStyle = '#1b1d20';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const base64 = (canvas.toDataURL('image/jpeg', 0.86).split(',')[1] || '');
+    if(!base64){ toast('图片转换失败'); return; }
+    if($('#coverHint')) $('#coverHint').textContent = '正在保存…';
+    const j = await liveApi('real_set_login_cover', {
+      data: base64, mime: 'image/jpeg', width: w, height: h
+    }, 60000);
+    if(!liveOk(j)){
+      const msg = (j && j.message) || '封面保存失败';
+      toast(msg);
+      if($('#coverHint')) $('#coverHint').textContent = msg;
+      return;
+    }
+    LIVE.loginCover = (j.data && j.data.url) || '';
+    applyLoginCover(LIVE.loginCover);
+    renderLoginCover(true, j.data || {});
+    toast('登录页封面已更新');
+    liveLog('登录页封面已更新', w + '×' + h, 'ok');
+  }catch(e){
+    toast(String((e && e.message) || e));
+  }finally{
+    URL.revokeObjectURL(objUrl);
+    LIVE.coverBusy = false;
+    if(pick){ pick.disabled = false; pick.textContent = '选择图片'; }
+  }
+}
+async function resetLoginCover(){
+  if(LIVE.coverBusy || !LIVE.loginCover) return;
+  if(!confirm('恢复默认封面？当前自定义图片会从 data 里删除。')) return;
+  LIVE.coverBusy = true;
+  try{
+    const j = await liveApi('real_clear_login_cover', {}, 15000);
+    if(!liveOk(j)){ toast((j && j.message) || '恢复失败'); return; }
+    LIVE.loginCover = '';
+    applyLoginCover('');
+    renderLoginCover(false, {});
+    toast('已恢复默认封面');
+  }catch(e){
+    toast(String((e && e.message) || e));
+  }finally{ LIVE.coverBusy = false; }
+}
+
 function enterApp(resetPage){
   const gate = $('#loginGate'), app = $('#appShell');
   if(!gate) return;
@@ -4554,6 +4760,10 @@ function previewArgs(params, ti){
     date: ti.date,
     start_time: ti.time,
     closed: !!routeClosed,
+    // The preview must show the same laps that will be submitted; otherwise
+    // a manual split edit is invisible until after the upload.
+    km_times: splitsManual && splitRows
+      ? splitRows.map(r => Math.round(+r.seconds || 0)) : null,
     daily_runs: di.loaded ? di.count : null,
     daily_source: di.loaded ? di.source : null,
     ...altitudeArgs(params)
@@ -4918,7 +5128,13 @@ async function submitRun(){
 async function openDataPreviewForSubmit(pending){
   if(!pending) return;
   PENDING_SUBMIT = pending;
-  if($('#dataPreview')) $('#dataPreview').hidden = false;
+  if($('#dataPreview')){
+    $('#dataPreview').hidden = false;
+    setTimeout(() => {
+      const close = $('#dpClose');
+      if(close) close.focus();
+    }, 30);
+  }
   if($('#dpKicker')) $('#dpKicker').textContent = '提交前预览';
   if($('#dpTitle')) $('#dpTitle').textContent = '正在生成本次数据…';
   if($('#dpSummary')) $('#dpSummary').innerHTML = '<div class="mini">按当前参数生成配速、步频、步幅和海拔…</div>';
@@ -4983,7 +5199,7 @@ function renderDataPreview(data, mode, pending, errorText){
   if($('#dpPaceNote')){
     $('#dpPaceNote').textContent = series.length
       ? ('平均 ' + HXPCharts.fmtPace(avgPace) +
-         (d.min_pace ? (' · 最快 ' + HXPCharts.fmtPace(d.min_pace)) : ''))
+         (d.min_pace ? (' · 最快 10 秒 ' + HXPCharts.fmtPace(d.min_pace)) : ''))
       : '分/公里';
   }
   if($('#dpCadNote')) $('#dpCadNote').textContent = d.avg_cadence
@@ -4991,8 +5207,7 @@ function renderDataPreview(data, mode, pending, errorText){
        ' · 最小 ' + Math.round(d.min_cadence))
     : '步/分钟';
   if($('#dpStrideNote')) $('#dpStrideNote').textContent = d.avg_stride
-    ? ('平均 ' + Math.round(d.avg_stride) + ' · 最大 ' + Math.round(d.max_stride) +
-       ' · 最小 ' + Math.round(d.min_stride))
+    ? ('平均 ' + Math.round(d.avg_stride) + ' 厘米 · 尖峰已截断')
     : '厘米';
   if($('#dpAltNote')) $('#dpAltNote').textContent = (d.alt_min != null)
     ? (d.alt_min + '–' + d.alt_max + ' 米') : '米';
@@ -5011,7 +5226,7 @@ function renderDataPreview(data, mode, pending, errorText){
       key:'cadence', formatY:v=>Math.round(v),
       band:cadBand, bandNote:cadBand ? ('下限 ' + Math.round(cadBand[0])) : ''
     });
-    HXPCharts.barChart($('#dpStride'), series, {key:'stride', formatY:v=>Math.round(v)});
+    HXPCharts.barChart($('#dpStride'), series, {key:'stride', clamp:[40,200], formatY:v=>Math.round(v)});
     HXPCharts.lineChart($('#dpAltitude'), series, {
       key:'alt', area:true, lineClass:'dp-alt-line', formatY:v=>Math.round(v)
     });
@@ -5019,6 +5234,7 @@ function renderDataPreview(data, mode, pending, errorText){
   const rows = Array.isArray(d.splits) ? d.splits : [];
   let best = -1;
   rows.forEach((r, i) => {
+    if(+r.km < 0.999) return;            // only full kilometres compete
     if(!(+r.pace > 0)) return;
     if(best < 0 || +r.pace < +rows[best].pace) best = i;
   });
@@ -5033,17 +5249,17 @@ function renderDataPreview(data, mode, pending, errorText){
         rows.map((r,i) => {
           const isBest = i === best;
           return '<div class="dp-row' + (isBest ? ' best' : '') + '">' +
-            '<div class="dp-cell num">' + (i + 1) + '</div>' +
-            '<div class="dp-cell num">' + (+r.km).toFixed(2) + '</div>' +
-            '<div class="dp-cell num">' + splitFmt(r.seconds) + '</div>' +
-            '<div class="dp-cell num">' + splitFmt(r.cumulative || r.seconds) + '</div>' +
-            '<div class="dp-cell num dp-pace">' + HXPCharts.fmtPace(r.pace) + '</div>' +
+            '<div class="dp-cell dp-num">' + (i + 1) + '</div>' +
+            '<div class="dp-cell dp-num">' + (+r.km).toFixed(2) + '</div>' +
+            '<div class="dp-cell dp-num">' + splitFmt(r.seconds) + '</div>' +
+            '<div class="dp-cell dp-num">' + splitFmt(r.cumulative || r.seconds) + '</div>' +
+            '<div class="dp-cell dp-num dp-pace">' + HXPCharts.fmtPace(+r.pace / 60) + '</div>' +
             '</div>';
         }).join('');
     }
   }
   if($('#dpTableNote')) $('#dpTableNote').textContent = rows.length
-    ? (rows.length + ' 段 · 最快一公里已标出') : '';
+    ? (rows.length + ' 段' + (best >= 0 ? ' · 最快一公里已标出' : '')) : '';
   if($('#dpFootNote')){
     if(isRecord){
       $('#dpFootNote').textContent = '数据从服务器回读轨迹按 10 秒重采样；没有步频字段时显示 —。';
@@ -5187,7 +5403,13 @@ function openPostSubmit(d, pending, warnings){
       km.toFixed(2) + ' km · ' + esc(pending.dayText || '') + ' ' +
       esc(pending.timeText || '') + warn;
   }
-  if($('#postSubmit')) $('#postSubmit').hidden = false;
+  if($('#postSubmit')){
+    $('#postSubmit').hidden = false;
+    setTimeout(() => {
+      const primary = $('#postSaveClear');
+      if(primary) primary.focus();
+    }, 30);
+  }
 }
 function closePostSubmit(){
   if($('#postSubmit')) $('#postSubmit').hidden = true;
@@ -5238,8 +5460,8 @@ let snapping = false;
 const ONBOARD_KEY = 'hxp.onboard.v2';
 const ONBOARD_STEPS = [
   {
-    title: '先登录，工具才知道你在哪个校区',
-    body: '<p>用你自己的手机号登录。工具会从服务器读取所在校区的<b>跑步围栏</b>和<b>打卡点</b>。</p>' +
+    title: '已登录：工具已经知道你在哪个校区',
+    body: '<p>登录后，工具会从服务器读取你所在校区的<b>跑步围栏</b>和<b>打卡点</b>。</p>' +
       '<ul><li>围栏、点位都来自真实接口；没有 token 不会生成假点位。</li>' +
       '<li>token 失效时，到「账号」页重新验证或登录。</li></ul>' +
       '<div class="onboard-legal"><b>使用边界</b><span>仅限本人使用。禁止倒卖、分发安装包、代跑收费或共享账号；不要把 data 目录、token、回执发给他人。</span></div>',
@@ -5280,6 +5502,7 @@ const ONBOARD_STEPS = [
 ];
 let onboardIndex = 0;
 let onboardFocus = null;
+let onboardWait = null;
 
 function renderOnboard(){
   const s = ONBOARD_STEPS[onboardIndex];
@@ -5309,6 +5532,15 @@ function renderOnboard(){
 }
 function openOnboard(){
   if(!$('#onboard')) return;
+  // A saved session is restored during boot, so this can fire while the boot
+  // splash (z 1000) is still on screen.  Two aria-modal dialogs stacked on top
+  // of each other break the intro; wait until splash.js has removed it.
+  if($('#bootSplash')){
+    if(!onboardWait){
+      onboardWait = setTimeout(() => { onboardWait = null; openOnboard(); }, 400);
+    }
+    return;
+  }
   onboardFocus = document.activeElement;
   onboardIndex = 0;
   renderOnboard();
@@ -5319,14 +5551,21 @@ function closeOnboard(remember){
   const box = $('#onboard');
   if(!box || box.hidden) return;
   box.hidden = true;
-  const keep = !!(remember && $('#onboardNever') && $('#onboardNever').checked);
-  try{
-    if(keep) localStorage.setItem(ONBOARD_KEY, 'done');
-    else localStorage.removeItem(ONBOARD_KEY);
-  }catch(e){}
-  // localStorage is scoped to a random localhost port; the backend copy is the
-  // one that actually survives a restart.
-  liveApi('real_set_ui_state', {onboard_done: keep}, 8000).catch(() => {});
+  // null = "skip this time": leave the stored preference untouched, so a
+  // reopened guide does not reset onboard_done and a first-run skip still
+  // shows again next launch unless the operator ticks the opt-out box.
+  const keep = remember === true
+    ? !!( $('#onboardNever') && $('#onboardNever').checked)
+    : (remember === false ? false : null);
+  if(remember !== null){
+    try{
+      if(keep) localStorage.setItem(ONBOARD_KEY, 'done');
+      else localStorage.removeItem(ONBOARD_KEY);
+    }catch(e){}
+    // localStorage is scoped to a random localhost port; the backend copy is
+    // the one that actually survives a restart.
+    liveApi('real_set_ui_state', {onboard_done: keep}, 8000).catch(() => {});
+  }
   if(keep) toast('已关闭自动显示；可在「设置 → 关于」重看');
   if(onboardFocus && onboardFocus.focus){
     try{ onboardFocus.focus(); }catch(e){}
@@ -5359,7 +5598,7 @@ async function loadAppVersion(){
   const j = await liveApi('app_version', {}, 10000);
   if(!liveOk(j)) return;
   const d = j.data || {};
-  const short = 'v' + (d.version || '?') + (d.commit ? ('+' + d.commit) : '');
+  const short = 'v' + (d.version || '?');
   ['#sideVersion', '#aboutVersion', '#loginVersion'].forEach(sel => {
     const el = $(sel);
     if(el) el.textContent = short;
@@ -5897,13 +6136,25 @@ function liveWire(){
   $('#postSaveClear').addEventListener('click', postSaveAndClear);
   $('#postSubmitVeil').addEventListener('click', postKeepRoute);
   $('#diagCopy').addEventListener('click', copyDiagnostics);
+  document.addEventListener('keydown', ev => {
+    if(ev.key !== 'Escape') return;
+    if($('#dataPreview') && !$('#dataPreview').hidden){ ev.preventDefault(); cancelDataPreview(); }
+    else if($('#postSubmit') && !$('#postSubmit').hidden){ ev.preventDefault(); postKeepRoute(); }
+  });
   if($('#onboard')){
     $('#onboardClose').addEventListener('click', () => closeOnboard(true));
-    $('#onboardSkip').addEventListener('click', () => closeOnboard(true));
+    $('#onboardSkip').addEventListener('click', () => closeOnboard(null));
     $('#onboardNext').addEventListener('click', onboardNext);
     $('#onboardPrev').addEventListener('click', onboardPrev);
     $('#onboardVeil').addEventListener('click', () => closeOnboard(true));
     $('#onboardOpen').addEventListener('click', openOnboard);
+    if($('#coverPick')) $('#coverPick').addEventListener('click', () => $('#coverFile').click());
+    if($('#coverFile')) $('#coverFile').addEventListener('change', ev => {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if(f) pickLoginCover(f);
+    });
+    if($('#coverReset')) $('#coverReset').addEventListener('click', resetLoginCover);
     document.addEventListener('keydown', ev => {
       if($('#onboard').hidden) return;
       if(ev.key === 'Escape'){ ev.preventDefault(); closeOnboard(true); }
@@ -5995,10 +6246,7 @@ function liveWire(){
     toast('已按线路长度填写；继续画线会同步更新');
   });
   $('#runCheck').addEventListener('click', () => { refreshModelPreview(); scheduleSplitsPreview(); refreshChecks(); toast('已重新检查'); });
-  ['#submitRun', '#previewRun'].forEach(sel => {
-    const el = $(sel);
-    if(el) el.addEventListener('click', submitRun);
-  });
+  if($('#submitRun')) $('#submitRun').addEventListener('click', submitRun);
   $('#splitsToggle').addEventListener('click', () => {
     setSplitsManual(!splitsManual);
     if(splitsManual) toast('已进入手动分段；改数字或点 ± 调整');
@@ -6045,7 +6293,7 @@ function liveWire(){
       splitRows[i].seconds = next;
       applySplitsToPace();
     });
-    $('#splitsReset').addEventListener('click', () => {
+    if($('#splitsReset')) $('#splitsReset').addEventListener('click', () => {
       setSplitsManual(false);
       toast('已恢复自动分配');
     });
@@ -6167,6 +6415,7 @@ function liveWire(){
 initRunDate();
 liveWire();
 loadAppVersion();
+loadLoginCover();
 setTimeout(() => checkUpdate({silent: true}), 1500);
 updateRunDateLabel();
 renderLog();
@@ -6174,6 +6423,35 @@ loadRoutes();
 go(PAGES.includes(startPage) ? startPage : 'overview');
 refreshDateHeader();
 bootAuth();
+
+/* splash.js dispatches this after removing the splash.  Release the queued
+   boot toasts (the window is usable now) and hand focus to the login form if
+   it is the visible surface. */
+document.addEventListener('hxp:boot-done', () => {
+  flushBootToasts();
+  if(LOGIN.visible && !LOGIN.busy){
+    const u = $('#loginUser');
+    if(u) u.focus();
+  }
+});
+
+/* The onboarding already traps Tab itself; the preview, post-submit and
+   update dialogs need the same treatment so Tab cannot reach the workbench
+   behind them. */
+document.addEventListener('keydown', ev => {
+  if(ev.key !== 'Tab') return;
+  for(const [dlgSel, cardSel] of [
+    ['#dataPreview', '.data-preview-card'],
+    ['#postSubmit', '.post-card'],
+    ['#updateDlg', '.onboard-card']
+  ]){
+    const dlg = $(dlgSel);
+    if(!dlg || dlg.hidden) continue;
+    const card = dlg.querySelector(cardSel);
+    if(card) trapTabIn(card, ev);
+    return;
+  }
+});
 
 // Local file status only; this does not probe the real server.  It keeps the
 // account card in sync when the background keeper auto-relogins.

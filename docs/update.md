@@ -35,14 +35,14 @@ python packaging\make_latest.py --dist dist --out ..\github-release\latest.json
 所以不会出现「版本号对了、哈希是旧的」。安装包不存在时只写 zip，并在 stderr
 提示，不会伪造一个下载项。
 
-回滚资产需要自己的下载前缀：`--base-url` 是 v0.1.4 时，把 v0.1.3 的文件名拼
-上去会得到 `.../download/v0.1.4/haoxiangpao_v0.1.3_win64.zip`，是 404。显式
+回滚资产需要自己的下载前缀：`--base-url` 是 v0.1.5 时，把 v0.1.4 的文件名拼
+上去会得到 `.../download/v0.1.5/haoxiangpao_v0.1.4_win64.zip`，是 404。显式
 给回滚前缀（镜像同理）：
 
 ```powershell
-python packaging\make_latest.py --dist dist --rollback-version 0.1.3 `
-  --base-url https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v0.1.4 `
-  --rollback-base-url https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v0.1.3
+python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
+  --base-url https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v0.1.5 `
+  --rollback-base-url https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v0.1.4
 ```
 
 `--rollback-base-url` 省略时沿用 `--base-url`；`--rollback-mirror-base-url`
@@ -56,41 +56,41 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.3 `
   "app": "haoxiangpao",
   "name": "好想跑",
   "channel": "stable",
-  "version": "0.1.3",
-  "min_version": "0.1.1",
+  "version": "0.1.5",
+  "min_version": "0.1.4",
   "released_at": "2026-10-25T12:34:56+08:00",
   "notes": ["..."],
   "assets": {
     "windows-x64": {
-      "file": "haoxiangpao_v0.1.3_win64.zip",
-      "url": "haoxiangpao_v0.1.3_win64.zip",
+      "file": "haoxiangpao_v0.1.5_win64.zip",
+      "url": "haoxiangpao_v0.1.5_win64.zip",
       "size": 78081761,
       "sha256": "…64 位十六进制…",
       "format": "zip",
       "layout": "onedir",
       "entry": "好想跑.exe",
-      "version": "0.1.3"
+      "version": "0.1.5"
     },
     "windows-x64-setup": {
-      "file": "haoxiangpao_v0.1.3_win64_setup.exe",
-      "url": "https://gh.llkk.cc/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
+      "file": "haoxiangpao_v0.1.5_win64_setup.exe",
+      "url": "https://gh.llkk.cc/https://github.com/…/haoxiangpao_v0.1.5_win64_setup.exe",
       "urls": [
-        "https://gh.llkk.cc/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
-        "https://gh-proxy.com/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
-        "https://ghfast.top/https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe",
-        "https://github.com/…/haoxiangpao_v0.1.3_win64_setup.exe"
+        "https://gh.llkk.cc/https://github.com/…/haoxiangpao_v0.1.5_win64_setup.exe",
+        "https://gh-proxy.com/https://github.com/…/haoxiangpao_v0.1.5_win64_setup.exe",
+        "https://ghfast.top/https://github.com/…/haoxiangpao_v0.1.5_win64_setup.exe",
+        "https://github.com/…/haoxiangpao_v0.1.5_win64_setup.exe"
       ],
       "size": 51234567,
       "sha256": "…64 位十六进制…",
       "format": "installer",
       "layout": "installer",
       "entry": "好想跑.exe",
-      "version": "0.1.3"
+      "version": "0.1.5"
     }
   },
   "rollback": {
-    "version": "0.1.2",
-    "file": "haoxiangpao_v0.1.2_win64.zip",
+    "version": "0.1.4",
+    "file": "haoxiangpao_v0.1.4_win64.zip",
     "url": "…",
     "size": 78079627,
     "sha256": "…",
@@ -106,7 +106,7 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.3 `
 |---|---|
 | `schema` | 清单格式版本；不兼容变更时加一 |
 | `version` | 最新版本，客户端只做**版本比较**，不猜文件名 |
-| `min_version` | 支持从哪个版本直接升级；更老的版本应先升级到 `0.1.1` |
+| `min_version` | 支持从哪个版本直接升级；更老的版本应先升级到 `0.1.4` |
 | `released_at` | 北京时间 ISO-8601，仅展示/排序 |
 | `notes` | 更新说明，客户端可直接显示 |
 | `assets.windows-x64` | 便携版资产，**必须是 zip** |

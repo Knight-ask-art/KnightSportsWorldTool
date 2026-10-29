@@ -401,12 +401,12 @@
   right: clamp(20px, 3vw, 46px);
   top: clamp(20px, 3vh, 38px);
   z-index: 10;
-  padding: 6px 2px;
+  padding: 7px 4px;
   border: 0;
   background: transparent;
-  font: 9px/1 var(--mono);
-  letter-spacing: .24em;
-  color: rgba(36, 35, 31, .48);
+  font: 10px/1 var(--mono);
+  letter-spacing: .22em;
+  color: rgba(36, 35, 31, .64);
   opacity: 0;
   cursor: pointer;
   animation: boot-fade-in .4s ease .8s forwards;

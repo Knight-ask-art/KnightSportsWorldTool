@@ -1152,7 +1152,7 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
 .legend-pt{width:11px;height:11px;border:1.3px solid var(--ink-blue);border-radius:50% 45% 55% 48%;background:var(--paper-2);flex:none}
 .legend-pt.must{border-color:var(--stamp)}
 .map-toast{
-  position:absolute;z-index:600;left:50%;bottom:26px;transform:translate(-50%,10px);
+  position:fixed;z-index:1100;left:50%;bottom:26px;transform:translate(-50%,10px);
   background:var(--ink);color:var(--paper-2);font-size:11.5px;padding:7px 13px;
   border-radius:5px;opacity:0;pointer-events:none;transition:.2s;max-width:70%;
   box-shadow:0 6px 18px -10px rgba(0,0,0,.6);
@@ -1250,6 +1250,15 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .login-gate::before{
   content:"";position:absolute;inset:0;pointer-events:none;
   background:linear-gradient(90deg,rgba(9,12,18,.16) 0%,rgba(9,12,18,.04) 40%,rgba(9,12,18,.3) 100%);
+}
+/* A near-white custom cover made the cream card blend into the background;
+   a stronger scrim plus a tighter shadow keeps the edge readable. */
+.login-gate.has-custom-cover::before{
+  background:linear-gradient(90deg,rgba(9,12,18,.38) 0%,rgba(9,12,18,.12) 42%,rgba(9,12,18,.48) 100%);
+}
+.login-gate.has-custom-cover .login-card{
+  border-color:rgba(36,35,31,.28);
+  box-shadow:0 26px 70px rgba(6,10,16,.52),0 0 0 1px rgba(6,10,16,.12);
 }
 .login-gate.leaving{opacity:0;visibility:hidden;pointer-events:none}
 .login-gate::-webkit-scrollbar{width:8px}
@@ -1566,11 +1575,19 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .run-section-note{font:9.5px/1.45 var(--sans);color:var(--faint);margin:2px 0 6px}
 
 /* ---------- first-run guide ---------- */
-.onboard{position:fixed;inset:0;z-index:300;display:grid;place-items:center;padding:20px}
+/* Below the boot splash (z 1000): the guide is opened by bootAuth right after
+   a saved session is restored, which can be while the splash is still playing.
+   Keep it underneath and let openOnboard() wait for the splash to be removed,
+   otherwise its card and veil cover the whole intro. */
+.onboard{
+  position:fixed;inset:0;z-index:300;display:flex;align-items:center;
+  justify-content:center;padding:20px;overflow:auto;
+}
 .onboard[hidden]{display:none}
 .onboard-veil{position:absolute;inset:0;background:rgba(36,35,31,.42);backdrop-filter:blur(2px)}
 .onboard-card{
   position:relative;width:min(560px,100%);max-height:calc(100vh - 40px);overflow:auto;
+  margin:auto;
   background:var(--paper-2);border:1.5px solid var(--ink);
   border-radius:var(--sketch-md);box-shadow:8px 10px 0 rgba(36,35,31,.14);
   padding:20px 22px 16px;
@@ -1617,10 +1634,14 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 }
 
 /* ---------- official-style data preview ---------- */
-.data-preview,.post-submit{position:fixed;inset:0;z-index:360;display:grid;place-items:center;padding:18px}
+.data-preview,.post-submit{
+  position:fixed;inset:0;z-index:1000;display:flex;
+  align-items:center;justify-content:center;padding:18px;overflow:auto;
+}
 .data-preview[hidden],.post-submit[hidden]{display:none}
 .data-preview-card{
   position:relative;width:min(980px,100%);max-height:calc(100vh - 36px);overflow:auto;
+  margin:auto;
   background:var(--paper-2);border:1px solid rgba(36,35,31,.22);
   border-radius:18px;box-shadow:0 30px 90px rgba(9,12,18,.42);
   padding:20px 22px 16px;
@@ -1663,15 +1684,20 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .dp-table{display:grid;grid-template-columns:44px repeat(4,minmax(0,1fr));font:10px/1.45 var(--mono)}
 .dp-table .dp-th{font:9px/1.4 var(--sans);color:var(--faint);padding:5px 7px;letter-spacing:.03em}
 .dp-table .dp-cell{padding:4px 7px;border-top:1px solid #F0E8D6;color:var(--pencil);white-space:nowrap}
-.dp-table .dp-cell.num{font-family:var(--mono);color:var(--ink)}
+.dp-table .dp-cell.dp-num{font-family:var(--mono);color:var(--ink)}
 .dp-table .dp-row{display:contents}
 .dp-table .dp-row.best .dp-cell{background:rgba(168,207,50,.14);color:var(--ink);font-weight:600}
-.dp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding-top:10px;border-top:1px dashed #E4D9C3;flex-wrap:wrap}
+.dp-foot{
+  position:sticky;bottom:0;z-index:2;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin:12px -22px -16px;padding:10px 22px 16px;
+  background:var(--paper-2);border-top:1px dashed #E4D9C3;flex-wrap:wrap;
+}
 .dp-actions{display:flex;gap:7px;margin-left:auto}
 
 /* ---------- post-submit route cleanup ---------- */
 .post-card{
-  position:relative;width:min(540px,100%);
+  position:relative;width:min(540px,100%);margin:auto;
   background:var(--paper-2);border:1px solid rgba(36,35,31,.22);border-radius:18px;
   box-shadow:0 30px 90px rgba(9,12,18,.42);padding:20px 22px 18px;
 }
@@ -1690,10 +1716,24 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 .update-meta{display:flex;justify-content:space-between;gap:8px;margin-top:5px;
   font:9.5px/1.4 var(--mono);color:var(--faint)}
 
+/* ---------- settings: custom login cover ---------- */
+.cover-row{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.cover-preview{
+  width:min(320px,100%);aspect-ratio:16/9;flex:none;
+  border:1px solid #E4D9C3;border-radius:11px;overflow:hidden;
+  background:#EFE9D8;box-shadow:0 1px 0 rgba(36,35,31,.04);
+}
+.cover-preview img{width:100%;height:100%;object-fit:cover;display:block}
+.cover-actions{display:flex;flex-direction:column;align-items:flex-start;gap:7px;min-width:0}
+.cover-actions .btn{min-width:104px}
+.cover-actions .btn:disabled{opacity:.42;cursor:not-allowed}
+.cover-actions .hint{font-size:9.5px;line-height:1.5}
+
 @media (max-width:760px){
   .dp-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .dp-grid{grid-template-columns:1fr}
   .data-preview-card{padding:16px 14px 13px}
+  .dp-foot{margin:12px -14px -13px;padding:10px 14px 13px}
   .dp-table{grid-template-columns:38px repeat(4,minmax(74px,1fr));overflow-x:auto}
   .dp-table .dp-cell,.dp-table .dp-th{padding-left:5px;padding-right:5px}
   .post-card{padding:17px 16px 15px}

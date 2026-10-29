@@ -12,6 +12,8 @@ FRONTEND = ROOT / 'frontend'
 HTML = (FRONTEND / 'index.html').read_text(encoding='utf-8')
 CSS = (FRONTEND / 'css' / 'splash.css').read_text(encoding='utf-8')
 JS = (FRONTEND / 'js' / 'splash.js').read_text(encoding='utf-8')
+APP_CSS = (FRONTEND / 'css' / 'app.css').read_text(encoding='utf-8')
+APP_JS = (FRONTEND / 'js' / 'app.js').read_text(encoding='utf-8')
 
 
 def _splash_block():
@@ -53,3 +55,30 @@ def test_splash_respects_reduced_motion_and_has_a_failsafe():
 def test_splash_uses_the_packaged_logo():
     assert 'href="logo.png"' in HTML
     assert (FRONTEND / 'logo.png').is_file()
+
+
+def test_first_run_guide_waits_below_the_splash():
+    """A saved session restores while the splash plays; the guide must wait."""
+    def block(css, selector):
+        match = re.search(re.escape(selector) + r'\s*\{([^}]*)\}', css)
+        assert match, selector
+        return match.group(1)
+
+    def z_index(css, selector):
+        match = re.search(r'z-index:\s*(-?\d+)', block(css, selector))
+        assert match, selector
+        return int(match.group(1))
+
+    assert z_index(APP_CSS, '.onboard') < z_index(CSS, '.boot')
+    start = APP_JS.index('function openOnboard(')
+    body = APP_JS[start:APP_JS.index('function closeOnboard(', start)]
+    assert '#bootSplash' in body
+    assert 'onboardWait' in body
+
+
+def test_splash_owns_focus_and_releases_the_login_gate():
+    """The gate is inert while the splash is up, and the splash traps Tab."""
+    assert 'loginGate.inert = true' in JS
+    assert 'loginGate.inert = false' in JS
+    assert 'hxp:boot-done' in JS
+    assert "event.key === 'Tab'" in JS

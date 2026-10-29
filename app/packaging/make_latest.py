@@ -23,12 +23,26 @@ from urllib.parse import quote
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIST = APP_ROOT / 'dist'
 DEFAULT_CHANNEL = 'stable'
-DEFAULT_MIN_VERSION = '0.1.1'
+#: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
+#: single source of truth, this only keeps standalone runs usable.
+DEFAULT_VERSION = '0.1.5'
+DEFAULT_MIN_VERSION = '0.1.4'
+DEFAULT_ROLLBACK_VERSION = '0.1.4'
 DEFAULT_ENTRY = '好想跑.exe'
 
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.1.5': [
+        '提交前按官方风格预览数据：配速/步频/步幅/海拔 + 每公里表',
+        '每公里配速强制有差异，不再出现相同配速',
+        '进入跑步页自动刷新校区点位',
+        '每公里用时/海拔默认自动，可手动微调',
+        '提交成功后询问：存路线库并清空 / 直接清空 / 暂时保留',
+        '更新下载支持进度、断点续传、取消，失败保留旧版本',
+        '设置页可自定义登录页横图封面',
+        '新 Logo；字体 ZCOOL XiaoWei / Patrick Hand / JetBrains Mono；Bootstrap Icons；侧边栏与登录页改版',
+    ],
     '0.1.4': [
         '每公里用时独立随机，参数面板可直接修改；合计严格等于预计时长',
         '10 秒窗口配速按真实记录重标（CV 0.19–0.52，随配速变化），采样间隔改为 2–4 秒',
@@ -66,10 +80,17 @@ RELEASE_NOTES = {
 
 def read_version(app_root: Path = APP_ROOT) -> str:
     path = app_root / 'replica' / 'build_info.py'
-    text = path.read_text(encoding='utf-8')
+    try:
+        text = path.read_text(encoding='utf-8')
+    except OSError:
+        print(f'warning: cannot read {path}; falling back to '
+              f'{DEFAULT_VERSION}', file=sys.stderr)
+        return DEFAULT_VERSION
     match = re.search(r"^VERSION\s*=\s*'([^']+)'", text, re.M)
     if not match:
-        raise SystemExit(f'cannot read VERSION from {path}')
+        print(f'warning: cannot read VERSION from {path}; '
+              f'falling back to {DEFAULT_VERSION}', file=sys.stderr)
+        return DEFAULT_VERSION
     return match.group(1)
 
 
@@ -230,13 +251,16 @@ def main(argv=None) -> int:
                     metavar='URL',
                     help='extra download base (repeatable); written to urls[]')
     ap.add_argument('--channel', default=DEFAULT_CHANNEL)
-    ap.add_argument('--min-version', default=DEFAULT_MIN_VERSION)
+    ap.add_argument('--min-version', default=DEFAULT_MIN_VERSION,
+                    help=f'oldest version that may upgrade directly '
+                         f'(default: {DEFAULT_MIN_VERSION})')
     ap.add_argument('--released-at', default=None,
                     help='ISO-8601; defaults to now in Beijing time')
     ap.add_argument('--notes-file', default=None,
                     help='JSON array of release notes; defaults to built-in notes')
-    ap.add_argument('--rollback-version', default='',
-                    help='include this older zip as rollback; empty disables')
+    ap.add_argument('--rollback-version', default=DEFAULT_ROLLBACK_VERSION,
+                    help='include this older zip as rollback; empty disables '
+                         f'(default: {DEFAULT_ROLLBACK_VERSION})')
     ap.add_argument('--rollback-base-url', default='',
                     help='download base for the rollback zip; defaults to --base-url')
     ap.add_argument('--rollback-mirror-base-url', action='append', default=[],
@@ -265,6 +289,12 @@ def main(argv=None) -> int:
 
     rollback_version = (args.rollback_version or '').strip() or None
     rollback_zip = find_rollback(dist, rollback_version)
+    if (rollback_version and rollback_zip and args.base_url
+            and not (args.rollback_base_url or '').strip()):
+        # The rollback zip lives in the *previous* GitHub release, not this
+        # one.  Reusing the new base silently writes a 404 into the manifest.
+        print('warning: --rollback-base-url is empty; the rollback URL will '
+              'point at the current release and may 404', file=sys.stderr)
     manifest = build_manifest(
         version, zip_path,
         base_url=args.base_url,

@@ -68,10 +68,22 @@
     if(!vals.length){ empty(el, opts.empty); return; }
     let lo=Math.min(...vals), hi=Math.max(...vals);
     if(opts.invert){
-      // Pace: clip the single 400 min/km stop so the rest of the run is readable.
-      const p5=pct(vals,0.03), p95=pct(vals,0.97);
-      lo=Math.max(0, Math.min(lo, p5 == null ? lo : p5*0.9));
-      hi=Math.max(hi, p95 == null ? hi : p95*1.1);
+      // Pace: a single 10 s stop can read 400 min/km and flatten the rest of
+      // the run.  Frame the chart on a trimmed band and clip the few extremes
+      // to the border, the way the official chart does.  With fewer than ~60
+      // windows the 98th percentile *is* the maximum, so short runs need a
+      // wider trim or one stop still owns the whole axis.
+      const q = vals.length < 60 ? 0.10 : 0.02;
+      const median = pct(vals, 0.5);
+      const pLo=pct(vals, q);
+      let pHi=pct(vals, 1 - q);
+      // Two stops in a 15-window preview are already 13% of the sample, so
+      // the percentile alone can still let one of them own the axis.  Cap the
+      // slow end at 1.5x the median; the stop is clipped to the border and the
+      // normal pace band stays readable.
+      if(median != null && pHi != null) pHi = Math.min(pHi, median * 1.5);
+      lo = Math.max(0.5, (pLo == null ? lo : pLo) * 0.92);
+      hi = Math.max(lo + 1, (pHi == null ? hi : pHi) * 1.08);
     }else{
       lo=Math.min(0, lo);
       hi=hi + (hi-lo)*0.06;
@@ -112,7 +124,9 @@
     series=baseSeries(series);
     opts=opts||{};
     const key=opts.key||'cadence';
-    const vals=series.map(s => s[key]).filter(v => v != null && isFinite(+v));
+    const clamp = opts.clamp || null;
+    const fix = v => clamp ? Math.max(clamp[0], Math.min(clamp[1], +v)) : +v;
+    const vals=series.map(s => s[key]).filter(v => v != null && isFinite(+v)).map(fix);
     if(!vals.length){ empty(el, opts.empty); return; }
     let lo=0, hi=Math.max(...vals);
     if(opts.band && opts.band[1] != null) hi=Math.max(hi, +opts.band[1]);
@@ -134,8 +148,9 @@
     }
     let bars='';
     series.forEach((s,i) => {
-      const v=s[key];
-      if(v == null || !isFinite(+v)) return;
+      const raw=s[key];
+      if(raw == null || !isFinite(+raw)) return;
+      const v=fix(raw);
       const x=L + step*i + (step-bw)/2;
       const y=yy(Math.max(lo,Math.min(hi,+v)));
       const bad=band && band[0] != null && +v < +band[0];

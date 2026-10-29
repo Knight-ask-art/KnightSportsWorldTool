@@ -52,7 +52,37 @@ API: ReplicaApi | None = None
 
 MIME = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript',
         '.css': 'text/css', '.json': 'application/json',
-        '.png': 'image/png', '.svg': 'image/svg+xml'}
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp', '.ico': 'image/x-icon', '.svg': 'image/svg+xml',
+        # Fonts used to be octet-stream; browsers still loaded them, but a
+        # correct type keeps preload/nosniff behaviour predictable.
+        '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf'}
+
+
+def login_cover_css(store_dir: str | None = None) -> str:
+    """First-paint CSS for the operator's custom login cover.
+
+    index.html links this before the body, so a custom cover is already in
+    place when the login gate is first painted.  Without it the packaged
+    login-bg.jpg shows for a frame under ``?boot=0`` / reduced motion.
+    """
+    store = store_dir or STORE_DIR
+    img = os.path.join(store, 'login-cover.img')
+    if not os.path.isfile(img):
+        return '/* no custom login cover */\n'
+    meta = {}
+    try:
+        with open(os.path.join(store, 'login-cover.json'),
+                  encoding='utf-8') as fh:
+            loaded = json.load(fh)
+        if isinstance(loaded, dict):
+            meta = loaded
+    except (OSError, ValueError):
+        pass
+    stamp = str(meta.get('updated_at') or int(os.path.getmtime(img)))
+    if not stamp.isdigit():
+        stamp = str(int(os.path.getmtime(img)))
+    return '#loginGate{background-image:url("/login-cover?t=%s")}\n' % stamp
 
 #: The bridge is loopback-only.  A Host/Origin from any other name is a
 #: DNS-rebinding attempt, even if the socket happened to accept it.
@@ -157,6 +187,10 @@ class Handler(BaseHTTPRequestHandler):
             path = '/index.html'
         if path.startswith('/bridge/'):
             return self._json({'code': 500, 'message': 'use POST', 'data': None})
+        if path == '/login-cover':
+            return self._serve_login_cover()
+        if path == '/login-cover.css':
+            return self._serve_login_cover_css()
         # realpath + separator check: `str.startswith(FRONTEND_DIR)` also
         # accepts a sibling like `<...>/frontendX/secret`.
         full = static_file(path)
@@ -167,6 +201,35 @@ class Handler(BaseHTTPRequestHandler):
             data = f.read()
         ext = os.path.splitext(full)[1].lower()
         self._send(data, MIME.get(ext, 'application/octet-stream'))
+
+    def _serve_login_cover(self):
+        """Serve the operator's custom login cover from ``data/``.
+
+        It deliberately lives outside ``frontend/``: that directory is replaced
+        wholesale by the updater, while ``data/`` survives an upgrade.
+        """
+        store = getattr(API, 'store_dir', None) or STORE_DIR
+        img = os.path.join(store, 'login-cover.img')
+        if not os.path.isfile(img):
+            return self._json({'code': 404, 'message': 'no custom cover',
+                               'data': None}, 404)
+        meta = {}
+        try:
+            with open(os.path.join(store, 'login-cover.json'),
+                      encoding='utf-8') as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                meta = loaded
+        except (OSError, ValueError):
+            pass
+        with open(img, 'rb') as fh:
+            data = fh.read()
+        self._send(data, str(meta.get('mime') or 'image/jpeg'))
+
+    def _serve_login_cover_css(self):
+        store = getattr(API, 'store_dir', None) or STORE_DIR
+        self._send(login_cover_css(store).encode('utf-8'),
+                   'text/css; charset=utf-8')
 
     def do_POST(self):  # noqa: N802
         path = urlparse(self.path).path
@@ -209,7 +272,8 @@ class Handler(BaseHTTPRequestHandler):
         if n <= 0:
             return self._json({'code': 400, 'message': 'empty body',
                                'data': None}, 400)
-        if n > (MAX_TEMPLATE_BODY if name == 'real_altitude_template'
+        if n > (MAX_TEMPLATE_BODY if name in ('real_altitude_template',
+                                              'real_set_login_cover')
                 else MAX_BODY):
             return self._json({'code': 413, 'message': 'body too large',
                                'data': None}, 413)
