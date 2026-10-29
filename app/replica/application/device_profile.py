@@ -95,8 +95,12 @@ ANDROID_MODELS = (
 #: pixels and logical pixels stay in one row so the fingerprint cannot pair an
 #: iPhone 15 with an iPhone 8 resolution.  ``cpuModel`` uses arm64e rather than
 #: the reference simulator's x86_64: an iPhone running iOS 18 with x86_64 is an
-#: obvious emulator signal.  The submit path for iOS is still unverified;
-#: ``JHP_IOS_CHANCE`` keeps the exposure controllable (default 30%).
+#: obvious emulator signal.  ``physicPixel`` is always an exact 2x/3x multiple
+#: of ``logicPixel``, which is the pair the native client reports.
+#:
+#: The iOS chain (login -> policy -> points -> submit -> OBS) is verified on a
+#: real device (rrid 1344757460, 2026-10-25); ``JHP_IOS_CHANCE`` is a
+#: distribution knob, not an exposure limit.
 IOS_MODELS = (
     ('iPhone 13', ('16.7.10', '17.7.2', '18.1'), '1170x2532', '390x844'),
     ('iPhone 14', ('16.7.10', '17.7.2', '18.1'), '1170x2532', '390x844'),
@@ -298,8 +302,8 @@ def validate_profile(profile) -> dict:
 def _ios_chance() -> int:
     """iOS share for new random profiles (0-100, default 30).
 
-    iOS submit is not yet verified end-to-end; the default keeps the exposure
-    bounded.  Set ``JHP_IOS_CHANCE=50`` for an even mix, ``0`` to disable, or
+    Both platforms are verified end-to-end, so this only decides the mix.  Set
+    ``JHP_IOS_CHANCE=50`` for an even split, ``0`` to always use Android, or
     ``100`` to force iOS on new installs.
     """
     raw = os.environ.get('JHP_IOS_CHANCE')
@@ -580,7 +584,53 @@ def public_view(profile: dict, session: dict | None = None) -> dict:
         'device_os': device['osVersion'],
         'device_source': device['source'],
         'device_rotated_at': device.get('rotated_at'),
+        # Transparency for the account page: the UA and the pixel scale are
+        # what actually go on the wire, and the install age is a field the
+        # server can see on every request.
+        'device_ua': _wire_ua(device),
+        'device_scale': _pixel_scale(device.get('physicPixel'),
+                                     device.get('logicPixel'),
+                                     device.get('platform')),
+        'device_installed_days': _install_age_days(device.get('appInstallTime')),
     }
+
+
+def _wire_ua(device: dict) -> str:
+    try:
+        from ..transport.realclient import user_agent
+        return user_agent(platform=device.get('platform'),
+                          os_version=str(device.get('osVersion') or ''))
+    except Exception:  # noqa: BLE001 - display only, never block the session
+        return ''
+
+
+def _pixel_scale(physic, logic, platform='ios'):
+    """physicPixel / logicPixel when it is a whole 2x/3x, else 0.
+
+    Only iOS reports a scale factor: Android's logicPixel is a dp size, not a
+    divisor of the panel resolution, so 1170/390 style maths does not apply.
+    """
+    if str(platform or '').lower() != 'ios':
+        return 0
+    try:
+        lw = int(str(logic).split('x')[0])
+        pw = int(str(physic).split('x')[0])
+        ratio = pw // lw if lw > 0 and pw % lw == 0 else 0
+        if ratio in (2, 3):
+            return ratio
+    except (TypeError, ValueError, IndexError, ZeroDivisionError):
+        pass
+    return 0
+
+
+def _install_age_days(install) -> float:
+    try:
+        value = int(str(install))
+    except (TypeError, ValueError):
+        return 0.0
+    if value <= 0:
+        return 0.0
+    return round(max(0.0, (_now_ms() - value) / 86_400_000.0), 1)
 
 
 def repair_pixels(store_dir: str) -> tuple[dict, str | None, list[str]]:

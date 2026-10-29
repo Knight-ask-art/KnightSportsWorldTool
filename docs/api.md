@@ -103,8 +103,10 @@ checkGeeUse
 ```
 
 - 设备指纹每个 `data` 目录生成一次，保存在 `data/device_profile.json`；登录和提交
-  共用这一份。新安装从 Android / iOS 随机池抽取（`JHP_IOS_CHANCE` 默认 30）；iOS
-  提交链尚未真实验证。旧数据升级时冻结原来的提交指纹（`source=legacy-*`），要更换
+  共用这一份。新安装从 Android / iOS 随机池抽取（`JHP_IOS_CHANCE` 默认 30）；
+  iOS 链路已真机验证（2026-10-25，rrid `1344757460`，`status=0` / `isCheat=0`），
+  登录、策略、点位、提交、OBS 全链同平台，不在提交时改回 Android 头。
+  旧数据升级时冻结原来的提交指纹（`source=legacy-*`），要更换
   必须显式 rotate，旧指纹会备份到 `device_profile.backup-*.json`。CLI 的
   `--device-id` 只对本次运行做手动覆盖，并记录到 `data/devices/<uid>.json` 供审计；
   下次不自动套用。
@@ -141,6 +143,9 @@ POST api/v560/get/1/distance/2500
   （`.../distance/2000`）；写死 `1` 会让服务端只返回最小/固定点位集。
 - **UI 按当前「目标距离」查询**（`distance_m`），改距离后 900 ms 防抖重拉；
   缓存键包含距离，不会拿 2 km 的点位去跑 4 km。
+- 点位响应里带 `hit_radius_m`（当前 `25.0`，来自 `domain.routes.HIT_RADIUS_M`）。
+  官方 `RunSeqLocationManager` 的判定是 `distance <= 25.0`，前端检查表只读这个值，
+  不再自己写 40 m。
 - **提交时仍按目标距离查询**，并把路线吸附到目标距离对应的缺失点位；服务器确实
   会按距离返回不同点位（实测 2.5 km 与 4.1 km 相差一个点）。
 - 限流码 `10603`：命中后优先用 300s 缓存；没有缓存就报错，不硬刷。
@@ -178,9 +183,11 @@ POST api/v1/getGeoFenceForRun   {"geoFenceUpdateTime": 0}
 > 按“未知”处理。`runModePolicy` 只采用一个完整回复，不把两个 `runMode` 的
 > 跑区/围栏拼接。
 >
-> 围栏校验只信 `runModePolicy` 的 `geoFence`；没有 `geoFence` 段也按无围栏
-> 处理，不再回退 `getGeoFenceForRun`（官方 `isInArea` 不读那份
-> `GeoFenceBean2`）。`runModePolicy` 本身取不到时停止提交。
+> 围栏优先信 `runModePolicy` 的 `geoFence`。它明确返回 `{geoFences: []}` 时
+> 视为无围栏；返回 `null`/缺段时不直接判“无围栏”，而是回退一次
+> `getGeoFenceForRun`（实测冻结账号的 policy 就是这样，但该校围栏仍然存在）。
+> 回退结果的 `source` 为 `legacy-fallback`。两者都取不到才按无围栏处理；
+> `runModePolicy` 本身请求失败时停止提交。
 
 这个校区**只填 `glat/glon`**，不填 BD 坐标。`points.fetch_fence()` 负责兼容并算出中心点。
 

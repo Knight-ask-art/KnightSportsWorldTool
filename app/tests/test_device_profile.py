@@ -430,6 +430,18 @@ def test_public_view_reports_platform():
     assert view['device_name'] == ios['deviceName']
 
 
+def test_public_view_exposes_the_wire_identity():
+    # The account page shows what the server actually sees.  If these drift
+    # from realclient.user_agent(), the UI would be lying about the wire.
+    for platform, prefix in (('android', 'okhttp/'), ('ios', 'SWCampus/')):
+        profile = DP.generate_profile(platform=platform)
+        view = DP.public_view(profile)
+        assert view['device_ua'].startswith(prefix)
+        # Android logicPixel is dp, not a divisor; only iOS has a scale factor.
+        assert view['device_scale'] == (3 if platform == 'ios' else 0)
+        assert view['device_installed_days'] > 0
+
+
 def test_repair_pixels_keeps_device_id_and_backs_up(tmp_path):
     profile = DP.generate_profile(platform='android')
     profile['physicPixel'] = '1080x2400'

@@ -5,6 +5,7 @@ make sure a future edit cannot silently remove the gate, re-introduce a
 blocking external font request, or break the external CSS/JS links.
 """
 import re
+import struct
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,9 +115,45 @@ def test_run_area_selector_matches_the_official_dialog():
     assert '没有围栏' in JS
 
 
+def test_windows_icon_ships_every_size():
+    icon = (ROOT / 'packaging' / 'assets' / 'logo.ico').read_bytes()
+    reserved, kind, count = struct.unpack_from('<HHH', icon, 0)
+    assert reserved == 0 and kind == 1
+    sizes = set()
+    for i in range(count):
+        offset = 6 + i * 16
+        width = icon[offset] or 256
+        height = icon[offset + 1] or 256
+        sizes.add((width, height))
+    # A 16-only ICO gets stretched by the taskbar/Explorer and looks blurry.
+    assert {(16, 16), (32, 32), (48, 48), (256, 256)} <= sizes
+
+
+def test_window_icon_comes_from_a_high_resolution_file():
+    assert (ROOT / 'frontend' / 'app.ico').is_file()
+    assert "webview.start(icon=" in (ROOT / 'app.py').read_text(encoding='utf-8')
+
+
 def test_freeze_and_face_warnings_are_wired():
     assert 'LIVE.freezeSeconds' in SOURCE
     assert 'LIVE.faceRequired' in SOURCE
+
+
+def test_checkpoint_radius_comes_from_the_backend():
+    # The submit rule is 25 m (RunSeqLocationManager).  The checklist used a
+    # hard-coded 40 m, so it could pass a route the server scores as missed.
+    assert 'hit_radius_m' in JS
+    assert 'LIVE.hitRadiusM' in JS
+    assert 'function hitRadiusM' in JS
+    assert '在 40m 内' not in JS
+    assert '< 40)' not in JS
+
+
+def test_submit_checklist_covers_freeze_face_and_distance():
+    for label in ('跑步冻结期', '人脸抽检', '距离达标'):
+        assert label in JS, label
+    assert 'LIVE.freezeSeconds > 0' in JS
+    assert 'min_km' in JS and 'max_km' in JS
     assert '账号处于跑步冻结期' in SOURCE
     assert '学校启用了人脸抽检' in SOURCE
     assert 'sequential: !!LIVE.sequential' in SOURCE
@@ -214,7 +251,10 @@ def test_device_profile_is_single_source_and_visible():
     assert 'device_os' in JS
     assert 'device_platform' in JS
     assert "s.device_platform === 'ios'" in JS
-    assert 'iOS 提交链尚未真实验证' in JS
+    # The iOS chain was verified on a real device (rrid 1344757460); the old
+    # "unverified" tooltip contradicts docs/handoff.md.
+    assert 'iOS 链路已真机验证' in JS
+    assert '提交链尚未真实验证' not in JS
     assert 'function deviceLabelText' in JS
     assert "deviceLabelText(s)" in JS
     assert "Android ' + s.device_os" not in JS

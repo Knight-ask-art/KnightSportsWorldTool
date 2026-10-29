@@ -162,24 +162,40 @@ def user_agent(acct: Account | None = None,
     prove that).  Without it urllib advertises ``Python-urllib/x.y``, which is
     a louder signal than any device field.
 
-    iOS's Darwin major must match the advertised iOS major; an iOS 16 profile
-    sending an iOS 18 Darwin string is another synthetic pair.
+    Android: the official 7.4.0 dex contains no custom ``SWCampus`` UA at all
+    (only okhttp defaults), so the honest wire value is OkHttp's default.
+    Sources: NekoSportsWorldTool ``src/crypto/header.rs`` and
+    czcdr/NekoSportsWorldTool-antiban ``review/ANTI-FLAG-AUDIT.md``.
+
+    iOS: every NSURLSession default UA starts with ``<CFBundleName>/<version>``
+    and then ``(iPhone; iOS <ver>; Scale/<n>)``.  A bare
+    ``CFNetwork/x Darwin/y`` has no app token, so it does not look like any
+    app's UA.  The reference client records
+    ``SWCampus/7.3.40 (iPhone; iOS 18.1; Scale/3.00)``; the version is pinned to
+    ``IOS_APP_VERSION`` so the UA and the signed ``appVersion`` never disagree,
+    and Scale is derived from the profile's own pixel pair.
     """
     name = platform or getattr(acct, 'platform', 'android') or 'android'
     if str(name).lower() == 'ios':
+        from .ios_headers import IOS_APP_VERSION
         version = os_version or getattr(acct, 'osVersion', '') or '18.1'
-        try:
-            major = int(str(version).split('.')[0])
-        except (TypeError, ValueError):
-            major = 18
-        cfnetwork, darwin = {
-            16: ('1408.0.4', '22.5.0'),
-            17: ('1474', '23.0.0'),
-            18: ('1498.700.2', '24.1.0'),
-            26: ('3826.400.72', '25.0.0'),
-        }.get(major, ('1498.700.2', '24.1.0'))
-        return f'CFNetwork/{cfnetwork} Darwin/{darwin}'
+        return (f'SWCampus/{IOS_APP_VERSION} '
+                f'(iPhone; iOS {version}; Scale/{_ios_scale(acct)})')
     return 'okhttp/4.12.0'
+
+
+def _ios_scale(acct) -> str:
+    """2x / 3x from the profile's own physic÷logic pair (default 3.00)."""
+    try:
+        lw = int(str(getattr(acct, 'logicPixel', '')).split('x')[0])
+        pw = int(str(getattr(acct, 'physicPixel', '')).split('x')[0])
+        # Only the real iPhone scales; a 1x/4x pair is a bad profile and must
+        # not be advertised as a device that exists.
+        if lw > 0 and pw > 0 and pw % lw == 0 and (pw // lw) in (2, 3):
+            return '%d.00' % (pw // lw)
+    except (AttributeError, TypeError, ValueError, IndexError):
+        pass
+    return '3.00'
 
 
 def classify(status: int, body: bytes) -> tuple[str, str]:

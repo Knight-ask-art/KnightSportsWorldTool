@@ -1294,7 +1294,7 @@ const startPage = (location.hash || '#overview').slice(1);
 const LIVE = {
   session: null, checked: null, points: [], fence: [], fences: [],
   fenceMissing: false, fenceCount: 0, pointsMissing: false, pointsEmpty: false,
-  fenceError: '', pointsError: '', pointsDistance: 0,
+  fenceError: '', pointsError: '', pointsDistance: 0, hitRadiusM: 25,
   runArea: null, runAreas: [], runAreaChoice: null, runAreaChoiceKey: '',
   sequential: false,
   freezeSeconds: 0, faceRequired: false, faceReason: '',
@@ -2294,7 +2294,7 @@ function renderSession(){
   $('#accDeviceChip').title = s.device_source === 'error'
     ? (s.device_error || '设备指纹读取失败')
     : (s.device_platform === 'ios'
-       ? 'iOS 提交链尚未真实验证；如提交异常，可在高级里切回 Android。'
+       ? 'iOS 链路已真机验证（2026-10-25）；登录、提交和 OBS 共用同一台设备。'
        : '设备指纹在本机生成一次，登录和提交共用；不要频繁更换。');
   $('#accUidChip').textContent = s.uid ? ('uid ' + s.uid) : 'uid —';
   $('#accDisabledChip').hidden = !s.disabled;
@@ -2303,6 +2303,13 @@ function renderSession(){
   $('#accDevice').textContent = logged ? (deviceLabel || '—') : '—';
   $('#accDeviceId').textContent = logged && hasDevice
     ? (s.device_id_masked || '—') : '—';
+  if($('#accDeviceUa')) $('#accDeviceUa').textContent = logged ? (s.device_ua || '—') : '—';
+  if($('#accDeviceScreen')){
+    const bits = [];
+    if(s.device_scale) bits.push('@' + s.device_scale + 'x');
+    if(+s.device_installed_days > 0) bits.push('安装 ' + s.device_installed_days + ' 天');
+    $('#accDeviceScreen').textContent = logged ? (bits.join(' · ') || '—') : '—';
+  }
   $('#accCampus').textContent = logged ? (s.campusName || '—') : '—';
   $('#accUnid').textContent = logged ? (s.unid || '—') : '—';
   if($('#deviceRotateBtn')) $('#deviceRotateBtn').disabled = !logged || LIVE.submitting;
@@ -2473,6 +2480,7 @@ function renderEmptyData(){
   LIVE.fenceError = '';
   LIVE.pointsError = '';
   LIVE.pointsDistance = 0;
+  LIVE.hitRadiusM = 25;
   LIVE.runArea = null;
   LIVE.runAreas = [];
   LIVE.runAreaChoice = null;
@@ -2904,6 +2912,12 @@ async function loadPoints(force, opts){
     return;
   }
   const d = j.data || {};
+  // The backend may have corrected the centre from the real fence.  Adopt it
+  // so the map, preview and the next request all use the same anchor.
+  if(d.center && isFinite(+d.center.lat) && isFinite(+d.center.lon)){
+    LIVE.session = Object.assign({}, LIVE.session,
+      {lat: +d.center.lat, lon: +d.center.lon});
+  }
   LIVE.fences = fenceRingsFromData(d);
   LIVE.fence = LIVE.fences.length ? LIVE.fences[0] : [];
   LIVE.fenceCount = Math.max(LIVE.fences.length, +(d.fence_count || 0));
@@ -2915,6 +2929,9 @@ async function loadPoints(force, opts){
   LIVE.fenceError = d.fence_error || '';
   LIVE.pointsError = d.points_error || '';
   LIVE.pointsDistance = d.distance_m || distance_m;
+  // Backend owns the checkpoint radius (25 m); never hard-code it here again.
+  const hitR = +d.hit_radius_m;
+  LIVE.hitRadiusM = (isFinite(hitR) && hitR > 0) ? hitR : 25;
   LIVE.runArea = d.run_area || null;
   LIVE.runAreas = Array.isArray(d.run_areas) ? d.run_areas : [];
   // Keep an explicit pick only while the backend confirms it; if the area was
@@ -4211,11 +4228,12 @@ async function loadRoutes(){
 }
 function routeCoverage(line){
   if(!livePoints.length || !line || line.length < 2) return null;
+  const rad = hitRadiusM();
   let passed = 0;
   livePoints.forEach(p => {
-    if(line.some(q => distM(q, [p.lat, p.lng]) < 40)) passed++;
+    if(line.some(q => distM(q, [p.lat, p.lng]) <= rad)) passed++;
   });
-  return {passed: passed, total: livePoints.length};
+  return {passed: passed, total: livePoints.length, radius: rad};
 }
 function renderRouteList(){
   const wrap = $('#routeList');
@@ -5179,12 +5197,17 @@ function fenceOutside(routePoints, polygons){
   }
   return out;
 }
+function hitRadiusM(){
+  const v = +LIVE.hitRadiusM;
+  return (isFinite(v) && v > 0) ? v : 25;
+}
 function computeCoverage(){
-  if(!livePoints.length || !route || route.length < 2) return {passed: 0, total: livePoints.length, missed: livePoints.length};
+  if(!livePoints.length || !route || route.length < 2) return {passed: 0, total: livePoints.length, missed: livePoints.length, radius: hitRadiusM()};
   const path = displayPath();
+  const rad = hitRadiusM();
   let passed = 0;
-  livePoints.forEach(p => { if(path.some(q => distM(q, [p.lat, p.lng]) < 40)) passed++; });
-  return {passed, total: livePoints.length, missed: livePoints.length - passed};
+  livePoints.forEach(p => { if(path.some(q => distM(q, [p.lat, p.lng]) <= rad)) passed++; });
+  return {passed, total: livePoints.length, missed: livePoints.length - passed, radius: rad};
 }
 function beijingEpoch(dateKey, hhmm){
   const d = parseDateKey(dateKey);
@@ -5288,7 +5311,7 @@ function refreshChecks(){
     label: '经过全部打卡点',
     note: free ? '已勾选跳过打卡点'
       : (noPoints ? '无法确认该校区允许自由跑'
-        : (cov.total ? (cov.passed + '/' + cov.total + ' 在 40m 内') : '未加载点位'))});
+        : (cov.total ? (cov.passed + '/' + cov.total + ' 在 ' + hitRadiusM() + 'm 内') : '未加载点位'))});
   let fenceBad = {points: 0, segments: 0};
   const fenceReady = LIVE.fences.length > 0 && route && route.length >= 2;
   if(fenceReady){
@@ -5306,6 +5329,37 @@ function refreshChecks(){
                 ? '（' + LIVE.fences.length + ' 个围栏任一）' : ''))))))});
   const configured = !!(LIVE.rules && LIVE.rules.configured);
   checks.push({ok: configured, label: '学校要求已配置', note: configured ? '模型已启用' : '设置 → 学校要求'});
+
+  // Freeze / face / distance belong in the same checklist as the points:
+  // they used to exist only as log lines, so the dock could read "可以提交"
+  // while the server would refuse the run (or the record would not count).
+  if(LIVE.freezeSeconds > 0){
+    const fm = Math.ceil(LIVE.freezeSeconds / 60);
+    // Per product decision the freeze is a warning, not a gate: keep `ok`
+    // true so the dock still says "可以提交", and colour the note amber.
+    checks.push({ok: true, warn: true, label: '跑步冻结期',
+      note: '剩余约 ' + fm + ' 分钟；官方此刻不能开跑，本工具只提醒不拦截'});
+  }else{
+    checks.push({ok: true, label: '跑步冻结期', note: '无冻结'});
+  }
+  checks.push({ok: !LIVE.faceRequired, label: '人脸抽检',
+    note: LIVE.faceRequired
+      ? ((LIVE.faceReason || 'faceVerify') + '；本工具无法完成核验，提交会被阻止')
+      : '学校未要求'});
+  const ruleSet = (configured && LIVE.rules.rules) ? LIVE.rules.rules : {};
+  const minKm = +ruleSet.min_km > 0 ? +ruleSet.min_km : 0;
+  const maxKm = +ruleSet.max_km > 0 ? +ruleSet.max_km : 0;
+  const kmInput = $('#inKm');
+  const plannedKm = kmInput ? (+kmInput.value || 0) : 0;
+  if(minKm || maxKm){
+    const distOk = (!minKm || plannedKm >= minKm) && (!maxKm || plannedKm <= maxKm);
+    checks.push({ok: distOk, label: '距离达标',
+      note: plannedKm.toFixed(2) + ' km / 要求 ' +
+        (minKm ? ('≥ ' + minKm) : '') + (minKm && maxKm ? '、' : '') +
+        (maxKm ? ('≤ ' + maxKm) : '') + ' km'});
+  }else{
+    checks.push({ok: true, label: '距离要求', note: '学校未配置距离要求'});
+  }
 
   const ti = selectedTimeInfo();
   checks.push({ok: ti.dateOk, label: '提交日期', note: ti.dateNote});

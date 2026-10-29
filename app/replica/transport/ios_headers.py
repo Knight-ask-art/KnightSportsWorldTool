@@ -7,18 +7,32 @@ isRoot a boolean) rather than strings.  ``build_ios_headers`` follows the
 field order in NekoSportsWorldTool ``src/crypto/header.rs``.
 
 iOS submit (``save/record``) is our own extension.  The reference client
-forces an Android header there, so treat iOS submission as unverified until a
-full login + submit + readback + OBS run has actually passed.
+forces an Android header there and its audit calls that a hard contradiction
+(same token, iOS at login, Android at submit), so we keep the whole chain on
+one platform instead: login, policy, points, submit and OBS all use the same
+iOS identity.  That chain has been verified on a real device (rrid
+``1344757460``, 2026-10-25: ``status=0`` / ``isCheat=0`` / ``policy=0``).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import time
+import uuid
 
 #: The iOS app version observed in the reference client's iOS header.
 IOS_APP_VERSION = '7.3.40'
 TOKEN_SIGN_SUFFIX = '2slhe02lsfiwowlcixisla_sls-_slaor'
+
+#: Fallback install age when the profile has no appInstallTime (the reference
+#: builder uses 3 days on iOS and 90 days on Android).  Sending 0 would be the
+#: one value no real installation can report.
+IOS_INSTALL_FALLBACK_DAYS = 3
+
+#: Minted once at import, not lazily: two bridge threads handling the first
+#: requests at the same time could otherwise each mint one and disagree.
+_FALLBACK_DEVICE_ID = str(uuid.uuid4()).upper()
 
 
 def token_sign(ts: str, token: str, uid) -> str:
@@ -33,6 +47,32 @@ def _uid_int(uid) -> int:
         return -1
 
 
+def _stable_device_id(value) -> str:
+    """DeviceId, never empty.
+
+    An empty id would also make ``CustomDeviceId`` just
+    ``_iOS_sportsWorld_campus``.  The fallback is minted once per process so it
+    does not drift between requests (a per-request UUID is itself a signal).
+    """
+    text = str(value or '').strip()
+    return text or _FALLBACK_DEVICE_ID
+
+
+def _install_ms(acct, ts: str) -> int:
+    """appInstallTime as a number; missing/0 falls back like the reference."""
+    try:
+        value = int(getattr(acct, 'appInstallTime', 0) or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if value > 0:
+        return value
+    try:
+        now = int(ts)
+    except (TypeError, ValueError):
+        now = int(time.time() * 1000)
+    return now - IOS_INSTALL_FALLBACK_DAYS * 86_400_000
+
+
 def build_ios_headers(acct, ts: str, nonce: str, idfa: str = '') -> dict:
     """Build the iOS header plaintext for one request.
 
@@ -43,7 +83,7 @@ def build_ios_headers(acct, ts: str, nonce: str, idfa: str = '') -> dict:
     """
     uid = _uid_int(acct.uid)
     token = acct.token or ''
-    device_id = acct.DeviceId or ''
+    device_id = _stable_device_id(getattr(acct, 'DeviceId', ''))
     idfa = idfa or getattr(acct, 'idfa', '') or ''
     headers = {
         'osType': '1',
@@ -60,7 +100,7 @@ def build_ios_headers(acct, ts: str, nonce: str, idfa: str = '') -> dict:
         'cpuModel': acct.cpuModel or 'arm64e',
         'appVersion': IOS_APP_VERSION,
         'isRoot': False,
-        'appInstallTime': int(acct.appInstallTime or 0),
+        'appInstallTime': _install_ms(acct, ts),
         'nonce': nonce,
     })
     if uid >= 1:

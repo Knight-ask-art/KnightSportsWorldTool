@@ -146,6 +146,44 @@ def cached_points(uid, unid, run_area_id, lat, lon,
     return points
 
 
+def newest_cached_points(uid, unid, run_area_id, distance_m: float = 2000.0,
+                         ttl: float = 86400.0):
+    """Newest cache entry for the same account/area/distance, any anchor.
+
+    The campus centre can move between refreshes (manual centre, fence-centre
+    correction), but the server's checkpoint set is scoped by school, run area
+    and distance.  Used only when the server rate-limits us, so a moved anchor
+    does not turn a known checkpoint set into "points unavailable".
+    """
+    try:
+        dist = max(1, int(round(float(distance_m))))
+    except (TypeError, ValueError):
+        dist = 2000
+    prefix = '%s|%s|%s|' % (uid, unid, run_area_id or '')
+    suffix = '|d%d' % dist
+    now = time.time()
+    with _CACHE_LOCK:
+        entries = [(k, v) for k, v in _load_cache().items()
+                   if k.startswith(prefix) and k.endswith(suffix)]
+    best = None
+    for key, entry in entries:
+        age = now - float(entry.get('ts', 0))
+        if age < 0 or age > ttl or not entry.get('points'):
+            continue
+        if best is None or (float(entry.get('ts', 0))
+                            > float(best[1].get('ts', 0))):
+            best = (key, entry)
+    if best is None:
+        return None
+    parts = best[0].split('|')
+    try:
+        return cached_points(parts[0], parts[1], parts[2] or None,
+                             float(parts[3]), float(parts[4]),
+                             ttl=ttl, distance_m=dist)
+    except (IndexError, ValueError):
+        return None
+
+
 def store_points(uid, unid, run_area_id, lat, lon, points,
                  distance_m: float = 2000.0) -> None:
     # The bridge is threaded: two refreshes used to interleave read/modify/
@@ -350,6 +388,11 @@ def fetch_points(client, acct, lat: float, lon: float,
         log('[points] 10603 rate limited - reusing cache if any')
         hit = cached_points(acct.uid, acct.unid, run_area_id, lat, lon,
                             ttl=86400, distance_m=dist)
+        if hit is None:
+            # The anchor can differ after a fence-centre correction; the
+            # checkpoint set is still the same school/distance.
+            hit = newest_cached_points(acct.uid, acct.unid, run_area_id, dist,
+                                       ttl=86400)
         if hit is not None:
             return hit
         raise RuntimeError('points rate limited and no cached copy available')
@@ -540,23 +583,42 @@ def fetch_fence(client, acct, policy_data: dict | None = None,
                 run_area: dict | None = None) -> dict:
     """Every campus geofence ring for this account, in GCJ.
 
-    The only authoritative source is ``runModePolicy``'s ``geoFence``.  The
-    official ``LocationGeoFenceHelper`` reads ``CacheDataUtils.getGeoFence()``
-    (written by ``RunPolicyViewModel``) and never reads the separate
-    ``getGeoFenceForRun`` reply (``GeoFenceBean2``).  Therefore:
+    `runModePolicy`'s ``geoFence`` is the primary source (that is what
+    ``LocationGeoFenceHelper`` reads).  Some accounts, however, get a reply
+    with ``geoFence: null`` -- a frozen account is one live example (the
+    server omits the run configuration) -- while ``getGeoFenceForRun`` still
+    returns the school's ring.  In that case fall back to the legacy endpoint
+    instead of claiming "no fence": the fence really exists and the official
+    app keeps using its cached copy.
 
     * no policy reply -> ``source='unavailable'`` and no legacy fallback;
-    * policy with no/empty fence -> a valid "no fence" result;
-    * a run area's ``fenceIds`` filter the list but all matches are kept.
+    * policy with a fence -> policy wins;
+    * policy without a fence -> one legacy attempt (source='legacy-fallback');
+    * no fence anywhere -> a valid "no fence" result.
 
-    ``client``/``acct`` remain in the signature for callers that fetch the
-    legacy endpoint separately; they are intentionally not used here.
+    ``run_area.fenceIds`` filter the policy list.  The legacy reply has no
+    run-area association, so it is never filtered by those ids (using them
+    would drop the only ring we have).
     """
     if policy_data is None:
         return _empty_fence('unavailable', 'runModePolicy 未返回')
     from . import policy as POL
     raw_fences = POL.geo_fences(policy_data)
     if not raw_fences:
+        if POL.has_fence_section(policy_data):
+            # Explicit `geoFences: []` (or `{}`) means the school has no
+            # fence; the legacy endpoint may hold stale data, so stop here.
+            return _empty_fence('policy-empty', 'runModePolicy 没有围栏')
+        if client is not None and acct is not None:
+            try:
+                legacy = fetch_legacy_fence(client, acct)
+            except Exception as e:  # noqa: BLE001
+                return _empty_fence('legacy-error', '围栏读取失败: %s' % e)
+            if legacy.get('polygons'):
+                legacy['source'] = 'legacy-fallback'
+                legacy['reason'] = ('runModePolicy 没有围栏，'
+                                    '已使用 getGeoFenceForRun')
+                return legacy
         return _empty_fence('policy-empty', 'runModePolicy 没有围栏')
 
     parsed = _parse_fences(raw_fences)

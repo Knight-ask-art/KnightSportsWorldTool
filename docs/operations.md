@@ -135,9 +135,11 @@ UI 的「记录 → 提交回执」提供 **只读核对**：按开始时间（�
   B 广州各自落位），匹配不到才回退官方 `selectedPosition=0`；多跑区时也可用
   下拉框切换。跑区 `fenceIds` 命中的**全部**围栏都保留，任意一条包含轨迹即
   算在区域内；没有跑区数据时用全部围栏。
-- **围栏只信 policy**：`geoFence` 为空/缺失都视为无围栏，不再回退
-  `getGeoFenceForRun`；`runModePolicy` 取不到时直接停止。多围栏且没有
-  手动校区/路线首点可判定时也停止，不会挑第一条围栏。
+- **围栏优先信 policy，null 才回退**：`geoFence` 明确返回 `{geoFences: []}`
+  视为无围栏；`null`/缺段时回退一次 `getGeoFenceForRun`（冻结账号的 policy
+  实测就是这样，而围栏仍存在），结果标记 `legacy-fallback`。
+  `runModePolicy` 取不到时直接停止。多围栏且没有手动校区/路线首点可判定时
+  也停止，不会挑第一条围栏。
 
 ### 2.6 路线库
 

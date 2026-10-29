@@ -72,6 +72,9 @@ VEhifHXZq825fI9hGYtDoaVQmCN/Nfs2dKmt89XDrhtl3SZxO6TumOCTQt+5oqjF
 -----END PUBLIC KEY-----
 """
 
+# Historical reference strings only.  The UA actually sent on the wire comes
+# from ``realclient.user_agent()`` (one source for API + OBS); the Android one
+# there is ``okhttp/4.12.0`` because the official dex sets no custom UA.
 IOS_UA = 'SWCampus/7.3.40 (iPhone; iOS 18.1; Scale/3.00)'
 ANDROID_UA = ('Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) '
               'AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 '

@@ -811,6 +811,8 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
 .record-detail h3{font:400 18px/1.2 var(--hand);margin:0 0 2px}
 .detail-row{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px dotted var(--rule);font-size:10.5px}
 .detail-row span:first-child{color:var(--faint)}
+/* values include a full User-Agent; let it wrap instead of widening the card */
+.detail-row span:last-child{min-width:0;overflow-wrap:anywhere;text-align:right}
 .detail-verdict{
   margin:10px 0 2px;padding:8px 10px;border-left:3px solid var(--stamp);
   background:rgba(182,72,60,.06);color:var(--stamp);

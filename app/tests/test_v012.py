@@ -58,20 +58,26 @@ def test_open_route_longer_than_target_is_rejected():
         generate_run_data(0.1, 6.0, 172, waypoints=wps, closed=False)
 
 
-def _fake_obs(monkeypatch, corrupt=False):
+def _fake_obs(monkeypatch, corrupt=False, platform=None):
     run = generate_run_data(2.5, 6.0, 172, center_lat=22.4108,
                             center_lng=112.9408, rng=random.Random(1))
-    acct = types.SimpleNamespace(uid='42')
+    attrs = {'uid': '42'}
+    if platform:
+        attrs.update({'platform': platform, 'osVersion': '18.1',
+                      'physicPixel': '1179x2556', 'logicPixel': '393x852'})
+    acct = types.SimpleNamespace(**attrs)
     seen = {}
 
     monkeypatch.setattr(obs, 'sign_url',
                         lambda client, acct, key, method='Put': 'http://signed/' + key)
 
-    def put(url, payload, timeout=60):
+    def put(url, payload, timeout=60, user_agent=''):
         seen['payload'] = payload
+        seen['put_ua'] = user_agent
         return 200
 
-    def get(url, timeout=60):
+    def get(url, timeout=60, user_agent=''):
+        seen['get_ua'] = user_agent
         payload = seen['payload']
         if corrupt:
             return 200, b'x' * len(payload)   # same length, wrong bytes
@@ -87,6 +93,20 @@ def test_obs_upload_verifies_sha256(monkeypatch):
     res, seen = _fake_obs(monkeypatch)
     assert res['uploaded'] == 2 and res['verified'] == 2
     assert res['sha256'] == hashlib.sha256(seen['payload']).hexdigest()
+
+
+def test_obs_uses_the_same_platform_ua_as_the_api(monkeypatch):
+    # OBS is a separate host (signed URL), so forgetting the UA here would
+    # leave one run with an okhttp/SWCampus API UA and a Python-urllib PUT.
+    _, seen = _fake_obs(monkeypatch)
+    assert seen['put_ua'] == 'okhttp/4.12.0'
+    assert seen['get_ua'] == 'okhttp/4.12.0'
+
+
+def test_obs_follows_an_ios_profile(monkeypatch):
+    _, seen = _fake_obs(monkeypatch, platform='ios')
+    assert seen['put_ua'].startswith('SWCampus/7.3.40 (iPhone; iOS 18.1;')
+    assert seen['get_ua'] == seen['put_ua']
 
 
 def test_obs_same_length_corruption_is_rejected(monkeypatch):

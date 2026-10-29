@@ -381,26 +381,49 @@ def sign_url(client, acct, key: str, method: str = 'Put') -> str:
     raise RuntimeError('OBS sign response missing signedUrl: %r' % (biz,)[:200])
 
 
-def put_object(signed_url: str, payload: bytes, timeout: float = 60.0) -> int:
+def _object_headers(user_agent: str = '', content_type: str = '') -> dict:
+    """Headers for the OBS data plane.
+
+    The signed URL covers method/key/expiry, not the UA, so adding one cannot
+    invalidate the signature.  Without it urllib sends ``Python-urllib/x.y``:
+    one run would then show a platform UA on the API calls and a bare Python
+    UA on the two PUTs, which is the cheapest possible way to link them.  The
+    reference client has the same hole (``ureq/x``), and the antiban audit
+    calls it out as "同一次运行四条不同 UA".
+    """
+    headers = {}
+    if content_type:
+        headers['Content-Type'] = content_type
+    if user_agent:
+        headers['User-Agent'] = user_agent
+    return headers
+
+
+def put_object(signed_url: str, payload: bytes, timeout: float = 60.0,
+               user_agent: str = '') -> int:
     import urllib.request
-    req = urllib.request.Request(signed_url, data=payload, method='PUT',
-                                 headers={'Content-Type': 'application/json'})
+    req = urllib.request.Request(
+        signed_url, data=payload, method='PUT',
+        headers=_object_headers(user_agent, 'application/json'))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status
 
 
-def get_object_bytes(signed_url: str,
-                     timeout: float = 60.0) -> tuple[int, bytes]:
+def get_object_bytes(signed_url: str, timeout: float = 60.0,
+                     user_agent: str = '') -> tuple[int, bytes]:
     """GET a signed object. Returns (status, body)."""
     import urllib.request
-    req = urllib.request.Request(signed_url, method='GET')
+    req = urllib.request.Request(signed_url, method='GET',
+                                 headers=_object_headers(user_agent))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status, r.read()
 
 
-def get_object(signed_url: str, timeout: float = 60.0) -> tuple[int, int]:
+def get_object(signed_url: str, timeout: float = 60.0,
+               user_agent: str = '') -> tuple[int, int]:
     """GET a signed object. Returns (status, byte length)."""
-    status, body = get_object_bytes(signed_url, timeout=timeout)
+    status, body = get_object_bytes(signed_url, timeout=timeout,
+                                    user_agent=user_agent)
     return status, len(body)
 
 
@@ -422,6 +445,15 @@ def _retry(fn, tries: int = 3, base: float = 0.6):
     raise last
 
 
+def platform_user_agent(acct) -> str:
+    """The same UA the API calls use (one run, one UA)."""
+    try:
+        from .realclient import user_agent
+        return user_agent(acct)
+    except Exception:  # noqa: BLE001 - a UA must never break an upload
+        return ''
+
+
 def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
                verify: bool = True) -> dict:
     """Upload the trail to both object keys. Returns a summary dict.
@@ -432,6 +464,7 @@ def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
     nothing else in the flow would notice.
     """
     log = log or (lambda *_: None)
+    ua = platform_user_agent(acct)
     obj = build_obs_object(run, rrid, uuid, acct.uid, five_point_json)
     payload = json.dumps(obj, ensure_ascii=False,
                          separators=(',', ':')).encode()
@@ -445,7 +478,7 @@ def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
         try:
             def _put(_key=key):
                 u = sign_url(client, acct, _key, 'Put')
-                st = put_object(u, payload)
+                st = put_object(u, payload, user_agent=ua)
                 if not (200 <= st < 300):
                     raise RuntimeError('PUT status %s' % st)
                 return st
@@ -458,7 +491,7 @@ def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
             if verify:
                 def _get(_key=key):
                     u = sign_url(client, acct, _key, 'Get')
-                    st, body = get_object_bytes(u)
+                    st, body = get_object_bytes(u, user_agent=ua)
                     got_sha = hashlib.sha256(body).hexdigest()
                     if (not (200 <= st < 300) or len(body) != len(payload)
                             or got_sha != payload_sha):

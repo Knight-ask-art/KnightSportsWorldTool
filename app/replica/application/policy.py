@@ -316,9 +316,23 @@ def has_fence_section(policy: dict | None) -> bool:
     ``geoFence: {geoFences: []}`` is authoritative: the school configured no
     fence.  It must not trigger the legacy ``getGeoFenceForRun`` fallback,
     which can still hold stale or other-campus polygons.
+
+    A JSON ``null`` is *not* a section: the key exists, but the server chose
+    not to send any fence (a frozen account does this on the live server).
     """
     data = normalize_data(policy)
-    return 'geoFence' in data or 'geoFences' in data
+    for key in ('geoFence', 'geoFences'):
+        if key not in data:
+            continue
+        value = data[key]
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:  # noqa: BLE001
+                return bool(value.strip())
+        if value is not None:
+            return True
+    return False
 
 
 def geo_fences(policy: dict | None) -> list[dict]:

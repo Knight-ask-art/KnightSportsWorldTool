@@ -61,8 +61,12 @@ def main():
     import webview
     webview.create_window('好想跑', url,
                           width=1280, height=820, min_size=(980, 640))
+    # pywebview's WinForms backend loads this into Form.Icon.  Without it the
+    # title bar falls back to ExtractIconW(exe), which Windows has usually
+    # cached at a small size; passing the multi-frame .ico keeps it sharp.
+    icon = os.path.join(FRONTEND_DIR, 'app.ico')
     try:
-        webview.start()
+        webview.start(icon=icon if os.path.isfile(icon) else None)
     finally:
         srv.shutdown()
 

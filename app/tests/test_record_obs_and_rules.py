@@ -84,7 +84,7 @@ class _DetailClient:
 def test_record_detail_reads_the_obs_track_when_the_row_is_a_stub(monkeypatch):
     keys = []
     monkeypatch.setattr(obs, 'get_object_bytes',
-                        lambda url, timeout=60: (200, _obs_body()))
+                        lambda url, timeout=60, user_agent='': (200, _obs_body()))
     r = readonly.record_detail(_DetailClient(keys), _Acct(), 123)
     assert r['ok'] is True
     assert keys == ['run_data/0/123.json']
@@ -97,7 +97,7 @@ def test_record_detail_reads_the_obs_track_when_the_row_is_a_stub(monkeypatch):
 
 
 def test_obs_failure_keeps_the_summary_instead_of_failing(monkeypatch):
-    def explode(url, timeout=60):
+    def explode(url, timeout=60, user_agent=''):
         raise OSError('network down')
 
     monkeypatch.setattr(obs, 'get_object_bytes', explode)
@@ -114,7 +114,7 @@ def test_obs_falls_back_to_the_uuid_key(monkeypatch):
     keys = []
     calls = {'n': 0}
 
-    def get(url, timeout=60):
+    def get(url, timeout=60, user_agent=''):
         calls['n'] += 1
         if calls['n'] == 1:
             raise HTTPError(url, 404, 'Not Found', None, None)

@@ -655,10 +655,11 @@ def _fetch_obs_detail(client, acct, rrid, uuid=None, start_ms=0) -> dict:
         keys.append('run_data/%s/%s.json' % (
             safety.to_beijing(start_ms).strftime('%Y%m%d%H'), uuid))
 
+    ua = OBS.platform_user_agent(acct)
     for key in keys:
         try:
             signed = OBS.sign_url(client, acct, key, method='Get')
-            status, body = OBS.get_object_bytes(signed)
+            status, body = OBS.get_object_bytes(signed, user_agent=ua)
         except HTTPError as e:
             if e.code == 404:
                 continue

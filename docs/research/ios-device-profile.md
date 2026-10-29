@@ -1,10 +1,15 @@
 # iOS 设备指纹：研究记录与接入状态
 
-> 状态：**已接入 master 的随机池，但 iOS 提交链仍未真实验证。**
+> 状态：**iOS 全链已真机验证（2026-10-25，rrid `1344757460`）。**
 > 分支：`experiment/ios-device-profile`（历史原型，已合入主线）
-> 结论先行：**目前没有证据表明 iOS 比 Android 更稳；参考实现的提交端固定是 Android。**
-> 因此 iOS 只作为随机选项，默认占比 30%（`JHP_IOS_CHANCE`），登录和提交都使用
-> iOS 头以保证“同一台设备”，但提交链必须实测后才能称为稳定。
+> 结论先行：**iOS 提交链可用**——登录、策略、点位、提交、OBS 全部走 iOS 头，
+> 服务端返回 `status=0` / `isCheat=0` / `policy=0` / `stepFreqStatus=0`。
+> 参考实现（`YanamiNeko/NekoSportsWorldTool`）在提交时**强制改回 Android 头**，
+> 其衍生分支 `czcdr/NekoSportsWorldTool-antiban` 的 `review/ANTI-FLAG-AUDIT.md`
+> 把这一行为列为 A1（high）：同一条 token 上登录是 iOS、提交是 Android，
+> 真机不可能中途换平台。我们选择整条链同平台，并把这条选择做了实测。
+> iOS 仍只是随机选项之一（`JHP_IOS_CHANCE` 默认 30），因为「换平台」本身是信号，
+> 不是因为没有证据。
 
 ---
 
@@ -125,27 +130,46 @@ req = req
 
 ---
 
-## 3. 还没验证的未知项
+## 3. 未验证项（2026-10-29 更新）
 
-如果要把 iOS 做成真正的提交链，至少有以下未知：
+1. ✅ `save/record` 接受 iOS 头（`osType=1`、`appVersion=7.3.40`、无 `appUpdateTime`、
+   `CustomDeviceId` 带 `_iOS_sportsWorld_campus`）——rrid `1344757460` 已入账。
+2. ✅ iOS 提交带 `runes/runef` 被接受；没有出现「非法 runes」类错误。
+3. ❓ 服务端是否把 token 绑定到平台/设备：已有 iOS 会话可用，但**没有**做「同一账号
+   Android→iOS 切换」的实验；按设备指纹纪律也不建议做。
+4. ✅ `checkGeeUse` / `geevalidate` / `login` 全部走 iOS 头，Python 实现已跑通。
+5. ⚠️ `User-Agent` 不参与 headerSign，服务端不校验也能过；但**它不是无所谓**：
+   同一次运行里如果 API 用平台 UA、OBS 直传用 `Python-urllib`，就出现两种客户端。
+   现在全链（含 OBS PUT/GET）统一取 `realclient.user_agent(acct)`。
+6. ✅ 提交后 `get_one_record` 回读与 OBS 轨迹读取都在 iOS 头下通过（466 点）。
+7. ❓ `deviceName` 发具体机型还是统一 `iPhone`。两家参考实现都用 `iPhone`
+   （理由是 iOS 的 `UIDevice.current.model` 真机恒为 `iPhone`）；
+   但我们的真实 iOS 提交用 `iPhone 15 Pro Max` 被服务端接受且四项风险全 0。
+   既然已经用它建立了设备画像，**不改现存 profile**——中途改字段等于换机。
+8. ✅ iOS `headerSign` 的插入顺序 + 原生类型（`uid/studentId` 数字、`isRoot` 布尔）
+   已被真实登录/提交验证。
 
-1. `save/record` 是否接受 iOS 头（`osType=1`、`appVersion=7.3.40`、没有 `appUpdateTime`、`CustomDeviceId` 带 `_iOS_sportsWorld_campus`）？
-2. iOS 提交是否仍然需要 `runes/runef`？上游只在 Android 提交路径里加。
-3. 服务端是否把 token 绑定到平台/设备？同一个账号从 Android 切到 iOS 是否直接 401/10121/10007？
-4. `checkGeeUse` / `geevalidate` 是否接受 iOS 头？上游登录链用 iOS 头，理论上可以，但没有我们的 Python 实现验证过。
-5. `User-Agent` 和 HTTP `appVersion` 是否必须与 iOS 头一致？我们的 Android 链目前不发 UA，也过了；iOS 可能不同。
-6. 提交后的回读/OBS 是否还能用同一套 header？`get_one_record` 和 OBS 签名是平台无关的，但 header 会变成 iOS。
-7. `deviceName` 到底发具体机型（`iPhone 15`）还是统一的 `iPhone`？参考 builder 使用
-   `identity.device_name`，其默认值是 `iPhone`；我们选择具体机型是为了和像素/系统
-   成对，但如果服务端只认 `iPhone`，需要改回。
-8. iOS 的 `headerSign` JSON 是否真的是插入顺序 + 原生类型？这是从参考 builder 的
-   字段顺序推断的；没有真机抓包，iOS 登录可能直接 `10003`。
+---
+
+## 3b. 2026-10-29 外部复核：`czcdr/NekoSportsWorldTool-antiban`
+
+这个衍生分支带一份逐条标注证据等级的审计（`review/ANTI-FLAG-AUDIT.md`），
+其中与 iOS 直接相关的三条：
+
+| 编号 | 结论 | 对本项目的处置 |
+|---|---|---|
+| A1 | 上游「iOS 登录 + Android 提交」= 同一 token 平台漂移，high | 我们本来就是全链 iOS，实测通过；不动 |
+| — | `ua_for()` 必须全链唯一来源：上游登录/点位写死 iOS UA、OBS 直传漏设（发出 `ureq/x`）、提交另拼一套，一次运行四种 UA | 已修：`obs.put_object`/`get_object_bytes` 接受并传入平台 UA |
+| — | iOS 头写死 `360x640 / 1080x1920 / x86_64` 是模拟器签名；`logicPixel × scale = physicPixel` 必须整数倍 | 我们早早改用真实机型像素对（全部 2x/3x），并加了 `Scale` 派生 |
+
+另外该分支确认：官方 Android 7.4.0 dex 里 `SWCampus` 命中 0 次，只有 `okhttp/4.12.0`
+这类默认值——所以 Android UA 保持 `okhttp/4.12.0`，iOS 才用 `SWCampus/...`。
 
 ---
 
 ## 4. 主线已经做了什么
 
-已经接入 master，但提交链仍标注未验证：
+已接入 master 并完成真机验证：
 
 - `app/replica/application/device_profile.py`
   - 新安装从 Android / iOS 随机池抽取，`JHP_IOS_CHANCE` 默认 30；
@@ -210,22 +234,24 @@ python -m pytest tests/test_ios_headers.py tests/test_device_profile.py -q
    - 验收：`error=10000 + rrid`、`get_one_record` 回读、OBS 轨迹。
    - 任何一步失败：停止，回滚 Android profile，不提交第二条。
 
-5. **结论**
-   - 当前状态是“iOS 已进入随机池，但提交链未验证”，不是“iOS 已稳定”。
-   - 只有“登录 + 提交 + 回读 + OBS”全部通过，才把 iOS 提交标为已验证，才考虑
-     提高 `JHP_IOS_CHANCE`。
-   - 失败时用 `--rotate --platform android` 回到 Android；不要在主账号上反复试。
-   - 即使通过，也不建议把已有 Android 账号切到 iOS；设备/平台变更本身就是信号。
+5. **结论（已执行，2026-10-25）**
+   - 登录 + 提交 + 回读 + OBS 全通过：rrid `1344757460`，4.13 km / 2329 s /
+     9'40"/km / 117 spm / 466 点，`status=0`、`isCheat=0`、`policy=0`、
+     `stepFreqStatus=0`、`complete=true`。
+   - 因此 iOS 已标为已验证；`JHP_IOS_CHANCE` 只是分布开关。
+   - 仍然不建议把已有 Android 账号切到 iOS：设备/平台变更本身就是信号。
 
 ---
 
 ## 6. 风险
 
 - **平台切换信号**：同一账号从 Android 9/x86_64 切到 iOS 18/arm64，比单纯换 DeviceId 更明显。
-- **提交端未验证**：上游自己都不走 iOS 提交，说明这条路没有现成证据。
-- **`runes/runef` 未知**：iOS 提交是否需要，没有公开证据。
+- **提交端已验证**：rrid `1344757460` 证明服务端接受 iOS 头；但这是单账号单条记录，
+  不等于「iOS 比 Android 更稳」。
+- **`runes/runef` 已验证可用**：iOS 提交带上它们没有被拒。
 - **服务端可能软拒**：`200 + 0 bytes` 会被我们标成 unknown 并锁时段，不能重试。
 - **回滚成本**：需要保留 Android profile 和回执，失败后恢复并重新登录。
+- **`deviceName` 语义仍无抓包**：参考实现发 `iPhone`，我们发现存机型，两者都被接受。
 
 ---
 

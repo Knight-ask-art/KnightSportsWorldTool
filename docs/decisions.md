@@ -63,16 +63,21 @@
 | 更换设备指纹必须显式 rotate，并先备份旧指纹 | 可回滚；避免误操作把真实账号变成“新手机” |
 | GUI 更换入口放在“高级”并双重确认，后端再校验确认文字 | 误点会像换机；后端还会先退本机登录、备份旧指纹 |
 | 新安装从 Android / iOS 随机池抽取指纹，默认 iOS 30% | 用户要求把 iOS 作为正式随机选项；用 `JHP_IOS_CHANCE` 控制暴露面，避免一上来全量走未验证的 iOS 提交链 |
-| iOS 登录和提交都使用 iOS 头 | 保证“同一台设备”；上游 `submit.rs` 固定 Android 头，所以 iOS 提交是我们自己的扩展，必须标注未验证 |
+| iOS 登录和提交都使用 iOS 头 | 保证“同一台设备”；上游 `submit.rs` 固定 Android 头，反被其自身审计（`review/ANTI-FLAG-AUDIT.md` A1）判为「同一条 token 上平台漂移」的硬矛盾。全链同平台的选择已在真机验证（rrid `1344757460`：`status=0` / `isCheat=0` / `policy=0` / `stepFreqStatus=0`） |
 | iOS 使用 `arm64e`、按机型配物理/逻辑像素，不使用参考模拟器的 `x86_64 / 1080x1920` | 模拟器组合是明显的自动化信号；真实 iPhone 不会用 x86_64 |
 | Android 逻辑像素使用 dp，不再与物理像素相同 | 早期 `1080x2400 / 1080x2400` 是明显的合成指纹；按机型表一起生成 |
 | iOS 头使用独立的 typed JSON 序列化 | `uid/studentId` 是数字、`isRoot` 是布尔；套用 Android 的 Java HashMap 字符串化会改变 headerSign |
 | 请求带平台对应的 User-Agent（仅线上传输，不参与 headerSign） | 不设置时 urllib 会暴露 `Python-urllib/x.y`，比设备字段更显眼 |
+| UA 全链唯一来源，OBS 直传也用同一个 | 官方 Android dex 里没有自定义 UA（`SWCampus` 命中 0 次），故 Android 用 `okhttp/4.12.0`；iOS 用 NSURLSession 默认形态 `SWCampus/7.3.40 (iPhone; iOS x; Scale/3.00)`，版本与签名头 `appVersion` 同源。OBS 是独立域名，漏设 UA 会让同一次运行出现两种客户端（上游同样有此漏洞，antiban 审计点名） |
+| iOS 的 `appInstallTime`/`DeviceId` 缺失时用兜底值 | 发 `0` / 空串是任何真机都不会报的值；参考实现按 iOS 3 天回退，DeviceId 进程序内固定生成（不逐请求漂移） |
 | 跳过打卡点仅在学校无点位且策略无必经点时可用 | 有必经点却跳过点位会生成永远不完整的记录，后端直接拒绝 |
 | 路线库存 `data/routes.json`，不再只靠 localStorage | localStorage 按 origin 隔离，换端口/换 exe 会丢路线 |
 | 学期字段做保守归一化，缺失显示未知 | 不同学校/版本字段不一致；把缺失当 0 会误导达标判断 |
 | 学校规则读取用 `runModePolicy` 的 `operateType=1`；提交继续用 `operateType=0` | 真实返回里只有学期视图带 `runRuleModel`，开始跑步视图只带 `policy`；提交记录实测 `policy=0` 与开始跑步视图一致 |
 | 记录详情 `jsonFromObs=1` 时回读 OBS 对象 | 数据库行的 `allLocJson` 为空，完整轨迹在 `run_data/{rrid//1000000}/{rrid}.json`；不回读会显示“0 点” |
+| 打卡点命中半径由后端下发（`hit_radius_m`），前端不再写死 | 协议常量是 `RunSeqLocationManager` 的 `distance <= 25.0`；检查表曾用 40 m，会显示“全过”而服务端判定漏点，一次提交就白跑 |
+| 补跑开始时间保留秒和毫秒，不落在整分 | 官方开始时间来自 `System.currentTimeMillis()`；整分会把每个点 `flag`、10 s 窗边界、`gainTime` 全部对齐到同一网格 |
+| 步频窗 `maxDiff/minDiff/avgDiff` 保持 `0/1000/0`，`validDis/validTime` 保持与总量相等 | **反编译源码证实这是官方行为**：`StepManager` 的 `mDiff` 只有 `onDiffChanged` 会更新，而 `AccelerometerListener` 从不调用它；`RunLocationManager2` 明确 `setValidTime(mTotalTime)` / `setValidDis(mTotalDistance)`。上游审计 A2/A3 的“完美值”指控不成立，改了反而更像伪造 |
 
 ---
 
@@ -438,9 +443,12 @@ OBS `laps_json` 是分钟/公里（官方 App 读取）。
 没有 `runAreaModels`（或显式 `position == -1`）时使用全部围栏，任意一条包含
 轨迹点就算在区域内（官方 `LocationGeoFenceHelper.isInArea` 的 OR 语义）。
 
-`geoFence` 明确返回空列表时视为“该跑区没有围栏”；没有 `geoFence` 段也按
-空围栏处理。工具不再回退 `getGeoFenceForRun`：那份数据缓存在 `GeoFenceBean2`，
-官方 `isInArea` 不读它。`runModePolicy` 本身取不到时直接停止提交，不复用旧围栏。
+`geoFence` 明确返回空列表时视为“该跑区没有围栏”；`geoFence` 为 `null` 或
+缺少该段时不直接判“无围栏”，而是回退一次 `getGeoFenceForRun`（来源标记
+`legacy-fallback`）。这是 2026-10-29 实测的冻结账号：`runModePolicy` 的
+`geoFence`、`runAreaModels` 都是 `null`，但 `getGeoFenceForRun` 仍返回学校
+围栏，且围栏中心与该账号缓存打卡点一致。`runModePolicy` 本身取不到时直接
+停止提交，不复用旧围栏。
 
 **打卡点按目标距离拉取。** 接口路径包含目标米数，固定 2500 m 对只支持
 2 km/3 km 的学校会返回空列表。UI 现在把当前 `inKm` 传成 `distance_m`，

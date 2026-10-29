@@ -97,8 +97,11 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 5. 需要贴真实道路时点「吸附」（要 `JHP_AMAP_KEY` 或 `--amap-key`）。
 6. 目标距离会按当前路线长度自动填写：开放路线填全长，闭合路线填单圈长度；
    手动改过之后保留你的值，点「按线路填」可恢复自动。闭合路线绕几圈由目标距离决定。
-7. 提交前检查 token、点位、打卡点覆盖、围栏和校规；未经过点位时后端可自动插入
-   （`snap_route`）。
+7. 提交前检查 token、点位、打卡点覆盖、围栏、校规、跑步冻结期、人脸抽检和距离要求；
+   未经过点位时后端可自动插入（`snap_route`）。打卡点命中半径由后端下发
+   （官方是 25 m），页面上显示的就是实际判定用的半径。
+   冻结期只标黄提醒、不阻止提交；人脸抽检会阻止提交；距离低于学校要求时该行
+   保持未勾选，避免提交一条不计入的记录。
 
 ### 学校要求自动读取
 
@@ -196,8 +199,9 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 （广州）各自自动落到自己的跑区；匹配不到才回退官方 `selectedPosition=0`。
 多跑区时也可以在跑步页下拉框手动切换，无效跑区显示为灰色不可选。跑区拥有的
 全部围栏都会保留，任意一条包含轨迹即算在区域内。选中的跑区 id 会作为
-`runAreaId` 随打卡点请求发送。没有跑区数据时使用全部围栏；围栏只信
-`runModePolicy`，不再用 `getGeoFenceForRun` 的旧数据兜底。
+`runAreaId` 随打卡点请求发送。没有跑区数据时使用全部围栏；围栏优先信
+`runModePolicy`，只有它返回 `null`/缺段时才回退一次
+`getGeoFenceForRun`（冻结账号实测会这样），明确返回空列表则视为无围栏。
 
 ### 路线库 / GPX
 
@@ -396,7 +400,7 @@ python -m app.replica.pipeline --plan 14
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `JHP_DATA_DIR` | `app/data` | 回执、每日上限、会话、设备指纹 `device_profile.json` 的根目录 |
-| `JHP_IOS_CHANCE` | `30` | 新安装随机到 iOS 的百分比（0–100）；`0` 只用 Android，`100` 强制 iOS。iOS 提交链尚未真实验证 |
+| `JHP_IOS_CHANCE` | `30` | 新安装随机到 iOS 的百分比（0–100）；`0` 只用 Android，`100` 强制 iOS。iOS 全链已真机验证（rrid `1344757460`） |
 | `JHP_POINTS_CACHE` | `app/data/points_cache.json` | 点位缓存文件 |
 | `JHP_AMAP_KEY` | — | 高德 Web 服务 Key（吸附道路用） |
 | `JHP_PROXY` | — | 同 `--proxy` |

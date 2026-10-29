@@ -183,12 +183,19 @@ def resolve_start_ms(days_ago: int = 0, hhmm: str | None = None,
 
     ``date`` (``YYYY-MM-DD``) is what the UI sends; ``days_ago`` is the CLI
     shorthand.  ``hhmm`` is ``HH:MM`` inside 09:00-22:00; ``None``/empty picks
-    a random minute in that window.
+    a random start in that window.
 
     Both ends are enforced: the start must be >= 09:00 and the run must end by
     22:00 (the server's ``runModePolicy.validTime`` ends at 22:00).  For today
     the run must also end by ``now`` -- a start in the future is refused rather
     than silently clamped, because the operator explicitly asked for it.
+
+    The returned timestamp keeps sub-minute precision.  A whole-minute start
+    (``:00.000``) is what the old implementation produced, and it bled into
+    every downstream timestamp: each point ``flag``, each 10 s window boundary
+    and every ``gainTime`` then sat exactly on a minute/second grid.  A real
+    start comes from ``System.currentTimeMillis()`` and has an arbitrary second
+    and millisecond.
     """
     now_val = now if now is not None else now_ms()
     now_bj = to_beijing(now_val)
@@ -225,15 +232,30 @@ def resolve_start_ms(days_ago: int = 0, hhmm: str | None = None,
                 raise ValueError('这个时间结束时已经超过现在（现在 %s），'
                                  '请提前开始' % now_bj.strftime('%H:%M'))
             raise ValueError('这个时间结束会超过 22:00，请提前开始')
-        return int(start.timestamp() * 1000)
+        start_ms = int(start.timestamp() * 1000)
+        return _jittered_start(start_ms, latest_start, duration_ms)
 
     lo_s = int(lo.timestamp())
     hi_s = int(latest_start.timestamp())
     if hi_s < lo_s:
         raise ValueError('今天 09:00–22:00 已经放不下这次跑步')
     picked = random.randint(lo_s, hi_s)
-    picked -= picked % 60                       # keep it on a whole minute
-    return picked * 1000
+    return _jittered_start(picked * 1000, latest_start, duration_ms)
+
+
+def _jittered_start(start_ms: int, latest_start, duration_ms: int) -> int:
+    """Add a sub-minute offset without moving the run past its deadline.
+
+    The operator picked a minute (or we picked a second); the seconds and
+    milliseconds inside that minute are unobservable to them and must not be
+    zero, or every timestamp derived from the start shares one grid.
+    """
+    latest_ms = int(latest_start.timestamp() * 1000)
+    room = latest_ms - (start_ms + duration_ms)
+    if room <= 0:
+        return start_ms
+    offset = random.randint(0, 59) * 1000 + random.randint(0, 999)
+    return start_ms + min(offset, room)
 
 
 # --------------------------------------------------------------------------
@@ -294,8 +316,11 @@ def self_test() -> list[tuple[str, bool, str]]:
 
     yd = resolve_start_ms(date='2026-10-22', hhmm='10:30', duration_s=1800,
                           now=now_stamp)
+    # The start keeps a random second/millisecond inside the chosen minute,
+    # so the two calls agree on the minute, not on the exact millisecond.
     out.append(('explicit date matches days_ago',
-                yd == y, fmt_beijing(yd)))
+                fmt_beijing(yd, '%Y-%m-%d %H:%M')
+                == fmt_beijing(y, '%Y-%m-%d %H:%M'), fmt_beijing(yd)))
 
     def _bad(fn) -> bool:
         try:

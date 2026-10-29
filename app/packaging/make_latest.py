@@ -25,14 +25,25 @@ DEFAULT_DIST = APP_ROOT / 'dist'
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
 #: single source of truth, this only keeps standalone runs usable.
-DEFAULT_VERSION = '0.1.5'
+DEFAULT_VERSION = '0.1.6'
 DEFAULT_MIN_VERSION = '0.1.4'
-DEFAULT_ROLLBACK_VERSION = '0.1.4'
+DEFAULT_ROLLBACK_VERSION = '0.1.5'
 DEFAULT_ENTRY = '好想跑.exe'
 
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.1.6': [
+        '策略 geoFence 为 null 时回退 getGeoFenceForRun，地图定位到围栏中心',
+        '点位接口 10603 限流时按账号/跑区/距离复用缓存，不再误报点位读取失败',
+        '打卡点命中半径由后端下发（25 m），检查表不再用 40 m 误判全过',
+        '补跑开始时间保留秒和毫秒，不再整分对齐',
+        '提交前检查表新增：跑步冻结期、人脸抽检、距离达标',
+        'iOS 全链统一 UA（含 OBS 直传），不再出现 Python-urllib 与平台 UA 混用',
+        'iOS 设备指纹补兜底：appInstallTime 不发 0，DeviceId 不为空',
+        '重做应用图标：16–256 多尺寸 .ico，任务栏/标题栏不再发糊',
+        '账号页显示实际 UA / 屏幕倍率 / 安装天数；诊断包补客户端与最近回执',
+    ],
     '0.1.5': [
         '提交前按官方风格预览数据：配速/步频/步幅/海拔 + 每公里表',
         '每公里配速强制有差异，不再出现相同配速',

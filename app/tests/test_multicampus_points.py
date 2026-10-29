@@ -282,23 +282,83 @@ def test_fetch_run_policy_never_mixes_modes(tmp_path, monkeypatch):
     assert data['geoFence']['geoFences'][0]['id'] == 2
 
 
-def test_policy_without_fence_never_falls_back_to_legacy():
+def test_policy_without_fence_falls_back_only_when_section_is_missing():
     class _NoNetwork:
         def request(self, *a, **k):
-            raise AssertionError('policy fence must not hit getGeoFenceForRun')
+            raise AssertionError('explicit empty fence must not hit the network')
 
     acct = Account(name='a', uid='1', token='x')
+    # `geoFences: []` is an explicit "no fence": authoritative.
     fence = P.fetch_fence(_NoNetwork(), acct,
                           policy_data={'geoFence': {'geoFences': []}})
     assert fence['polygon'] == []
     assert fence['source'] == 'policy-empty'
 
-    # A policy reply with no fence section is also authoritative: the official
-    # isInArea only reads the policy cache, never GeoFenceBean2.
-    fence = P.fetch_fence(_NoNetwork(), acct,
-                          policy_data={'runAreaModels': []})
-    assert fence['polygon'] == []
-    assert fence['source'] == 'policy-empty'
+    # A JSON null (live frozen account) is not a section.  The school's ring
+    # still exists on getGeoFenceForRun, so use it instead of claiming "none".
+    class _Legacy:
+        def request(self, acct_, path, payload=None, retries=0):
+            assert path.endswith('getGeoFenceForRun'), path
+            return {'json': {'error': 10000, 'message': '', 'data': {
+                'geoFences': [{'id': 1939, 'name': '学校', 'points': [
+                    {'glat': 22.4098, 'glon': 112.9399},
+                    {'glat': 22.4098, 'glon': 112.9416},
+                    {'glat': 22.4116, 'glon': 112.9416},
+                ]}]}}}
+
+    fence = P.fetch_fence(_Legacy(), acct, policy_data={'geoFence': None})
+    assert fence['source'] == 'legacy-fallback'
+    assert len(fence['polygons']) == 1
+    assert fence['center'][0] == pytest.approx(22.4104, abs=1e-3)
+    assert fence['center'][1] == pytest.approx(112.9410, abs=1e-3)
+
+
+def test_json_null_fence_is_not_a_section():
+    assert POL.has_fence_section({'geoFence': None}) is False
+    assert POL.has_fence_section({'geoFence': 'null'}) is False
+    assert POL.has_fence_section({'runAreaModels': []}) is False
+    assert POL.has_fence_section({'geoFence': {'geoFences': []}}) is True
+
+
+def test_rate_limited_fetch_reuses_cache_from_a_different_anchor(monkeypatch):
+    import time
+
+    cached = {'ts': time.time(), 'points': [
+        {'lat': 22.41, 'lon': 112.94, 'name': '点位2', 'isFixed': 1,
+         'isMustPoint': False, 'seq': None},
+    ]}
+    monkeypatch.setattr(
+        P, '_load_cache',
+        lambda: {'1|2||23.4732|116.7967|d2500': cached})
+    pts = P.newest_cached_points('1', '2', None, 2500)
+    assert pts and pts[0]['name'] == '点位2'
+    assert pts[0]['isMustPoint'] is True      # normalized on read
+    # A different distance must not reuse the 2.5 km set.
+    assert P.newest_cached_points('1', '2', None, 3000) is None
+
+
+def test_fetch_points_uses_anchor_agnostic_cache_on_10603(monkeypatch):
+    import time
+
+    class _Client:
+        _ns = object()
+
+        def request(self, *a, **k):
+            return {'json': {'error': P.RATE_LIMIT_ERR, 'message': 'limited'}}
+
+    cached = {'ts': time.time(), 'points': [
+        {'lat': 22.41, 'lon': 112.94, 'name': '点位1', 'isFixed': 0,
+         'isMustPoint': False, 'seq': 1},
+    ]}
+    monkeypatch.setattr(
+        P, '_load_cache',
+        lambda: {'1|2||23.4732|116.7967|d2500': cached})
+    monkeypatch.setattr(P.netsec, 'build_envelope',
+                        lambda *a, **k: {'json': 'x'})
+    monkeypatch.setattr(P, '_host', lambda: 'example.test')
+    acct = Account(name='a', uid='1', token='x', unid=2)
+    pts = P.fetch_points(_Client(), acct, 22.41, 112.94, distance_m=2500)
+    assert [p['name'] for p in pts] == ['点位1']
 
 
 def test_geo_fences_accepts_list_and_json_string_shapes():
@@ -525,14 +585,16 @@ def test_empty_points_block_unless_operator_skips_them(tmp_path, monkeypatch):
     api, reached = _submit_api(
         tmp_path, monkeypatch,
         {'policy': 0, 'runRuleModel': {}})
-    res = api.real_submit_run(km=1.0, pace=6.0)
+    res = api.real_submit_run(km=1.0, pace=6.0, days_ago=1)
     assert not reached
     assert res['code'] != 200
     assert '打卡点' in res['message']
     assert '跳过打卡点' in res['message']
 
-    # The explicit checkbox is the only way through.
-    res = api.real_submit_run(km=1.0, pace=6.0, use_points=False)
+    # The explicit checkbox is the only way through.  Pin a past date: the
+    # 09:00-22:00 window cannot fit "today" before 09:06 or after ~21:54, and
+    # this test must not depend on the wall clock.
+    res = api.real_submit_run(km=1.0, pace=6.0, use_points=False, days_ago=1)
     assert reached, res
 
 
@@ -566,7 +628,7 @@ def test_freeze_warns_but_does_not_block(tmp_path, monkeypatch):
         tmp_path, monkeypatch,
         {'policy': 0, 'freezeRunTime': 120,
          'runRuleModel': {'minDistance': 1000}})
-    res = api.real_submit_run(km=1.0, pace=6.0, use_points=False)
+    res = api.real_submit_run(km=1.0, pace=6.0, use_points=False, days_ago=1)
     assert reached, res
     assert 'REACHED_GENERATE' in res['message']
 
@@ -635,7 +697,7 @@ def test_generic_fence_failure_may_reuse_an_already_saved_centre(
     res = api.real_submit_run(
         km=1.0, pace=6.0,
         waypoints=[(22.41, 112.94), (22.42, 112.95)],
-        use_points=False)
+        use_points=False, days_ago=1)
     assert reached, res
     # The stored coordinate is reused, not overwritten and not re-saved.
     assert not saved
@@ -688,7 +750,7 @@ def test_submit_sequential_orders_points_by_number(tmp_path, monkeypatch):
         raise RuntimeError('REACHED_GENERATE')
 
     monkeypatch.setattr(BAPI, 'generate_run_data', boom)
-    api.real_submit_run(km=1.0, pace=6.0)
+    api.real_submit_run(km=1.0, pace=6.0, days_ago=1)
     assert captured.get('sequential') is True
     assert captured.get('waypoints')[0] == (pts[1]['lat'], pts[1]['lon'])
     assert captured.get('waypoints')[1] == (pts[0]['lat'], pts[0]['lon'])

@@ -109,11 +109,49 @@ def test_ios_header_json_is_valid_json():
 
 
 def test_user_agent_matches_platform_and_ios_major():
+    # Android: the official dex sets no custom UA, so OkHttp's default is the
+    # honest wire value (antiban review, ANTI-FLAG-AUDIT.md).
     assert user_agent(_account(platform='android')) == 'okhttp/4.12.0'
-    assert 'Darwin/24.' in user_agent(_account(osVersion='18.1'))
-    assert 'Darwin/23.' in user_agent(_account(osVersion='17.7.2'))
-    assert 'Darwin/22.' in user_agent(_account(osVersion='16.7.10'))
-    assert 'Python-urllib' not in user_agent(_account(osVersion='18.1'))
+    # iOS: NSURLSession default shape <App>/<ver> (iPhone; iOS <ver>; Scale/n).
+    ua = user_agent(_account(osVersion='18.1'))
+    assert ua == 'SWCampus/7.3.40 (iPhone; iOS 18.1; Scale/3.00)'
+    assert user_agent(_account(osVersion='16.7.10')).endswith(
+        '(iPhone; iOS 16.7.10; Scale/3.00)')
+    assert 'Darwin/' not in ua and 'CFNetwork/' not in ua
+    # The UA version must never disagree with the signed appVersion.
+    assert '/%s ' % IOS_APP_VERSION in ua + ' '
+    assert 'Python-urllib' not in ua
+
+
+def test_ios_ua_scale_follows_the_profile_pixels():
+    # @2x devices must not advertise Scale/3.00.
+    acct = _account(physicPixel='828x1792', logicPixel='414x896')
+    assert user_agent(acct).endswith('Scale/2.00)')
+
+
+def test_ios_ua_refuses_an_impossible_scale():
+    # A corrupt profile (physic == logic, or 4x) would otherwise advertise a
+    # scale no iPhone has.
+    for physic, logic in (('1170x2532', '1170x2532'),
+                          ('1560x3384', '390x846')):
+        acct = _account(physicPixel=physic, logicPixel=logic)
+        assert user_agent(acct).endswith('Scale/3.00)')
+
+
+def test_ios_header_install_time_never_sends_zero():
+    headers = build_ios_headers(_account(appInstallTime='0'),
+                                '1792828000000', 'nonce-9')
+    # 3 days before the request timestamp, like the reference builder.
+    assert headers['appInstallTime'] == 1792828000000 - 3 * 86_400_000
+
+
+def test_ios_header_device_id_is_never_empty():
+    first = build_ios_headers(_account(DeviceId=''), '1792828000000', 'n-a')
+    second = build_ios_headers(_account(DeviceId=''), '1792828000100', 'n-b')
+    assert first['DeviceId']
+    # Stable per process: a per-request UUID would be its own signal.
+    assert first['DeviceId'] == second['DeviceId']
+    assert first['CustomDeviceId'] == first['DeviceId'] + '_iOS_sportsWorld_campus'
 
 
 def test_header_sign_uses_ios_serializer(monkeypatch):

@@ -1313,7 +1313,10 @@ class ReplicaApi:
                 fence['center'] = (acct.center_lat, acct.center_lng)
                 fence['center_source'] = 'manual'
                 return fence
-            raise P.FenceNotConfigured('学校未配置跑步围栏，且本地没有校区坐标')
+            # Keep the reason: a failed legacy fallback ("读取失败") must not
+            # read like "this school has no fence".
+            reason = fence.get('reason') or '学校未配置跑步围栏'
+            raise P.FenceNotConfigured('%s，且本地没有校区坐标' % reason)
 
         from ..domain import routes as RT
         if len(polygons) == 1:
@@ -1957,13 +1960,20 @@ class ReplicaApi:
             dist_m = max(1, int(round(float(distance_m))))
         except (TypeError, ValueError):
             dist_m = CAMPUS_POINTS_DISTANCE_M
+        # The checkpoint hit radius is a protocol constant
+        # (RunSeqLocationManager ticks at `distance <= 25.0`).  The run page
+        # checklist used to hard-code 40 m, so it could show "all points hit"
+        # for a route the server would score as incomplete.  Send the value
+        # with the points so the UI never re-invents it.
+        from ..domain.routes import HIT_RADIUS_M
         out = {'unid': acct.unid, 'fence': None, 'fences': [],
                'campuses': None, 'polygon': None, 'center': None,
                'errors': [], 'notes': [],
                'fence_missing': False, 'fence_count': 0,
                'points_missing': False, 'points_empty': False,
                'run_area': None, 'run_area_valid': None,
-               'run_areas': [], 'distance_m': dist_m}
+               'run_areas': [], 'distance_m': dist_m,
+               'hit_radius_m': HIT_RADIUS_M}
 
         # 0) The account's run areas come from runModePolicy, exactly like
         # `RunPolicyViewModel.getPolicy()` (selectUnid = this account's unid).
@@ -3053,11 +3063,43 @@ class ReplicaApi:
         from ..diagnostics import collector as D
         from ..domain import safety as S
         try:
+            extra = {'generated_by': 'replica_api',
+                     'build': build_info(),
+                     'session_present': bool(self._real_account())}
+            acct = self._real_account()
+            if acct is not None:
+                # One line per wire-visible identity field: when a report says
+                # "iOS behaves differently", this is the first thing to check.
+                from ..transport.realclient import user_agent
+                extra['client'] = {
+                    'platform': acct.platform,
+                    'model': acct.deviceName,
+                    'os': acct.osVersion,
+                    'app_version': acct.appVersion,
+                    'user_agent': user_agent(acct),
+                }
+                # Last local submission window.  When a report says "提交没入账",
+                # the first question is which slot the tool actually claimed;
+                # this answers it without asking the user to dig through files.
+                try:
+                    rows = self._receipt_store().list(str(acct.uid),
+                                                      str(acct.unid))
+                    last = max(rows, key=lambda r: int(r.get('start') or 0),
+                               default=None)
+                except Exception:  # noqa: BLE001 - diagnostics must not fail
+                    last = None
+                if last:
+                    # NB: the collector drops top-level keys containing "ip",
+                    # and "receipt" contains it -- hence last_submission.
+                    extra['last_submission'] = {
+                        'state': last.get('state'),
+                        'start': S.fmt_beijing(last.get('start')) if last.get('start') else '',
+                        'stop': S.fmt_beijing(last.get('stop')) if last.get('stop') else '',
+                        'distance_m': last.get('distance_m'),
+                    }
             info = D.collect(crypto_backend='netsec',
                              app_version=version_string(False),
-                             extra={'generated_by': 'replica_api',
-                                    'build': build_info(),
-                                    'session_present': bool(self._real_account())})
+                             extra=extra)
             return _ok({'info': info, 'text': D.render(info, 'text'),
                         'at': S.fmt_beijing(S.now_ms())})
         except Exception as e:  # noqa: BLE001
