@@ -21,7 +21,7 @@ GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两�
 - `https://gh.llkk.cc/` + 链接（时好时坏）
 
 例如：
-`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.5/haoxiangpao_v0.1.5_win64_setup.exe`
+`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.6/haoxiangpao_v0.1.6_win64_setup.exe`
 
 注意：
 
@@ -33,7 +33,7 @@ GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两�
 
 会先让你登录。第一次登录要等 5–15 秒，不是卡死了。
 
-登录后会先显示 4 步新手引导；之后可以在「设置 → 关于 → 新手引导」重新打开。
+登录后会先显示 5 步新手引导；之后可以在「设置 → 关于 → 新手引导」重新打开。
 `data` 文件夹会自动出现，里面是登录状态和缓存。想清空就整个删掉，下次重新登录。
 
 ## 路线怎么选
@@ -51,7 +51,7 @@ GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两�
 
 两种方式都不会动 `data`。也可以手动下新的安装包或压缩包，覆盖旧目录，`data` 留着别删。
 
-需要回退到 0.1.4：下载 v0.1.4 的 zip 或安装包覆盖安装，`data` 同样保留；
+需要回退到 0.1.5：下载 v0.1.5 的 zip 或安装包覆盖安装，`data` 同样保留；
 `latest.json` 的 `rollback` 字段给出了四个下载地址。
 
 仓库里的 `latest.json` 是给程序检查更新用的，普通使用不用管。
