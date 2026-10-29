@@ -14,6 +14,7 @@ import bisect
 import json
 import math
 import random
+import re
 import time
 import uuid
 from .crypto import jbool, official_presign, official_sign
@@ -268,10 +269,11 @@ def _sample_loop(poly: list, n_points: int, target_m: float | None,
 
 
 def _passes_near(pts: list[dict], lat: float, lng: float,
-                 radius_m: float = 40.0) -> bool:
-    """`src/track/wire.rs::passes_point` — same 40 m tolerance.
+                 radius_m: float = 25.0) -> bool:
+    """`RunRanLocationManager.passPoint` — the official pass radius is 25 m.
 
-    Upstream excludes anomaly points (ptype == -1); we never generate any.
+    Both the random and sequential managers use ``distance <= 25.0``; the old
+    40 m here marked points as passed that the real client would never tick.
     """
     for p in pts:
         dy = (p['lat'] - lat) * 110540.0
@@ -279,6 +281,29 @@ def _passes_near(pts: list[dict], lat: float, lng: float,
         if dx * dx + dy * dy <= radius_m * radius_m:
             return True
     return False
+
+
+def _point_number(point: dict):
+    """School's point number, from ``position``/``pointName``/``id``."""
+    for key in ('seq', 'position'):
+        try:
+            return int(point.get(key))
+        except (TypeError, ValueError):
+            continue
+    name = str(point.get('pointName') or point.get('name') or '')
+    match = re.search(r'(\d+)\s*$', name) or re.search(r'(\d+)', name)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _order_checkpoints(points: list[dict]) -> list[dict]:
+    """Stable order by the school's point number (sequential schools)."""
+    def key(point):
+        number = _point_number(point)
+        return (number is None, number if number is not None else 0)
+
+    return sorted(points, key=key)
 
 
 def _bearing_deg(a: dict, b: dict) -> float:
@@ -307,8 +332,12 @@ def _nearest_index(pts: list[dict], lat: float, lng: float) -> int:
     return min(range(len(pts)), key=lambda i: d2(pts[i]))
 
 
-def _snap_to_waypoints(pts: list[dict], waypoints: list, limit_m: float = 35.0):
-    """Guarantee every checkpoint is physically passed (isPass uses 40 m)."""
+def _snap_to_waypoints(pts: list[dict], waypoints: list, limit_m: float = 20.0):
+    """Guarantee every checkpoint is physically passed.
+
+    The official client ticks a point at 25 m; snapping within 20 m leaves
+    room for the GPS jitter added afterwards.
+    """
     def d2(a, b):
         return math.hypot((b[1] - a[1]) * 111320 * math.cos(math.radians(a[0])),
                           (b[0] - a[0]) * 110540)
@@ -670,7 +699,7 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
     the legacy loop/repeat behaviour; false keeps the drawn start-to-end
     polyline open (it is stretched to the target distance, never joined back
     to the first point).  Every waypoint is snapped so it is passed within
-    ~35 m (the server's isPass threshold is 40 m).
+    ~20 m (the official `isPass` threshold is 25 m).
 
     ``dist_fractions`` places each sample at that fraction of the distance
     (instead of even spacing), so a run can speed up and slow down.
@@ -942,7 +971,9 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       start_ms: int | None = None,
                       closed: bool = True,
                       run_uuid: str | None = None,
-                      km_times: list[float] | None = None) -> dict:
+                      km_times: list[float] | None = None,
+                      run_area_id: int | None = None,
+                      sequential: bool = False) -> dict:
     """Full forged record. 2.5km default mirrors the verified mock sample.
 
     waypoints=[(lat,lng),...] routes through those checkpoints; ``closed``
@@ -967,6 +998,10 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     When present it fixes the duration at the sum of the entries.  Without it
     each kilometre is drawn independently around ``pace_min_per_km`` and the
     draws are rescaled so the duration is exactly ``distance * pace``.
+
+    ``sequential`` keeps the checkpoints in the school's point-number order;
+    the official ``RunSeqLocationManager`` consumes them from index 0, so
+    reordering them to put mandatory points first would break the run.
     """
     # There is deliberately no built-in campus here.  Callers either pass the
     # account's real fence centre or a route whose first point is the centre;
@@ -1370,8 +1405,16 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         # maps the whole list) — the name "FivePoint" describes the usual campus,
         # not a fixed count.  Truncating to 5 used to drop points silently and
         # made schools with any other count fail validation.
-        chosen = ([c for c in checkpoints if c.get('isMustPoint')]
-                  + [c for c in checkpoints if not c.get('isMustPoint')])
+        #
+        # A sequential school must keep the school's numbering: the official
+        # `SportRecord.getFivePoint()` sorts by `position` and
+        # `RunSeqLocationManager` consumes index 0.  Only the random mode may
+        # put mandatory points first.
+        if sequential:
+            chosen = _order_checkpoints(checkpoints)
+        else:
+            chosen = ([c for c in checkpoints if c.get('isMustPoint')]
+                      + [c for c in checkpoints if not c.get('isMustPoint')])
         five_point = []
         for k, c in enumerate(chosen):
             gcj = (float(c['lat']), float(c['lon']))
@@ -1379,13 +1422,23 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                         else coords.gcj02_to_bd09(*gcj)[0]),
                   float(c.get('bd_lon') if c.get('bd_lon') is not None
                         else coords.gcj02_to_bd09(*gcj)[1]))
+            raw_fixed = c.get('isFixed')
+            if isinstance(raw_fixed, str):
+                fixed = 1 if raw_fixed.strip().lower() in (
+                    '1', 'true', 'yes', 'y', '是') else 0
+            else:
+                try:
+                    fixed = int(raw_fixed) if raw_fixed is not None else (
+                        1 if c.get('isMustPoint') else 0)
+                except (TypeError, ValueError):
+                    fixed = 1 if c.get('isMustPoint') else 0
             five_point.append({
                 'flag': locs[0]['ts'],
                 'id': c.get('pid') if c.get('pid') is not None else k + 1,
-                'isFixed': 1 if (c.get('isFixed') or c.get('isMustPoint')) else 0,
-                # upstream: passes_point() — the track must actually come
-                # within 40 m, it is not simply asserted true
-                'isPass': _passes_near(locs, gcj[0], gcj[1], 40.0),
+                'isFixed': fixed,
+                # Official `RunRanLocationManager.passPoint()` ticks a point at
+                # 25 m; the track must actually come that close, not 40 m.
+                'isPass': _passes_near(locs, gcj[0], gcj[1], 25.0),
                 'lat': round(bd[0], 6),
                 'lon': round(bd[1], 6),
                 'pointName': c.get('name') or '',
@@ -1408,7 +1461,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                 'flag': locs[0]['ts'],
                 'id': k + 1,
                 'isFixed': 0,
-                'isPass': _passes_near(locs, gcj[0], gcj[1], 40.0),
+                'isPass': _passes_near(locs, gcj[0], gcj[1], 25.0),
                 'lat': round(bd[0], 6),
                 'lon': round(bd[1], 6),
                 'pointName': '',
@@ -1445,7 +1498,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     point_json_entity = {
         'useZip': False,
         'fivePointJson': json.dumps(five_point, separators=(',', ':')),
-        'runAreaId': None,
+        'runAreaId': int(run_area_id) if run_area_id is not None else -1,
         'geoFencesJson': None,
         'freedomShowFence': False,
     }

@@ -123,27 +123,62 @@ POST api/v560/get/1/distance/2500
   "longitude": 112.94, "latitude": 22.41,
   "sign": "md5(http://host/path + SALT)",
   "uuid": "...",
-  "selectedUnid": "47203",
+  "selectedUnid": 47203,
   "runec": "<信封>",
-  "runAreaId": "..."        // 可选
+  "runAreaId": 22        // 当前跑区 id；没有跑区时 -1
 }
 ```
 
+- `selectedUnid` 是 **int**，不是字符串：反编译
+  `CommonApiManager$requestFivePoint$1` 的字段是 `int $unid`，直接
+  `jSONObject.put("selectedUnid", this.$unid)`。旧抓包里的字符串只是当时的
+  写法，不能作为类型依据。
+- `runAreaId` 不是可选：官方 `requestFivePoint` 总是发送，默认 `-1`。
+  它来自 `runModePolicy` 的 `runAreaModels[].id`，和围栏的
+  `runAreaModels[].fenceIds` 是同一套账号跑区数据。
+
 - 路径末尾是**服务端查询距离（米）**，不是固定 `1`。真机抓包见上游 PR #106
   （`.../distance/2000`）；写死 `1` 会让服务端只返回最小/固定点位集。
-- **UI 侧固定用 2500 m 查询**（`CAMPUS_POINTS_DISTANCE_M`），不随「目标距离」
-  变化；这样同一次登录看到的点位稳定，不会因为目标距离改了就让旧点位“过期”。
+- **UI 按当前「目标距离」查询**（`distance_m`），改距离后 900 ms 防抖重拉；
+  缓存键包含距离，不会拿 2 km 的点位去跑 4 km。
 - **提交时仍按目标距离查询**，并把路线吸附到目标距离对应的缺失点位；服务器确实
   会按距离返回不同点位（实测 2.5 km 与 4.1 km 相差一个点）。
 - 限流码 `10603`：命中后优先用 300s 缓存；没有缓存就报错，不硬刷。
 - 缓存键：`uid + unid + runAreaId + 锚点(~11m) + 查询距离`。
+- **必经点看 `isFixed`**：官方 `RunRanLocationManager.passPoint()` 在
+  `isFixed == 1` 时把点位记为 type 2（必经），本账号点位只下发 `isFixed`，
+  没有 `isMustPoint`。工具两者都保留，并由 `isFixed` 推导必经点。
+- **命中半径 25 m**：官方随机跑、顺序跑、`FivePointPlugin` 都是
+  `distance <= 25.0` 才算通过；工具的路点吸附/`isPass`/漏点检查统一为
+  25 m（吸附余量 20 m）。
+- **顺序跑按编号排序**：`policy == 1` 时按 `position` 或 `pointName` 中的
+  数字排序（服务端数组可能无序，实测 `点位2/3/1/7/4`），
+  `fivePoint.position` 与轨迹顺序一致。
 
 ### 围栏
 
 ```json
-POST api/v1/getGeoFenceForRun   {}
-→ data.geoFences[0].points[]  { glat, glon, pointsNumber }
+POST api/v1/getGeoFenceForRun   {"geoFenceUpdateTime": 0}
+→ data.geoFences[].points[]  { glat, glon, pointsNumber }
 ```
+
+> `geoFences` 可能有多条（多校区）。官方不从 `fences[0]` 猜：`runModePolicy`
+> 的 `runAreaModels[].fenceIds` 才是账号跑区对应的围栏 id。官方选跑区用
+> `SportTypeViewModel.selectedPosition`（默认 0），不是 `RunAreaModels.select`
+> ——后者在 1.3.0 反编译源码里没有调用。工具默认取 `runAreaModels[0]`，多跑区
+> 时用下拉框切换；`fenceIds` 命中的全部围栏都保留，任意一条包含轨迹即在内。
+> 没有跑区数据时使用全部围栏。`geoFences` 为空表示学校没有配置围栏，官方
+> 客户端直接视为「在区域内」。
+>
+> 多跑区时跑步页会显示跑区下拉框（对应官方 `RunningAreaDialog`），选择后
+> 以 `run_area_id` 重拉围栏/点位，提交带同一个 id。`valid == false` 的跑区
+> 显示为灰色不可选；默认跑区无效时提交停止并提示重新选择。缺 `valid` 字段
+> 按“未知”处理。`runModePolicy` 只采用一个完整回复，不把两个 `runMode` 的
+> 跑区/围栏拼接。
+>
+> 围栏校验只信 `runModePolicy` 的 `geoFence`；没有 `geoFence` 段也按无围栏
+> 处理，不再回退 `getGeoFenceForRun`（官方 `isInArea` 不读那份
+> `GeoFenceBean2`）。`runModePolicy` 本身取不到时停止提交。
 
 这个校区**只填 `glat/glon`**，不填 BD 坐标。`points.fetch_fence()` 负责兼容并算出中心点。
 
@@ -165,7 +200,7 @@ POST api/v1/getGeoFenceForRun   {}
 | `totalDis` / `validDis` | 米 | 距离 |
 | `totalTime` / `validTime` | 秒 | 时长 |
 | `startTime` / `stopTime` | 毫秒 | 时间窗；补跑时按所选日期/时间生成（今天..3 天前，09:00–22:00，结束也须 ≤ 22:00） |
-| `speed` | 秒/公里 × 1000 | 2.5km/900s → `6000` |
+| `speed` | 分钟/公里 × 1000 | 2.5km/900s → `6000`（即 6'00"；官方 `setSpeed` 存分钟×1000） |
 | `avgStepFreq` | 步/分 | 步频 |
 | `totalSteps` | 步 | 总步数 |
 | `totalAscent` / `totalDescent` | 米 | 爬升/下降 |
@@ -206,6 +241,9 @@ speed_json, step_freq_json, laps_json, runFaceCheck
 - `speed_json` / `step_freq_json` 的 `queueNum` 是窗内下标，`id` 是本次
   跑步内递增序号；末窗不足 10 秒时距离/步数按实际时长缩放，避免回放
   算出 300+ 步/分。
+- `laps_json[].avgPace` 的单位是**分钟/公里**：官方 `RunLapsFullAdapter`
+  用 `(int)(avgPace * 60)` 格式化成 `i'rr"`。写秒会让手机把 6'00" 显示成
+  360'00"。工具内部 `km_splits[].pace` 才是秒/公里，两者不要混用。
 
 ---
 

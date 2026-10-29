@@ -69,7 +69,13 @@ class FakeClient:
         if 'runModePolicy' in path:
             if self.policy is None:
                 return biz(401, message='Unauthorized')
-            return biz(10000, data=self.policy)
+            # The real reply carries runAreaModels and geoFence together.
+            # Keep the fake faithful: CLI validates only this fence.
+            data = dict(self.policy)
+            data.setdefault('geoFence', {'geoFences': ([
+                {'name': '学校', 'points': [{'glat': a, 'glon': b}
+                                            for a, b in self.fence]}] if self.fence else [])})
+            return biz(10000, data=data)
         if 'distance' in path:
             if self.points is None:
                 return biz(401, message='Unauthorized')
@@ -200,12 +206,11 @@ def test_must_points_malformed():
 
 
 def test_dry_run_without_policy():
-    """Token expired: policy and points both 401 -> plain loop, still valid."""
+    """No policy means no authoritative fence, so the pipeline must stop."""
     c = FakeClient()
     code, out = run(c, BASE_ARGV + ['--dry-run'])
-    check('dry-run survives no policy', code == 0, code)
-    check('falls back to a plain loop', '使用本地环形路线' in out)
-    check('selDistance falls back to distance', 'selDistance=2000' in out)
+    check('dry-run without policy stops', code != 0, code)
+    check('and names the policy', '跑步策略' in out)
 
 
 def test_submit_accepted():
@@ -434,7 +439,7 @@ def test_geofence_warning():
     code, out = run(c, BASE_ARGV + ['--dry-run', '--route-file', route,
                                     '--smooth', '0'])
     check('outside-fence route still runs (warning only)', code == 0, code)
-    check('fence violation reported', '在围栏外' in out)
+    check('fence violation reported', '不在任何围栏内' in out)
     check('fence check mentions the farthest point', '最远' in out)
 
     # generous fence: same route, fully inside

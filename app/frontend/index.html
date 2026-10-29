@@ -536,11 +536,13 @@
               <div class="pt-line">
                 <span class="tag warn" id="ptBadge">未加载点位</span>
                 <span class="tag" id="fenceChip">围栏未加载</span>
+                <select id="runAreaSel" class="run-area-sel" aria-label="跑步跑区" hidden></select>
                 <button class="btn small ghost" id="fetchPoints">刷新</button>
+                <button class="btn small ghost" id="setCampusBtn" title="学校没有围栏时：先把地图拖到学校，再点这里保存校区坐标">设为校区</button>
                 <button class="btn small ghost" id="togglePts">收起</button>
               </div>
-              <label class="free-run-line" title="学校没有打卡点、且策略允许自由跑时使用；有必经点的学校会被后端拒绝">
-                <input type="checkbox" id="freeRun"> 自由跑（学校未配置打卡点）
+              <label class="free-run-line" title="仅用于学校确实没有打卡点的场景；有必经点的学校会被后端拒绝。注意：本工具尚未实现官方自由跑（serviceType=3）">
+                <input type="checkbox" id="freeRun"> 跳过打卡点（无点位学校，非官方自由跑）
               </label>
 
               <div class="pt-mini" id="ptList"></div>

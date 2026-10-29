@@ -176,6 +176,24 @@ class _FakeResponse:
 
 
 class DownloadTest(unittest.TestCase):
+    def test_second_start_returns_the_running_state(self):
+        # `start_download` assigns `_DOWNLOAD_STATE`; without the global
+        # declaration the early-return path raised UnboundLocalError.
+        class _Alive:
+            def is_alive(self):
+                return True
+
+        old_thread, old_state = updater._DOWNLOAD_THREAD, updater._DOWNLOAD_STATE
+        try:
+            updater._DOWNLOAD_THREAD = _Alive()
+            updater._DOWNLOAD_STATE = {'state': 'downloading', 'received': 7}
+            state = updater.start_download('https://example.com/a.zip',
+                                           tempfile.gettempdir())
+            self.assertEqual(state, {'state': 'downloading', 'received': 7})
+        finally:
+            updater._DOWNLOAD_THREAD = old_thread
+            updater._DOWNLOAD_STATE = old_state
+
     def test_download_verifies_hash_and_size(self):
         payload = b'zip-bytes' * 500
         sha = hashlib.sha256(payload).hexdigest()

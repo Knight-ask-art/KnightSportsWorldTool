@@ -967,6 +967,10 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
   border:1px solid var(--rule);border-radius:var(--sketch-sm);background:var(--paper-2);
   color:var(--ink);font-size:10.5px;padding:3px 5px;
 }
+.run-area-sel{
+  max-width:150px;border:1px solid var(--rule);border-radius:var(--sketch-sm);
+  background:var(--paper-2);color:var(--ink);font-size:10.5px;padding:2px 4px;
+}
 .mode-tab{position:relative;border:0;background:transparent;color:var(--pencil);font-size:11.5px;padding:0 0 5px}
 .mode-tab.active{color:var(--ink);font-weight:600}
 .mode-tab.active::after{

@@ -79,7 +79,8 @@ def test_every_kilometre_has_a_different_split():
     for seed in (1, 2, 5, 8):
         run = _run(seed)
         laps = OBS.build_laps(run, run['allLocJson'][0]['ts'])
-        paces = [round(lap['avgPace']) for lap in laps]
+        # OBS laps carry minutes/km; the official adapter multiplies by 60.
+        paces = [round(lap['avgPace'] * 60) for lap in laps]
         assert len(paces) >= 3, paces
         assert len(set(paces)) == len(paces), (seed, paces)
         assert max(paces) - min(paces) >= 10, (seed, paces)
@@ -123,6 +124,16 @@ def test_obs_laps_cover_the_run_exactly():
     assert all(lap['avgPace'] for lap in laps)
 
 
+def test_obs_lap_pace_is_minutes_per_km():
+    # The official adapter renders avgPace as minutes: (int)(avgPace * 60).
+    # Storing seconds made the phone show 360'00" for a 6'00" lap.
+    run = _run(1)
+    laps = OBS.build_laps(run, run['allLocJson'][0]['ts'])
+    assert 4.0 < laps[0]['avgPace'] < 12.0, laps[0]['avgPace']
+    expected = (run['sportTime'] / 60.0) / (run['juli'] / 1000.0)
+    assert abs(laps[0]['avgPace'] - expected) < 1.0
+
+
 def test_distance_follows_the_profile_not_the_clock():
     run = _run(1)
     pts = run['locPoints']
@@ -150,6 +161,40 @@ def test_km_times_must_match_the_kilometre_count():
         _run(1, km_times=[360, 360])
     with pytest.raises(ValueError):
         _run(1, km_times=[360, 0])
+
+
+def test_run_area_id_is_carried_into_the_point_entity():
+    run = _run(1, run_area_id=22)
+    assert run['fivePointJson']['runAreaId'] == 22
+    assert run['fixed_point_json']['runAreaId'] == 22
+    assert _run(1)['fivePointJson']['runAreaId'] == -1
+
+
+def test_pass_radius_matches_the_official_25m():
+    from replica.domain.rundata import _passes_near
+
+    pts = [{'lat': 22.41, 'lng': 112.94}]
+    assert _passes_near(pts, 22.41 + 24.0 / 110540, 112.94, 25.0)
+    assert not _passes_near(pts, 22.41 + 30.0 / 110540, 112.94, 25.0)
+
+
+def test_sequential_five_point_keeps_school_order_and_raw_isfixed():
+    cps = [
+        {'lat': 22.4108, 'lon': 112.9408, 'isMustPoint': False,
+         'isFixed': 0, 'name': '点位1', 'seq': 1},
+        {'lat': 22.4118, 'lon': 112.9418, 'isMustPoint': True,
+         'isFixed': 1, 'name': '点位2', 'seq': 2},
+        {'lat': 22.4100, 'lon': 112.9410, 'isMustPoint': False,
+         'isFixed': 0, 'name': '点位3', 'seq': 3},
+    ]
+    run = generate_run_data(
+        1.0, 6.0, 150,
+        waypoints=[(c['lat'], c['lon']) for c in cps],
+        checkpoints=cps, sequential=True, rng=random.Random(3))
+    assert [fp['pointName'] for fp in run['fivePoint']] == [
+        '点位1', '点位2', '点位3']
+    assert [fp['isFixed'] for fp in run['fivePoint']] == [0, 1, 0]
+    assert all(fp['isPass'] for fp in run['fivePoint'])
 
 
 def test_preview_returns_the_split_table(tmp_path):

@@ -1,8 +1,8 @@
 """Campus centre resolution.
 
-The submit coordinate must come from the account's real geofence.  A
-built-in fallback is worse than a failed request: the server stores the
-record either way, and a record in the wrong city cannot be undone.
+The submit coordinate prefers the account's real geofence.  A built-in city
+fallback is still forbidden: a record in the wrong city cannot be undone.
+Schools without a fence may use an operator-set centre or the first waypoint.
 """
 
 import json
@@ -16,6 +16,9 @@ FENCE = [
     (22.4000, 112.9300), (22.4000, 112.9500),
     (22.4200, 112.9500), (22.4200, 112.9300),
 ]
+POLICY = {'policy': 1, 'geoFence': {'geoFences': [
+    {'id': 1, 'name': '学校',
+     'points': [{'glat': a, 'glon': b} for a, b in FENCE]}]}}
 
 
 def _api(tmp_path, **session):
@@ -56,7 +59,7 @@ def test_session_without_coordinates_stays_unset(tmp_path):
 def test_ensure_fence_adopts_server_centre(tmp_path):
     api = _api(tmp_path)
     acct = api._real_account()
-    fence = api._ensure_fence(acct, FakeClient())
+    fence = api._ensure_fence(acct, FakeClient(), policy_data=POLICY)
     lat, lng = fence['center']
     assert abs(acct.center_lat - lat) < 1e-9
     assert abs(acct.center_lng - lng) < 1e-9
@@ -69,7 +72,9 @@ def test_ensure_fence_refuses_empty_fence(tmp_path):
     api = _api(tmp_path)
     acct = api._real_account()
     with pytest.raises(RuntimeError):
-        api._ensure_fence(acct, FakeClient(fence=[]))
+        api._ensure_fence(acct, FakeClient(fence=[]),
+                          policy_data={'policy': 1,
+                                       'geoFence': {'geoFences': []}})
     saved = json.loads((tmp_path / 'accounts_emu.json').read_text('utf-8'))
     assert 'lat' not in saved and 'lon' not in saved
 
@@ -102,9 +107,12 @@ def test_fetch_points_persists_the_resolved_centre(tmp_path, monkeypatch):
 def test_submit_stops_before_receipt_when_fence_is_unavailable(
         tmp_path, monkeypatch):
     from replica.transport import realclient as R
+    api = _api(tmp_path)
     monkeypatch.setattr(R, 'RealClient',
                         lambda *a, **k: FakeClient(fail=True))
-    r = _api(tmp_path).real_submit_run()
+    monkeypatch.setattr(api, '_fetch_run_policy', lambda *a, **k: {
+        'policy': 1, 'geoFence': {'geoFences': []}})
+    r = api.real_submit_run()
     assert r['code'] == 500
     assert '围栏' in r['message']
     receipts = tmp_path / 'submission_receipts'

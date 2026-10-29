@@ -96,9 +96,21 @@ function invalidateLiveRequests(){
 }
 
 /* ---------- map ---------- */
-const CENTER = [22.4108, 112.9408];
+/* Neutral fallback: the tool must never pretend another campus is yours.
+   A real session centre (fence or manual) replaces this once known. */
+const CENTER = [35.8617, 104.1954];
+const CENTER_ZOOM = 4;
 const map = L.map('map', {zoomControl: false, attributionControl: false, doubleClickZoom: false})
-  .setView(CENTER, 16);
+  .setView(CENTER, CENTER_ZOOM);
+
+function sessionCenter(){
+  const s = (typeof LIVE !== 'undefined' && LIVE.session) ? LIVE.session : null;
+  if(!s) return null;
+  const lat = +s.lat, lon = +s.lon;
+  if(!isFinite(lat) || !isFinite(lon)) return null;
+  if(Math.abs(lat) < 1e-6 && Math.abs(lon) < 1e-6) return null;
+  return [lat, lon];
+}
 
 /* 高德卫星/路网在 z19 对部分区域返回“此区域无卫星图”占位瓦片。
    把原生瓦片封顶在 z18，z19 由 Leaflet 放大 z18 影像，避免整屏占位图。 */
@@ -114,6 +126,7 @@ let fenceLayer = L.polygon([], {
   color: '#B6483C', weight: 1.8, dashArray: '6 5',
   fillColor: '#B6483C', fillOpacity: .035
 }).addTo(map).bindTooltip('跑步围栏', {sticky: true, className: 'pt-tip'});
+let extraFenceLayers = [];
 let fenceBounds = L.latLngBounds([]);
 const pointLayer = L.layerGroup().addTo(map);
 /* kept name for the existing route code; it contains only real checkpoints */
@@ -139,6 +152,9 @@ function renderPoints(points, opts){
       n: p.name || p.pointName || p.n || ('点位 ' + (i + 1)),
       lat: +lat, lng: +lng,
       must: p.isMustPoint != null ? !!p.isMustPoint : !!p.must,
+      isFixed: p.isFixed,
+      position: p.position,
+      seq: p.seq,
       r: 0
     };
   }).filter(p => isFinite(p.lat) && isFinite(p.lng));
@@ -176,37 +192,89 @@ function renderPoints(points, opts){
   const badge = $('#ptBadge');
   if(badge){
     if(freeRunOn()){
-      badge.textContent = '自由跑 · 不查点位';
+      badge.textContent = '跳过点位 · 不查打卡点';
       badge.className = 'tag warn';
     }else if(livePoints.length){
       badge.textContent = livePoints.length + ' 个 · ' + must + ' 必经';
       badge.className = 'tag ok';
+    }else if(LIVE.pointsEmpty){
+      badge.textContent = '无打卡点（需确认）';
+      badge.className = 'tag warn';
     }else{
       badge.textContent = '未加载点位';
       badge.className = 'tag warn';
     }
   }
   if(list && !livePoints.length){
-    list.innerHTML = '<div class="empty-state">' + (freeRunOn()
-      ? '自由跑模式：提交时不拉取打卡点。'
-      : (hasSession()
-        ? '服务器没有返回打卡点；点「刷新」重试。'
-        : '登录后从服务器拉取打卡点。')) + '</div>';
+    let msg;
+    if(freeRunOn()) msg = '已勾选「跳过打卡点」：提交时不拉取打卡点。';
+    else if(!hasSession()) msg = '登录后从服务器拉取打卡点。';
+    else if(LIVE.pointsEmpty) msg = '服务器没有返回打卡点，无法确认该校区是否允许自由跑；提交默认阻止。如已确认，请勾选「跳过打卡点」。';
+    else msg = '服务器没有返回打卡点；点「刷新」重试。';
+    list.innerHTML = '<div class="empty-state">' + msg + '</div>';
   }
   if(livePoints.length && opts.fit !== false){
     const b = L.latLngBounds(livePoints.map(p => [p.lat, p.lng]));
     map.fitBounds(b.pad(.18), runMapPadding());
   }
 }
-function setFence(polygon, name, opts){
-  const pts = (Array.isArray(polygon) ? polygon : [])
+function _fenceLatLngs(ring){
+  return (Array.isArray(ring) ? ring : [])
     .map(p => [p && (p.lat ?? p.glat), p && (p.lon ?? p.glon)])
     .filter(p => isFinite(p[0]) && isFinite(p[1]));
-  fenceLayer.setLatLngs(pts);
-  fenceLayer.setTooltipContent(esc(name || '跑步围栏') + (pts.length ? '' : '（未加载）'));
-  fenceBounds = L.latLngBounds(pts);
-  try{ routeFenceLayer.setLatLngs(pts); }catch(e){}
-  if(pts.length && (!opts || opts.fit !== false)) map.fitBounds(fenceBounds.pad(.18), runMapPadding());
+}
+function setFences(polygons, name, opts){
+  // The official `isInArea` accepts a point inside any matching fence, so
+  // draw every ring and keep the first one in `fenceLayer` for compatibility.
+  const rings = (Array.isArray(polygons) ? polygons : [])
+    .map(_fenceLatLngs).filter(r => r.length >= 3);
+  const first = rings.length ? rings[0] : [];
+  extraFenceLayers.forEach(layer => map.removeLayer(layer));
+  extraFenceLayers = [];
+  fenceLayer.setLatLngs(first);
+  rings.slice(1).forEach(ring => {
+    const layer = L.polygon(ring, {
+      color: '#B6483C', weight: 1.8, dashArray: '6 5',
+      fillColor: '#B6483C', fillOpacity: .035
+    }).addTo(map).bindTooltip('跑步围栏', {sticky: true, className: 'pt-tip'});
+    extraFenceLayers.push(layer);
+  });
+  const suffix = rings.length > 1 ? ('（' + rings.length + ' 个）')
+    : (rings.length ? '' : '（未加载）');
+  fenceLayer.setTooltipContent(esc(name || '跑步围栏') + suffix);
+  fenceBounds = L.latLngBounds([].concat(...rings));
+  try{
+    routeFenceLayer.setLatLngs(first);
+    routeFenceExtra.forEach(layer => routeMap.removeLayer(layer));
+    routeFenceExtra = [];
+    rings.slice(1).forEach(ring => {
+      const layer = L.polygon(ring, {
+        color: '#B6483C', weight: 1.6, dashArray: '6 5',
+        fillColor: '#B6483C', fillOpacity: .03
+      }).addTo(routeMap);
+      routeFenceExtra.push(layer);
+    });
+  }catch(e){}
+  if(first.length && (!opts || opts.fit !== false)){
+    map.fitBounds(fenceBounds.pad(.18), runMapPadding());
+  }
+}
+function setFence(polygon, name, opts){
+  setFences(polygon ? [polygon] : [], name, opts);
+}
+function fenceRingsFromData(d){
+  let rings = [];
+  if(d && Array.isArray(d.fences) && d.fences.length){
+    rings = d.fences.map(f => Array.isArray(f && f.points) ? f.points
+      : (Array.isArray(f) ? f : []));
+  }else if(d && Array.isArray(d.polygons) && d.polygons.length){
+    rings = d.polygons;
+  }else if(d && Array.isArray(d.polygon)){
+    rings = [d.polygon];
+  }
+  return rings.map(ring => (ring || []).filter(
+    p => p && isFinite(+(p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon))))
+    .filter(ring => ring.length >= 3);
 }
 
 let route = [];
@@ -231,14 +299,15 @@ function fitRunMap(){
   if(fenceBounds.isValid()){
     map.fitBounds(fenceBounds, runMapPadding());
   }else{
-    map.setView(CENTER, 16);
+    const c = sessionCenter();
+    map.setView(c || CENTER, c ? 16 : CENTER_ZOOM);
   }
 }
 
 /* ---------- route library map ---------- */
 const routeMap = L.map('routeMap', {zoomControl: true, attributionControl: true,
   scrollWheelZoom: false})
-  .setView(CENTER, 16);
+  .setView(CENTER, CENTER_ZOOM);
 L.tileLayer(
   'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
   {subdomains: '1234', maxNativeZoom: 18, maxZoom: 19, attribution: '高德卫星'}).addTo(routeMap);
@@ -246,6 +315,7 @@ let routeFenceLayer = L.polygon([], {
   color: '#B6483C', weight: 1.6, dashArray: '6 5',
   fillColor: '#B6483C', fillOpacity: .03
 }).addTo(routeMap);
+let routeFenceExtra = [];
 
 const routeHi = L.polyline([], {color: '#F2D25C', weight: 13, opacity: .45, lineCap: 'round'}).addTo(routeMap);
 const routeInk = L.polyline([], {color: '#2E4A7D', weight: 3, opacity: .95, lineCap: 'round'}).addTo(routeMap);
@@ -353,6 +423,10 @@ function autoFillDistanceFromRoute(m){
   el.value = String(Math.round(value * 100) / 100);
   refreshParams();
   updateRunDateLabel();
+  // The checkpoint endpoint is distance-scoped: the points already on the map
+  // belong to the old target.  Re-pull after the same debounce as a manual
+  // edit so submit does not route through points the user never saw.
+  schedulePointsForDistance();
   return true;
 }
 function redraw(){
@@ -396,7 +470,8 @@ function redraw(){
   if(!routeClosed) status = '开放路线 · 再点可以继续';
   else if(route.length < 3) status = '再点一个点形成闭合';
   else if(m < 80) status = '路线太短（<80m），画大一点';
-  else status = '闭合路线 · 打卡点 ' + (cov && cov.total ? (cov.passed + '/' + cov.total) : '未加载') + ' · ' + laps + ' 圈';
+  else status = '闭合路线 · 打卡点 ' + (cov && cov.total ? (cov.passed + '/' + cov.total)
+    : (LIVE.pointsEmpty ? '无（需确认）' : '未加载')) + ' · ' + laps + ' 圈';
   $('#routeNote').innerHTML = closed && m >= 80
     ? '<b>✓</b> ' + status
     : '<b>·</b> ' + status;
@@ -862,6 +937,7 @@ document.querySelectorAll('.rtab').forEach(t => {
     if(id === 'inKm') distanceManual = true;
     refreshParams();
     if(id !== 'inAlt') redraw();
+    if(id === 'inKm') schedulePointsForDistance();
     if(modelConfigured) refreshModel();
     scheduleModelPreview();
   });
@@ -871,6 +947,7 @@ document.querySelectorAll('[data-km]').forEach(b => {
     distanceManual = true;
     $('#inKm').value = b.dataset.km;
     refreshParams(); redraw(); updateRunDateLabel();
+    schedulePointsForDistance();
     if(modelConfigured) refreshModel();
     scheduleModelPreview();
   });
@@ -893,6 +970,7 @@ $('#randomParams').addEventListener('click', () => {
   $('#inPace').value = pick(paces);
   $('#inCad').value = pick(cads);
   refreshParams(); redraw(); updateRunDateLabel();
+  schedulePointsForDistance();
   if(modelConfigured) refreshModel();
   scheduleModelPreview();
   toast('随机档位已填入');
@@ -1214,7 +1292,12 @@ const startPage = (location.hash || '#overview').slice(1);
    from the local Python bridge.  No synthetic rows are generated.
    ============================================================ */
 const LIVE = {
-  session: null, checked: null, points: [], fence: [],
+  session: null, checked: null, points: [], fence: [], fences: [],
+  fenceMissing: false, fenceCount: 0, pointsMissing: false, pointsEmpty: false,
+  fenceError: '', pointsError: '', pointsDistance: 0,
+  runArea: null, runAreas: [], runAreaChoice: null, runAreaChoiceKey: '',
+  sequential: false,
+  freezeSeconds: 0, faceRequired: false, faceReason: '',
   records: [], recordsLoaded: false, recordsLoading: false, recordFilter: 'all',
   routes: [], selectedRoute: -1,
   routeFilter: 'all', rules: null, model: null, plan: null,
@@ -2291,6 +2374,7 @@ function renderSession(){
 async function liveInitSession(){
   const j = await liveApi('real_get_session');
   LIVE.session = liveOk(j) ? (j.data || {}) : {};
+  focusCampusOnMap();
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   if(!liveOk(j)) liveLog('读取会话失败', j.message || '', 'err');
   renderSession();
@@ -2371,11 +2455,27 @@ async function bootAuth(){
 function renderEmptyData(){
   invalidateLiveRequests();
   renderPoints([]);
-  setFence([], '跑步围栏');
+  setFences([], '跑步围栏');
   route = [];
   redraw();
   LIVE.points = [];
   LIVE.fence = [];
+  LIVE.fences = [];
+  LIVE.fenceMissing = false;
+  LIVE.fenceCount = 0;
+  LIVE.pointsMissing = false;
+  LIVE.pointsEmpty = false;
+  LIVE.fenceError = '';
+  LIVE.pointsError = '';
+  LIVE.pointsDistance = 0;
+  LIVE.runArea = null;
+  LIVE.runAreas = [];
+  LIVE.runAreaChoice = null;
+  LIVE.runAreaChoiceKey = '';
+  LIVE.sequential = false;
+  LIVE.freezeSeconds = 0;
+  LIVE.faceRequired = false;
+  LIVE.faceReason = '';
   LIVE.records = [];
   LIVE.recordsLoaded = false;
   LIVE.recordsLoading = false;
@@ -2475,7 +2575,8 @@ async function liveLogout(){
   const j = await liveApi('real_logout', {local_only: true});
   if(liveOk(j)){
     const d = j.data || {};
-    LIVE.session = {}; LIVE.checked = null; LIVE.points = []; LIVE.fence = [];
+    LIVE.session = {}; LIVE.checked = null; LIVE.points = [];
+    LIVE.fence = []; LIVE.fences = []; LIVE.fenceCount = 0;
     LIVE.daily = null; LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0;
     LIVE.dailyCountsUid = null; LIVE.receipts = []; LIVE.receiptsLoaded = false;
     LIVE.receiptsError = null;
@@ -2710,6 +2811,39 @@ async function liveKeepaliveStop(){
 function freeRunOn(){
   return !!($('#freeRun') && $('#freeRun').checked);
 }
+function focusCampusOnMap(){
+  const c = sessionCenter();
+  if(!c) return false;
+  map.setView(c, 16);
+  return true;
+}
+let _pointsKmTimer = 0;
+function schedulePointsForDistance(){
+  clearTimeout(_pointsKmTimer);
+  _pointsKmTimer = setTimeout(() => {
+    if(!hasSession() || freeRunOn()) return;
+    const km = +($('#inKm') && $('#inKm').value) || 0;
+    if(!(km > 0)) return;
+    const want = Math.round(km * 1000);
+    if(LIVE.pointsDistance && Math.abs(want - LIVE.pointsDistance) < 1) return;
+    loadPoints(false, {quiet: true});
+  }, 900);
+}
+async function setCampusFromMap(){
+  if(!hasSession()){ toast('先登录再设置校区'); return; }
+  const c = map.getCenter();
+  const lat = +c.lat.toFixed(6), lon = +c.lng.toFixed(6);
+  const j = await liveApi('real_set_campus_center', {lat, lon}, 15000);
+  if(!liveOk(j)){
+    toast((j && j.message) || '校区坐标保存失败');
+    return;
+  }
+  LIVE.session = Object.assign({}, LIVE.session, {lat, lon});
+  liveLog('校区坐标已保存', lat + ', ' + lon, 'ok');
+  toast('已把地图中心设为校区');
+  loadPoints(true, {quiet: false});
+}
+
 async function loadPoints(force, opts){
   opts = opts || {};
   if(!hasSession()){ if(!opts.quiet) toast('先登录后再刷新点位'); return; }
@@ -2717,49 +2851,109 @@ async function loadPoints(force, opts){
   const s = LIVE.session;
   const btn = $('#fetchPoints');
   if(btn){ btn.textContent = '刷新中…'; btn.disabled = true; }
-  // Checkpoints belong to the campus, not to today's target distance.  The
-  // bridge uses its fixed campus-query distance; changing 目标距离 must not
-  // re-fetch or invalidate the points already on the map.
+  // The checkpoint endpoint is distance-scoped.  Use today's target so the
+  // points drawn on the map are the ones submit will actually route through;
+  // a hard-coded 2500 m can be an invalid distance for another school.
+  const km = +($('#inKm') && $('#inKm').value) || 2.5;
+  const distance_m = Math.max(1, Math.round(km * 1000));
   const j = await liveApi('real_fetch_points', {
     school: s.schoolName || '', glat: +s.lat || 0, glon: +s.lon || 0,
-    unid: s.unid || null, force: !!force
+    unid: s.unid || null, force: !!force, distance_m,
+    run_area_id: chosenRunAreaId(s)
   });
   // A slower older request must not overwrite a newer campus/distance.
   if(seq !== _pointsSeq) return;
   if(btn){ btn.textContent = '刷新'; btn.disabled = false; }
   if(!liveOk(j)){
-    liveLog('围栏/点位加载失败', j.message || '', opts.quiet ? 'warn' : 'err');
+    const errors = (j.data && Array.isArray(j.data.errors)) ? j.data.errors : [];
+    liveLog('围栏/点位加载失败',
+      [j.message || '', errors.join('；')].filter(Boolean).join('；'),
+      opts.quiet ? 'warn' : 'err');
     // A transient refresh failure is not proof that the last known fence is
     // wrong.  Keep it and say so; only an empty state needs an explicit clear.
+    // If the backend still returned the polygons (e.g. multi-fence centre is
+    // ambiguous), draw them so the operator can pick the right campus.
+    const failD = j.data || {};
+    const failRings = fenceRingsFromData(failD);
+    LIVE.fenceError = failD.fence_error || LIVE.fenceError;
+    LIVE.pointsError = failD.points_error || LIVE.pointsError;
+    if(failRings.length){
+      LIVE.fences = failRings;
+      LIVE.fence = failRings[0];
+      LIVE.fenceCount = Math.max(failRings.length, +(failD.fence_count || 0));
+      LIVE.fenceMissing = !!failD.fence_missing;
+      setFences(failRings, (s.campusName || '') + '跑步围栏', {fit: true});
+    }
     if(!(LIVE.points.length || LIVE.fence.length)){
-      setFence([], '跑步围栏');
+      setFences([], '跑步围栏');
       renderPoints([]);
-      LIVE.points = []; LIVE.fence = [];
-      updateFenceChip();
-      refreshChecks();
+      LIVE.points = []; LIVE.fence = []; LIVE.fences = [];
+      LIVE.fenceCount = 0;
     }else{
       const chip = $('#fetchPoints');
       if(chip) chip.title = '上次刷新失败，仍使用上次点位：' + (j.message || '');
-      refreshChecks();
     }
+    updateFenceChip();
+    refreshChecks();
+    updateCampusControls();
     return;
   }
   const d = j.data || {};
-  LIVE.fence = (Array.isArray(d.polygon) ? d.polygon : [])
-    .filter(p => p && isFinite(+ (p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
+  LIVE.fences = fenceRingsFromData(d);
+  LIVE.fence = LIVE.fences.length ? LIVE.fences[0] : [];
+  LIVE.fenceCount = Math.max(LIVE.fences.length, +(d.fence_count || 0));
   LIVE.points = (Array.isArray(d.checkpoints) ? d.checkpoints : [])
     .filter(p => p && isFinite(+(p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
+  LIVE.fenceMissing = !!d.fence_missing;
+  LIVE.pointsEmpty = !!d.points_empty || !!d.points_missing;
+  LIVE.pointsMissing = LIVE.pointsEmpty;   // legacy name used by older code
+  LIVE.fenceError = d.fence_error || '';
+  LIVE.pointsError = d.points_error || '';
+  LIVE.pointsDistance = d.distance_m || distance_m;
+  LIVE.runArea = d.run_area || null;
+  LIVE.runAreas = Array.isArray(d.run_areas) ? d.run_areas : [];
+  // Keep an explicit pick only while the backend confirms it; if the area was
+  // invalid or vanished, fall back to the account's own area.
+  if(LIVE.runAreaChoice != null &&
+     (!LIVE.runArea || +LIVE.runArea.id !== +LIVE.runAreaChoice)){
+    LIVE.runAreaChoice = null;
+    LIVE.runAreaChoiceKey = '';
+  }
+  LIVE.sequential = !!d.sequential;
+  LIVE.freezeSeconds = +d.freeze_seconds || 0;
+  LIVE.faceRequired = !!d.face_required;
+  LIVE.faceReason = d.face_reason || '';
   LIVE.pointsAt = Date.now();
   // Always redraw, even when the server returned an empty list: otherwise the
   // previous campus's fence/points stayed on the map after switching accounts.
   const hasPoints = LIVE.points.length > 0;
-  setFence(LIVE.fence, (s.campusName || '') + '跑步围栏', {fit: !hasPoints});
+  setFences(LIVE.fences, (s.campusName || '') + '跑步围栏', {fit: !hasPoints});
   renderPoints(LIVE.points, {fit: hasPoints});
-  if(Array.isArray(d.errors) && d.errors.length){
-    liveLog('围栏/点位部分失败', d.errors.join('；'), 'warn');
+  updateCampusControls();
+  if((Array.isArray(d.errors) && d.errors.length) ||
+     (Array.isArray(d.notes) && d.notes.length)){
+    liveLog('围栏/点位提示',
+      [...(d.notes || []), ...(d.errors || [])].join('；'), 'warn');
   }
   if(!opts.quiet){
-    liveLog('围栏/点位已加载', `${LIVE.fence.length} 个围栏顶点 · ${LIVE.points.length} 个打卡点 · 按校区固定范围拉取（与目标距离无关）`, 'ok');
+    if(LIVE.freezeSeconds > 0){
+      const m = Math.ceil(LIVE.freezeSeconds / 60);
+      liveLog('账号处于跑步冻结期', `剩余约 ${m} 分钟；官方客户端此时不能开始跑步，本工具只提醒，不阻止提交`, 'warn');
+    }
+    if(LIVE.faceRequired){
+      liveLog('学校启用了人脸抽检', `${LIVE.faceReason || 'faceVerify'}；本工具无法完成人脸校验，提交会被阻止`, 'warn');
+    }
+    const fenceText = LIVE.fences.length
+      ? (LIVE.fences.length > 1
+        ? (LIVE.fences.length + ' 个围栏')
+        : (LIVE.fence.length + ' 个围栏顶点'))
+      : (LIVE.fenceMissing ? '无围栏' : '围栏未加载');
+    const pointText = LIVE.points.length ? (LIVE.points.length + ' 个打卡点')
+      : (LIVE.pointsEmpty ? '无打卡点（需确认）' : '点位未加载');
+    const areaText = LIVE.runArea
+      ? (' · 跑区 ' + (LIVE.runArea.name || LIVE.runArea.id)) : '';
+    liveLog('围栏/点位已加载',
+      `${fenceText} · ${pointText}${areaText} · 目标 ${(distance_m / 1000).toFixed(2)} km`, 'ok');
   }
   updateFenceChip();
   refreshChecks();
@@ -2772,10 +2966,24 @@ async function loadPoints(force, opts){
 function updateFenceChip(){
   const chip = $('#fenceChip');
   const top = $('#runFenceChip');
-  const ok = LIVE.fence.length && (livePoints.length || freeRunOn());
-  const label = ok
-    ? ((freeRunOn() && !livePoints.length) ? '围栏已加载 · 自由跑' : '围栏/点位已加载')
-    : '围栏/点位未加载';
+  const fenceOk = LIVE.fences.length > 0 || !!LIVE.fenceMissing;
+  const pointOk = livePoints.length > 0 || freeRunOn();
+  const ok = fenceOk && pointOk;
+  const fenceLabel = LIVE.fenceMissing ? '无围栏'
+    : (LIVE.fences.length > 1 ? (LIVE.fences.length + ' 个围栏')
+      : (LIVE.fences.length ? '围栏已加载' : '围栏未加载'));
+  let label;
+  if(!fenceOk && !pointOk) label = LIVE.fenceError ? '围栏读取失败' : '围栏/点位未加载';
+  else if(!fenceOk) label = LIVE.fenceError ? '围栏读取失败 · 点位已加载'
+    : '无围栏 · 点位已加载';
+  else if(!pointOk) label = LIVE.pointsError
+    ? (fenceOk ? fenceLabel + ' · 点位读取失败' : '点位读取失败')
+    : (LIVE.pointsEmpty ? fenceLabel + ' · 无打卡点（需确认）'
+      : fenceLabel + ' · 无点位');
+  else if(LIVE.fenceMissing && LIVE.pointsEmpty) label = '无围栏 · 无打卡点（需确认）';
+  else if(LIVE.fenceMissing) label = '无围栏 · 点位已加载';
+  else if(freeRunOn()) label = fenceLabel + ' · 跳过点位';
+  else label = fenceLabel + ' · 点位已加载';
   if(chip){
     chip.textContent = label;
     chip.className = 'tag ' + (ok ? '' : 'warn');
@@ -2785,15 +2993,66 @@ function updateFenceChip(){
     }
   }
   if(top){
-    top.textContent = ok ? '围栏已加载' : '围栏未加载';
-    top.className = 'chip ' + (ok ? 'ok' : 'warn');
+    top.textContent = fenceOk ? fenceLabel
+      : (LIVE.fenceError ? '围栏读取失败' : '围栏未加载');
+    top.className = 'chip ' + (fenceOk ? (LIVE.fenceMissing ? 'warn' : 'ok') : 'warn');
     top.innerHTML = '<i></i>' + top.textContent;
   }
   if($('#ovFenceChip')){
-    $('#ovFenceChip').textContent = ok ? '围栏已加载' : '围栏未加载';
-    $('#ovFenceChip').className = 'chip ' + (ok ? 'ok' : 'warn');
+    $('#ovFenceChip').textContent = top ? top.textContent : fenceLabel;
+    $('#ovFenceChip').className = 'chip ' +
+      (fenceOk && !LIVE.fenceMissing ? 'ok' : 'warn');
     $('#ovFenceChip').innerHTML = '<i></i>' + $('#ovFenceChip').textContent;
   }
+}
+function runAreaSessionKey(s){
+  s = s || LIVE.session || {};
+  return String(s.uid || '') + ':' + String(s.unid || '');
+}
+function chosenRunAreaId(s){
+  // Only an explicit pick made for the current account is sent: an area id
+  // from another account can collide and point at a different campus.
+  if(LIVE.runAreaChoice == null) return null;
+  return LIVE.runAreaChoiceKey === runAreaSessionKey(s)
+    ? LIVE.runAreaChoice : null;
+}
+function renderRunAreas(){
+  // Official `RunningAreaDialog`: the account can belong to several run areas
+  // (campuses), each with its own fence.  Invalid areas stay visible but
+  // cannot be clicked, just like the grey rows in the official dialog.
+  const sel = $('#runAreaSel');
+  if(!sel) return;
+  const areas = (LIVE.runAreas || []).filter(a => a && a.id != null);
+  if(areas.length < 2){
+    sel.hidden = true;
+    sel.innerHTML = '';
+    return;
+  }
+  const cur = chosenRunAreaId() != null ? +chosenRunAreaId()
+    : (LIVE.runArea ? +LIVE.runArea.id : null);
+  sel.innerHTML = areas.map(a => {
+    const id = +a.id;
+    const name = a.name || ('跑区 ' + id);
+    const invalid = a.valid === false;
+    return `<option value="${id}"${invalid ? ' disabled' : ''}` +
+      `${id === cur ? ' selected' : ''}>${esc(name)}` +
+      `${invalid ? '（无效）' : ''}</option>`;
+  }).join('');
+  sel.hidden = false;
+  sel.title = '切换跑区：使用该跑区自己的围栏和打卡点';
+}
+function updateCampusControls(){
+  // Official default is runAreaModels[0].  A manual campus point is only
+  // needed when there is no fence, or when several fences make the campus
+  // ambiguous; with one fence its centroid is the anchor.
+  const btn = $('#setCampusBtn');
+  if(btn){
+    btn.hidden = LIVE.fences.length === 1;
+    btn.title = LIVE.fences.length > 1
+      ? '检测到多个围栏：把地图拖到你的学校后保存校区中心'
+      : '学校没有围栏时：先把地图拖到学校，再点这里保存校区坐标';
+  }
+  renderRunAreas();
 }
 
 /* ---------------- overview ---------------- */
@@ -3314,6 +3573,7 @@ function applyPlanSlot(slot, opts){
   }
   refreshParams();
   redraw();
+  schedulePointsForDistance();
   scheduleModelPreview();
   go('run');
   if(opts.tab) switchRunTab(opts.tab);
@@ -3535,7 +3795,7 @@ let rdStart = null, rdEnd = null;
 function ensureRecordMap(){
   if(rdMap || !$('#rdMap')) return rdMap;
   rdMap = L.map('rdMap', {zoomControl: true, attributionControl: false,
-                          scrollWheelZoom: false}).setView(CENTER, 16);
+                          scrollWheelZoom: false}).setView(CENTER, CENTER_ZOOM);
   L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
     {subdomains: '1234', maxNativeZoom: 18, maxZoom: 19,
      attribution: '高德卫星'}).addTo(rdMap);
@@ -4756,7 +5016,10 @@ function previewArgs(params, ti){
     cadence: params.cadence, altitude: params.altitude,
     waypoints: route && route.length >= 2 ? route : null,
     checkpoints: freeRunOn() ? null :
-      livePoints.map(p => ({lat: p.lat, lon: p.lng, name: p.n, isMustPoint: p.must})),
+      livePoints.map(p => ({lat: p.lat, lon: p.lng, name: p.n,
+                            isMustPoint: p.must, isFixed: p.isFixed,
+                            position: p.position, seq: p.seq})),
+    sequential: !!LIVE.sequential,
     date: ti.date,
     start_time: ti.time,
     closed: !!routeClosed,
@@ -4886,11 +5149,14 @@ function pointInPolygon(p, polygon){
   }
   return inside;
 }
-function fenceOutside(routePoints, polygon){
+function fenceOutside(routePoints, polygons){
   const out = {points: 0, segments: 0};
-  if(!polygon || polygon.length < 3 || !routePoints || routePoints.length < 2) return out;
+  const rings = (Array.isArray(polygons) ? polygons : [])
+    .filter(r => Array.isArray(r) && r.length >= 3);
+  if(!rings.length || !routePoints || routePoints.length < 2) return out;
+  const inside = p => rings.some(ring => pointInPolygon(p, ring));
   for(const p of routePoints){
-    if(!pointInPolygon(p, polygon)) out.points++;
+    if(!inside(p)) out.points++;
   }
   // Sample each segment at <=3 m.  This catches a short notch that both
   // endpoints (and the dense display points) can miss; the backend does the
@@ -4901,7 +5167,7 @@ function fenceOutside(routePoints, polygon){
     for(let k = 1; k < n; k++){
       const t = k / n;
       const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-      if(!pointInPolygon(p, polygon)){ out.segments++; break; }
+      if(!inside(p)){ out.segments++; break; }
     }
   }
   return out;
@@ -5001,25 +5267,36 @@ function refreshChecks(){
     });
   }
   const free = freeRunOn();
-  checks.push({ok: free || livePoints.length > 0, warn: free && !livePoints.length,
-    label: free ? '自由跑' : '点位已加载',
-    note: free ? '不检查打卡点' : (livePoints.length ? (livePoints.length + ' 个 · ' + livePoints.filter(p => p.must).length + ' 必经') : '未加载')});
+  const noPoints = !!LIVE.pointsEmpty;
+  checks.push({ok: free || livePoints.length > 0,
+    warn: free || noPoints,
+    label: free ? '跳过打卡点' : (noPoints ? '无打卡点（需确认）' : '点位已加载'),
+    note: free ? '不拉取打卡点；官方自由跑（serviceType=3）尚未支持'
+      : (livePoints.length ? (livePoints.length + ' 个 · ' + livePoints.filter(p => p.must).length + ' 必经')
+        : (noPoints ? '服务器未返回打卡点，提交默认阻止'
+          : (LIVE.pointsError ? ('读取失败：' + LIVE.pointsError) : '未加载')))});
   const cov = computeCoverage();
-  checks.push({ok: free || (cov.total > 0 && cov.missed === 0), warn: free,
+  checks.push({ok: free || (cov.total > 0 && cov.missed === 0),
+    warn: free || noPoints,
     label: '经过全部打卡点',
-    note: free ? '自由跑已跳过' : (cov.total ? (cov.passed + '/' + cov.total + ' 在 40m 内') : '未加载点位')});
+    note: free ? '已勾选跳过打卡点'
+      : (noPoints ? '无法确认该校区允许自由跑'
+        : (cov.total ? (cov.passed + '/' + cov.total + ' 在 40m 内') : '未加载点位'))});
   let fenceBad = {points: 0, segments: 0};
-  const fenceReady = LIVE.fence.length >= 3 && route && route.length >= 2;
+  const fenceReady = LIVE.fences.length > 0 && route && route.length >= 2;
   if(fenceReady){
-    fenceBad = fenceOutside(displayPath(), LIVE.fence);
+    fenceBad = fenceOutside(displayPath(), LIVE.fences);
   }
-  checks.push({ok: fenceReady && fenceBad.points === 0 && fenceBad.segments === 0,
+  checks.push({ok: !!LIVE.fenceMissing || (fenceReady && fenceBad.points === 0 && fenceBad.segments === 0),
     label: '在跑步围栏内',
-    note: !LIVE.fence.length ? '围栏未加载'
-      : (!route || route.length < 2 ? '待画线'
-        : (fenceBad.points || fenceBad.segments
-          ? ('越界 ' + fenceBad.points + ' 点 / ' + fenceBad.segments + ' 段')
-          : '整段检查通过'))});
+    note: LIVE.fenceMissing ? '该校区未配置围栏，不限制位置'
+      : (LIVE.fenceError ? ('围栏读取失败：' + LIVE.fenceError)
+        : (!LIVE.fences.length ? '围栏未加载'
+          : (!route || route.length < 2 ? '待画线'
+            : (fenceBad.points || fenceBad.segments
+              ? ('越界 ' + fenceBad.points + ' 点 / ' + fenceBad.segments + ' 段')
+              : ('整段检查通过' + (LIVE.fences.length > 1
+                ? '（' + LIVE.fences.length + ' 个围栏任一）' : ''))))))});
   const configured = !!(LIVE.rules && LIVE.rules.configured);
   checks.push({ok: configured, label: '学校要求已配置', note: configured ? '模型已启用' : '设置 → 学校要求'});
 
@@ -5316,6 +5593,7 @@ async function doSubmitRun(pending){
       date: ti.date, start_time: ti.time, closed: !!routeClosed,
       km_times: splitRows ? splitRows.map(r => r.seconds) : null,
       seed: pending.seed || null,
+      run_area_id: chosenRunAreaId(),
       ...altitudeArgs(params)
     }, 180000);
   }finally{
@@ -5463,6 +5741,8 @@ const ONBOARD_STEPS = [
     title: '已登录：工具已经知道你在哪个校区',
     body: '<p>登录后，工具会从服务器读取你所在校区的<b>跑步围栏</b>和<b>打卡点</b>。</p>' +
       '<ul><li>围栏、点位都来自真实接口；没有 token 不会生成假点位。</li>' +
+      '<li>多校区学校可在跑步页切换「跑区」，每个跑区用自己的围栏和打卡点。</li>' +
+      '<li>有些学校不配置围栏/打卡点，也能正常提交；<b>没有围栏</b>时才需要把地图拖到学校后点「设为校区」。</li>' +
       '<li>token 失效时，到「账号」页重新验证或登录。</li></ul>' +
       '<div class="onboard-legal"><b>使用边界</b><span>仅限本人使用。禁止倒卖、分发安装包、代跑收费或共享账号；不要把 data 目录、token、回执发给他人。</span></div>',
     tip: '第一次登录要在本地解极验，会慢一点；之后一般几秒内完成。'
@@ -6095,8 +6375,18 @@ function liveWire(){
   $('#kaCheck').addEventListener('click', liveKeepaliveCheck);
   $('#kaStop').addEventListener('click', liveKeepaliveStop);
   $('#fetchPoints').addEventListener('click', () => loadPoints(true));
+  if($('#setCampusBtn')) $('#setCampusBtn').addEventListener('click', setCampusFromMap);
+  if($('#runAreaSel')) $('#runAreaSel').addEventListener('change', e => {
+    const id = +e.target.value;
+    if(!isFinite(id)) return;
+    LIVE.runAreaChoice = id;
+    LIVE.runAreaChoiceKey = runAreaSessionKey();
+    liveLog('已切换跑区', '正在重新读取该跑区的围栏和打卡点', 'info');
+    loadPoints(true, {quiet: false});
+  });
   $('#freeRun').addEventListener('change', () => {
-    if(freeRunOn()) liveLog('已开启自由跑', '提交时不会拉取打卡点；学校要求必经点会被后端拒绝', 'warn');
+    if(freeRunOn()) liveLog('已勾选跳过打卡点',
+      '提交时不拉取打卡点；学校要求必经点会被后端拒绝。注意：这不是官方自由跑（serviceType=3）', 'warn');
     renderPoints(livePoints, {fit: false});
     updateFenceChip();
     refreshChecks(); scheduleModelPreview();

@@ -54,10 +54,66 @@ def test_login_remembers_password_only_through_the_encrypted_bridge():
             assert 'pass' not in line.lower()
 
 
-def test_points_are_not_tied_to_target_distance():
-    assert '按校区固定范围拉取' in SOURCE
-    assert "label: '点位距离'" not in SOURCE
-    assert 'distance_m: Math.max' not in SOURCE
+def test_points_follow_the_selected_target_distance():
+    # The checkpoint endpoint is distance-scoped; a fixed 2500 m can be an
+    # invalid distance for another school and return no points.
+    assert 'distance_m' in SOURCE
+    assert 'schedulePointsForDistance' in SOURCE
+    assert '无法确认该校区是否允许自由跑' in SOURCE
+    assert '跳过打卡点（无点位学校，非官方自由跑）' in HTML
+    assert "id=\"setCampusBtn\"" in HTML
+
+
+def _js_function(name):
+    start = JS.index('function ' + name)
+    depth = 0
+    for i in range(JS.index('{', start), len(JS)):
+        if JS[i] == '{':
+            depth += 1
+        elif JS[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return JS[start:i + 1]
+    raise AssertionError('unterminated function ' + name)
+
+
+def test_every_distance_change_reloads_distance_scoped_points():
+    # Drawing/importing a route, the random preset and the plan "fill" button
+    # all change #inKm.  Leaving the old distance's points on the map made the
+    # preview disagree with what submit would actually route through.
+    assert 'schedulePointsForDistance()' in _js_function(
+        'autoFillDistanceFromRoute')
+    assert 'schedulePointsForDistance()' in _js_function('applyPlanSlot')
+
+
+def test_multi_fence_ui_uses_all_rings_and_marks_invalid_areas():
+    assert 'disabled' in _js_function('renderRunAreas')
+    assert '（无效）' in _js_function('renderRunAreas')
+    assert 'rings.some' in _js_function('fenceOutside')
+    assert 'LIVE.fences.length === 1' in _js_function('updateCampusControls')
+    assert '非官方自由跑' in HTML
+    assert 'setFences' in JS
+    start = JS.index("$('#randomParams')")
+    assert 'schedulePointsForDistance()' in JS[start:JS.index('});', start)]
+
+
+def test_run_area_selector_matches_the_official_dialog():
+    assert 'id="runAreaSel"' in HTML
+    assert 'function renderRunAreas' in JS
+    assert 'function updateCampusControls' in JS
+    assert "run_area_id: chosenRunAreaId()" in JS
+    # The onboarding must not promise a manual campus override when the
+    # server already returned a fence (the fence centre wins).
+    assert '地图不是你的学校时，把地图拖到学校后点「设为校区」' not in JS
+    assert '没有围栏' in JS
+
+
+def test_freeze_and_face_warnings_are_wired():
+    assert 'LIVE.freezeSeconds' in SOURCE
+    assert 'LIVE.faceRequired' in SOURCE
+    assert '账号处于跑步冻结期' in SOURCE
+    assert '学校启用了人脸抽检' in SOURCE
+    assert 'sequential: !!LIVE.sequential' in SOURCE
 
 
 def test_network_egress_is_back_in_the_checklist():

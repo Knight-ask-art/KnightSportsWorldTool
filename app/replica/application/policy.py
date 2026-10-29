@@ -115,7 +115,11 @@ def policy_timestamp(policy: dict | None) -> int | None:
 
 
 def rule_model(policy: dict | None) -> dict:
-    return (policy or {}).get('runRuleModel') or {}
+    data = normalize_data(policy)
+    model = data.get('runRuleModel')
+    if isinstance(model, str):
+        model = normalize_data(model)
+    return model if isinstance(model, dict) else {}
 
 
 def rule_min_distance(policy: dict | None) -> int:
@@ -131,6 +135,193 @@ def rule_valid_time(policy: dict | None) -> int:
         return int(rule_model(policy).get('validTime') or 0)
     except Exception:  # noqa: BLE001
         return 0
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'y', '是')
+    return bool(value)
+
+
+def freeze_seconds(policy: dict | None) -> int:
+    """`RandomConfigBean.freezeRunTime` — seconds the account is frozen.
+
+    The official start button is disabled while this is > 0
+    (`RunFreeFragment.updateStartButtonState`).  We only warn: the operator
+    may have a legitimate reason and the server decides.
+    """
+    data = normalize_data(policy)
+    value = data.get('freezeRunTime')
+    if value in (None, ''):
+        value = rule_model(data).get('freezeRunTime')
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def face_required(policy: dict | None) -> tuple[bool, str]:
+    """Whether the school requires a face check, plus the field that said so.
+
+    `RunRuleModel.faceVerify` is the school-level switch; the newer
+    `RandomConfigBean.runFaceCheckConfigDTO.enable` is the detailed config.
+    Either one means the real client would have to pass a face check before a
+    record can honestly carry `faceCheck=1`.
+    """
+    data = normalize_data(policy)
+    cfg = data.get('runFaceCheckConfigDTO')
+    if isinstance(cfg, str):
+        try:
+            cfg = json.loads(cfg)
+        except Exception:  # noqa: BLE001
+            cfg = {}
+    if isinstance(cfg, dict) and _as_bool(cfg.get('enable')):
+        return True, 'runFaceCheckConfigDTO.enable'
+    if _as_bool(rule_model(data).get('faceVerify')):
+        return True, 'runRuleModel.faceVerify'
+    return False, ''
+
+
+def run_area_models(policy: dict | None) -> list[dict]:
+    """Normalize ``RandomConfigBean.runAreaModels``.
+
+    The official client receives this list together with ``geoFence`` from
+    ``runModePolicy`` (``RunPolicyViewModel``).  Each area carries the fence
+    ids that belong to it, so this is the account/campus-specific mapping we
+    should use instead of guessing from ``fences[0]``.
+    """
+    data = normalize_data(policy)
+    raw = data.get('runAreaModels')
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            raw = []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if isinstance(item, str):
+            try:
+                item = json.loads(item)
+            except Exception:  # noqa: BLE001
+                continue
+        if not isinstance(item, dict):
+            continue
+        try:
+            area_id = int(item.get('id'))
+        except (TypeError, ValueError):
+            continue
+        fence_ids = item.get('fenceIds') or []
+        if isinstance(fence_ids, str):
+            try:
+                fence_ids = json.loads(fence_ids)
+            except Exception:  # noqa: BLE001
+                fence_ids = [x for x in fence_ids.replace(' ', '').split(',')
+                             if x]
+        if isinstance(fence_ids, dict):
+            fence_ids = list(fence_ids.values())
+        ids = []
+        for v in fence_ids if isinstance(fence_ids, list) else []:
+            try:
+                ids.append(int(v))
+            except (TypeError, ValueError):
+                continue
+        out.append({
+            'id': area_id,
+            'name': str(item.get('name') or ''),
+            # Tri-state: missing `valid` is unknown, not invalid.
+            'valid': (None if item.get('valid') in (None, '')
+                      else _as_bool(item.get('valid'))),
+            'select': _as_bool(item.get('select')),
+            'fence_ids': ids,
+        })
+    return out
+
+
+def find_run_area(policy: dict | None, area_id) -> dict | None:
+    """Return the area with ``area_id`` when it is usable."""
+    try:
+        wanted = int(area_id)
+    except (TypeError, ValueError):
+        return None
+    for area in run_area_models(policy):
+        if area['id'] == wanted and area.get('valid') is not False:
+            return area
+    return None
+
+
+def select_run_area(policy: dict | None,
+                    position: int = 0) -> dict | None:
+    """Return ``runAreaModels[position]``, exactly like the official client.
+
+    ``SportTypeViewModel.selectedPosition`` is a static int with no
+    initializer, so its default is 0.  The official app only changes it when
+    the operator picks an entry in ``RunningAreaDialog``; the
+    ``RunAreaModels.getSelect()`` getter has no caller in the decompiled 1.3.0
+    sources.  Therefore
+    this function must not guess from ``select``, the campus name, or
+    ``valid``.  A caller that gets an invalid area back should block the
+    start, just like ``RunCreditFragment.startSport``.
+
+    ``position == -1`` means "no specific run area"; the official
+    ``LocationGeoFenceHelper`` then uses every fence.  Callers indicate that
+    by passing ``None``/``-1`` or by not filtering with an area at all.
+    """
+    areas = run_area_models(policy)
+    if not areas:
+        return None
+    try:
+        index = int(position)
+    except (TypeError, ValueError):
+        return None
+    if index < 0 or index >= len(areas):
+        return None
+    return areas[index]
+
+
+def has_fence_section(policy: dict | None) -> bool:
+    """True when the reply explicitly carried a fence section.
+
+    ``geoFence: {geoFences: []}`` is authoritative: the school configured no
+    fence.  It must not trigger the legacy ``getGeoFenceForRun`` fallback,
+    which can still hold stale or other-campus polygons.
+    """
+    data = normalize_data(policy)
+    return 'geoFence' in data or 'geoFences' in data
+
+
+def geo_fences(policy: dict | None) -> list[dict]:
+    """Raw fence entries from a ``runModePolicy`` reply.
+
+    Accepts ``geoFence.geoFences`` (documented shape), a top-level
+    ``geoFences`` list, and JSON-encoded variants.
+    """
+    data = normalize_data(policy)
+    fence = data.get('geoFence')
+    if fence is None:
+        fence = data.get('geoFences')
+    if isinstance(fence, str):
+        try:
+            fence = json.loads(fence)
+        except Exception:  # noqa: BLE001
+            return []
+    if isinstance(fence, list):
+        raw = fence
+    elif isinstance(fence, dict):
+        raw = fence.get('geoFences') or []
+    else:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            return []
+    if isinstance(raw, dict):
+        raw = list(raw.values())
+    return [f for f in raw if isinstance(f, dict)] if isinstance(raw, list) else []
 
 
 def _positive_number(value):
@@ -287,7 +478,7 @@ def policy_value(policy: dict | None, default: int = 1) -> int:
     """The server-decided rule set (0 or 1).  Upstream submits this verbatim
     instead of hardcoding it (src/api/flow.rs: `let pol = fetch_policy(...)`)."""
     try:
-        v = (policy or {}).get('policy')
+        v = normalize_data(policy).get('policy')
         return int(v) if v is not None else default
     except Exception:  # noqa: BLE001
         return default
@@ -322,6 +513,12 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(('validTime read', rule_valid_time(sample) == 600, '600'))
     out.append(('policy value', policy_value(sample) == 1, '1'))
     out.append(('policy default on None', policy_value(None, 1) == 1, '1'))
+    out.append(('freeze seconds', freeze_seconds({'freezeRunTime': 90}) == 90,
+                '90'))
+    out.append(('freeze default', freeze_seconds(None) == 0, '0'))
+    out.append(('face verify flag',
+                face_required({'runRuleModel': {'faceVerify': True}})[0],
+                'True'))
     out.append(('minDistance None safe', rule_min_distance(None) == 0, '0'))
 
     # ---- must points (mirrors policy.rs tests) --------------------------

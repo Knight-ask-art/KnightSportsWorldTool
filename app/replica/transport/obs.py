@@ -233,8 +233,10 @@ def build_laps(run, start_ms) -> list[dict]:
         lap_steps = s_now - prev_steps
         laps.append({
             'avgCadence': round(lap_steps / (lap_t / 60.0), 2) if lap_t > 0 else None,
-            # seconds per km, NOT minutes (upstream pace-unit-fix)
-            'avgPace': round(lap_t / (lap_d / 1000.0), 2) if lap_d > 0 else None,
+            # MINUTES per km.  The official lap table formats this as
+            # ``(int)(avgPace * 60)`` seconds (RunLapsFullAdapter.formatPace),
+            # so storing seconds here made a 7'00"/km lap render as 420'00".
+            'avgPace': round(lap_t / 60.0 / (lap_d / 1000.0), 4) if lap_d > 0 else None,
             'avgStride': round(lap_d / lap_steps * 100.0, 2) if lap_steps > 0 else None,
             'cumulativeDuration': int(round(t_now)),
             'distance': round(lap_d, 4),
@@ -517,8 +519,8 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(('laps cover the distance',
                 abs(sum(l['distance'] for l in laps) - run['juli']) < 1.0,
                 '%d laps, %.0fm' % (len(laps), sum(l['distance'] for l in laps))))
-    out.append(('avgPace in seconds/km',
-                laps[0]['avgPace'] is not None and 300 < laps[0]['avgPace'] < 700,
+    out.append(('avgPace in minutes/km',
+                laps[0]['avgPace'] is not None and 4.0 < laps[0]['avgPace'] < 12.0,
                 str(laps[0]['avgPace'])))
 
     keys = obs_keys(run, 1333336472, 'UUID-TEST')

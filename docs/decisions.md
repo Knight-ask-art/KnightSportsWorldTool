@@ -33,7 +33,7 @@
 | 决策 | 依据 |
 |---|---|
 | 田径场模式**拟合真实打卡点**，逆时针 | 上游 PR #44；拟合失败直接中止，不猜 |
-| 自定义路线先拉点位，再按 **40 m** 校验命中 | 提交判定用同一个半径 |
+| 自定义路线先拉点位，再按 **25 m** 校验命中 | 官方 `RunRanLocationManager` 的通过半径 |
 | `--snap-route` 默认不自动开，但提示明确 | 插入点位会产生绕行，必须让人自己选 |
 | 围栏越界**只告警不拦截** | 画到外面是用户的选择，但不能让他看不见 |
 | 围栏边界上的点算**界内** | 围栏边是合法位置；射线法单独判断会误报 |
@@ -54,7 +54,7 @@
 | 超过学校每日上限只给 **warn**，不 hard-fail、不拒绝提交 | 学校/服务器才决定多出来的记录算不算；工具只负责提醒 |
 | 本地计数文件按日期存 map（旧单日格式自动迁移） | 旧实现 `load(昨天)` 会重置文件，补跑时会抹掉今天计数 |
 | 会话/回执/计数落盘用原子替换 | 服务是多线程的，半截文件会表现成「token 突然没了」 |
-| **UI 点位**按校区固定范围拉取（2500 m），不随目标距离变化；**后端/CLI** 仍按目标距离拼 `/distance/<米>` 并在提交时补点 | 用户要跑多少米与今天看到的点位没有因果关系；但服务器按距离返回不同点位（实测 2.5 km 与 4.1 km 差一个点），提交必须按目标距离补点才能完整 |
+| **UI 点位**按当前「目标距离」拉取（900 ms 防抖），**后端/CLI** 提交时也按目标距离补点 | 服务器按距离返回不同点位（实测 2.5 km 与 4.1 km 差一个点），固定 2500 m 会让只支持 2/3 km 的学校返回空列表（2026-10-29 修正旧决策） |
 | `fivePointJson[].position` 用数组下标；10s 窗 `queueNum` 用下标、末窗按实际时长缩放 | 上游 PR #106 真机 `RunData` 语义；旧实现 999/0/满窗会把回放步频顶到 300+ |
 | 回执核对只读、匹配到才写 accepted | 响应丢失时不能重发；只读查询能确认是否入库 |
 | 网络自检只在用户点击时查公网 IP | 自动查 IP 会泄露网络位置，也把“业务假数据”之外的信息带进提交链 |
@@ -68,7 +68,7 @@
 | Android 逻辑像素使用 dp，不再与物理像素相同 | 早期 `1080x2400 / 1080x2400` 是明显的合成指纹；按机型表一起生成 |
 | iOS 头使用独立的 typed JSON 序列化 | `uid/studentId` 是数字、`isRoot` 是布尔；套用 Android 的 Java HashMap 字符串化会改变 headerSign |
 | 请求带平台对应的 User-Agent（仅线上传输，不参与 headerSign） | 不设置时 urllib 会暴露 `Python-urllib/x.y`，比设备字段更显眼 |
-| 自由跑仅在学校无点位且策略无必经点时可用 | 有必经点却自由跑会生成永远不完整的记录，后端直接拒绝 |
+| 跳过打卡点仅在学校无点位且策略无必经点时可用 | 有必经点却跳过点位会生成永远不完整的记录，后端直接拒绝 |
 | 路线库存 `data/routes.json`，不再只靠 localStorage | localStorage 按 origin 隔离，换端口/换 exe 会丢路线 |
 | 学期字段做保守归一化，缺失显示未知 | 不同学校/版本字段不一致；把缺失当 0 会误导达标判断 |
 | 学校规则读取用 `runModePolicy` 的 `operateType=1`；提交继续用 `operateType=0` | 真实返回里只有学期视图带 `runRuleModel`，开始跑步视图只带 `policy`；提交记录实测 `policy=0` 与开始跑步视图一致 |
@@ -93,7 +93,7 @@
 | 高德「Web 服务」Key | 未配置时吸附按钮直接报错 | 不影响画线和提交 |
 | 点位 `/distance/<米>` | 按 PR #106 真机路径实现，未对比真实返回 | 若服务端仍按 1 米逻辑，点位数量可能不变 |
 | OBS 10 秒窗新语义 | 按 PR #106 真机语义实现，未看真实回放页 | 若回放仍异常，优先对比 `id/queueNum/末窗` |
-| 自由跑无点位记录 | 后端会拒绝策略有必经点的学校；未真机提交 | 服务器是否接受无点位记录未知 |
+| 跳过打卡点无点位记录 | 后端会拒绝策略有必经点的学校；未真机提交 | 服务器是否接受普通计分跑的无点位记录未知 |
 | 学期字段单位 | 里程字段按“>=1000 视为米”归一化；时间戳兼容秒/毫秒 | 极端学校字段若已用米但数值 <1000，可能显示偏小 |
 | 学校规则自动读取 | 登录/设置页只读 `runModePolicy.runRuleModel`；按 APK 源码单位映射距离/配速/时长/步频/时间窗 | 真实字段名与多时段还没 token 回归；`dayGoal`/`weekCountGoal`/`minSteps` 不猜 |
 | 每日次数上限 | `runRuleModel` 没有每日次数；`CampusConfigModel.maleDayUpper` 是每日里程，不是次数 | “学校允许每日次数”仍需手动填；不把里程当次数 |
@@ -402,3 +402,92 @@ base 上会得到 `.../download/v0.1.4/haoxiangpao_v0.1.3_win64.zip`，是 404�
 发布资产：setup 56,035,019 B / `fff74439…a831`；zip 79,796,101 B / `556e459b…501c`；
 v0.1.3 回滚 zip 79,749,401 B / `cb026f6b…24e39c`。装包实测：全新静默安装、
 0.1.3→0.1.4 覆盖升级、静默卸载三条路径都保留 `data\`，`--check` 均返回 0。
+
+---
+
+## 17. 0.1.5 收尾：官方每公里表单位、无围栏/无点位校区（2026-10-29）
+
+**官方 `laps_json.avgPace` 是分钟/公里，不是秒/公里。** 反编译的
+`RunLapsFullAdapter.formatPace(double)` 先执行 `(int)(pace * 60)` 再格式化成
+`i'rr"`；官方 `PluginableLocationManager.handleLapsData()` 也写
+`setAvgPace(d / 60.0)`，其中 `d` 是秒。旧实现写秒，导致 6'00" 的公里在手机上
+显示成 360'00"（用户看到的“200 多分钟”）。`obs.build_laps()` 已改为分钟，
+两侧单位口径：`km_splits[].pace` / `preview_series` 仍是秒/公里（工具内部 UI），
+OBS `laps_json` 是分钟/公里（官方 App 读取）。
+
+**空围栏是合法配置。** 官方 `LocationGeoFenceHelper.isInArea()` 在
+`geoFences` 为空时默认 `true`。旧实现把“围栏为空”当失败并阻止提交，导致
+没有配置围栏的学校完全无法使用。现在的顺序是：围栏中心 → 本机保存的校区
+坐标 → 手绘路线第一个点；三者都没有才停止。跑步页新增「设为校区」，把当前
+地图中心写入本机会话。
+
+**跑区按 `selectedPosition` 取，默认 0。** 官方
+`SportTypeViewModel.selectedPosition` 是静态 int，没有初始化，默认就是 0；
+只有 `RunningAreaDialog` 用户点击后才改变。`RunAreaModels.getSelect()` 在
+1.3.0 反编译源码里只有定义、没有调用，所以工具不再把 `select`、校区名或
+“第一个有效跑区”当优先级。默认取 `runAreaModels[0]`；多跑区时跑步页下拉框
+对应官方对话框，`valid == false` 的跑区显示为灰色不可选；默认跑区无效时提交
+停止并提示重新选择。
+
+拿到跑区后，用它的 `fenceIds` 过滤 `geoFences`，并保留该跑区拥有的**全部**
+围栏，不再按名称/距离只挑一条；`runArea.id` 作为 `runAreaId` 发给打卡点接口。
+没有 `runAreaModels`（或显式 `position == -1`）时使用全部围栏，任意一条包含
+轨迹点就算在区域内（官方 `LocationGeoFenceHelper.isInArea` 的 OR 语义）。
+
+`geoFence` 明确返回空列表时视为“该跑区没有围栏”；没有 `geoFence` 段也按
+空围栏处理。工具不再回退 `getGeoFenceForRun`：那份数据缓存在 `GeoFenceBean2`，
+官方 `isInArea` 不读它。`runModePolicy` 本身取不到时直接停止提交，不复用旧围栏。
+
+**打卡点按目标距离拉取。** 接口路径包含目标米数，固定 2500 m 对只支持
+2 km/3 km 的学校会返回空列表。UI 现在把当前 `inKm` 传成 `distance_m`，
+改距离后 900 ms 防抖重拉；缓存仍按距离分键。
+
+**空打卡点默认阻止。** 反编译只看到 `requestFivePoint` 成功回调
+`addAll(pointsResModels)`，没有“空列表自动转自由跑”的分支；官方真正的空点位
+上传是 `RunFreePImpl`（serviceType=3 / sportType=4 / empty fivePointJson），
+和普通计分跑不是同一条路径。工具现在 `parse_points(allow_empty=False)`：
+预览可以显示“无打卡点（需确认）”，但提交默认停止，只有操作员显式勾选
+“跳过打卡点（无点位学校，非官方自由跑）”才允许继续。空响应不写 300 s 缓存，
+避免一次异常空响应当成学校配置。等有真实抓包证明某学校空点位可提交后，再改
+默认行为并补回归测试。
+
+**必经点以 `isFixed` 为准，命中半径 25 m。** 官方 `RunRanLocationManager`、
+`RunSeqLocationManager`、`FivePointPlugin` 都是 `distance <= 25.0` 才算通过；
+`isFixed == 1` 才是必经点（随机跑据此返回 type 2），本账号缓存里没有
+`isMustPoint` 字段。工具现在同时保留 `isFixed` 原值、由它推导必经点，并把
+轨迹/吸附/校验的命中半径统一为 25 m（吸附余量 20 m）。
+
+**顺序跑按点位编号排序。** 官方 `SportRecord.getFivePoint()` 是
+`orderBy("position", false)`，`RunSeqLocationManager` 每次取 `get(0)`；
+服务端下发的数组可能无序（实测 `点位2/3/1/7/4`）。`policy == 1` 时工具按
+`position`/`pointName` 数字排序，`fivePoint.position` 同步，避免按最近邻
+走错顺序。
+
+**冻结只提醒，人脸硬拦截。** `RandomConfigBean.freezeRunTime > 0` 时官方
+“开始跑步”按钮是禁用的；工具按用户要求只记录警告并继续提交。
+`RunRuleModel.faceVerify` / `runFaceCheckConfigDTO.enable` 为 true 时，工具
+无法完成人脸校验，直接停止提交，不伪造 `faceCheck=1`。
+
+**距离一变就重拉点位。** 点位接口按距离返回不同集合，地图上的点和提交时
+实际走的点必须来自同一个距离。手输 `inKm`、快捷距离、`randomParams`、
+计划「填入」、画线/导入自动算距离，所有改 `inKm` 的路径都走同一个 900 ms
+防抖 `schedulePointsForDistance()`，不再只挂在输入框和快捷按钮上。
+
+**跑区可在跑步页切换。** 官方 `RunningAreaDialog` 会在多跑区时让用户选，
+并拒绝点击 `valid == false` 的跑区。工具把已取到的 `runAreaModels` 渲染成
+下拉框（少于 2 个跑区时隐藏），无效项显示为灰色不可选；选择后带
+`run_area_id` 重拉围栏/点位，提交也带同一个 id；id 无效时退回默认跑区
+（index 0）并提示。缺 `valid` 字段视为“未知”，只有显式 `false` 才无效。
+
+**「设为校区」给无围栏或多围栏学校。** 单围栏时用服务器围栏中心；没有围栏
+或检测到多个围栏、且本地没有可判定中心时，按钮才显示。多围栏时手动中心
+必须落在某条围栏内才会采用，避免把另一校区坐标当成当前校区。
+
+**围栏读取异常不再猜坐标。** 只有 `FenceNotConfigured`（学校确实没围栏）
+才允许用已保存坐标或路线首点兜底；网络/解析等一般异常只在本地已有校区
+坐标时继续，绝不把路线首点写成校区，也不调用 `_save_center`。
+
+**`runModePolicy` 只取一个完整回复。** 官方 `RunPolicyViewModel` 缓存的是
+单次响应；旧实现按 key 合并 mode 1/2，可能拼出“mode 1 的跑区 + mode 2 的
+围栏”。现在优先采用同时带 `runAreaModels` 和 `geoFence` 的那一条，两个
+模式都不完整时选围栏那条，不再跨回复拼字段。

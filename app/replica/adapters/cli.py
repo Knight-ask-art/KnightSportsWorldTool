@@ -41,6 +41,17 @@ def _fail(msg, code=1):
     return code
 
 
+def _cli_fmt_seconds(seconds):
+    total = max(0, int(seconds or 0))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return '%d 小时 %d 分' % (hours, minutes)
+    if minutes:
+        return '%d 分 %d 秒' % (minutes, secs)
+    return '%d 秒' % secs
+
+
 def _keepalive_cli(args):
     """`--keepalive` / `--keepalive-once`: probe, optionally re-login.
 
@@ -165,15 +176,25 @@ def _tagged_route(pts, args, RT, closed=None):
     return RT.smooth(pts, samples=samples, closed=closed) if samples else list(pts)
 
 
-def do_points(client, acct, args, must_points=None):
+def do_points(client, acct, args, must_points=None, sequential=False,
+              policy_data=None):
     """Return (checkpoints, waypoints).
 
     Checkpoints are fetched **first** and independently of the route: a route
     without them yields a record that can never be complete (this used to be
     the behaviour of both `--custom` and the UI's hand-drawn waypoints).
+
+    An empty checkpoint list is not a free run by default.  `--no-points` is
+    the explicit operator confirmation; otherwise the CLI stops, matching the
+    GUI's "跳过打卡点" checkbox.
     """
     from ..application import points as P
     from ..domain import routes as RT
+    from ..application import policy as POL
+
+    if args.no_points and must_points:
+        raise ValueError('学校策略要求必经点位，不能使用 --no-points（会生成'
+                         '永远不完整的记录）')
 
     cps = []
     if not args.no_points:
@@ -186,9 +207,13 @@ def do_points(client, acct, args, must_points=None):
             log('      %d 个点位（%d 个必经）'
                 % (len(cps), sum(1 for p in cps if p['isMustPoint'])))
         except Exception as e:  # noqa: BLE001
-            log('      点位获取失败（%s）' % e)
+            raise ValueError('点位获取失败，已停止（避免生成不完整记录）: %s'
+                             % e)
+        if not cps:
+            raise ValueError('服务器没有返回打卡点，无法确认该校区是否允许'
+                             '自由跑；如已确认，请显式使用 --no-points')
     else:
-        log('[2/6] 跳过点位（--no-points）')
+        log('[2/6] 跳过点位（--no-points；这不是官方自由跑）')
 
     # ---- pick the route ------------------------------------------------
     if getattr(args, 'route_file', None):
@@ -241,12 +266,25 @@ def do_points(client, acct, args, must_points=None):
         if not cps:
             log('      没有点位可用，使用本地环形路线')
             return [], []
-        pts = P.route_order(cps, acct.center_lat, acct.center_lng)
+        pts = P.route_order(cps, acct.center_lat, acct.center_lng,
+                            sequential=sequential)
         if must_points:
-            before = len(pts)
-            pts = P.merge_required(must_points, pts)
-            log('      策略必经点 %d 个（并入后 +%d 个航点）'
-                % (len(must_points), len(pts) - before))
+            if sequential:
+                log('      策略必经点 %d 个（顺序跑，按点位编号保留）'
+                    % len(must_points))
+                missing = [p for p in must_points
+                           if not any(abs(p[0] - q[0]) < 1e-6
+                                      and abs(p[1] - q[1]) < 1e-6
+                                      for q in pts)]
+                if missing:
+                    pts.extend(missing)
+                    log('      顺序跑：策略必经点不在点位列表，已追加 %d 个'
+                        % len(missing))
+            else:
+                before = len(pts)
+                pts = P.merge_required(must_points, pts)
+                log('      策略必经点 %d 个（并入后 +%d 个航点）'
+                    % (len(must_points), len(pts) - before))
         log('      点位路线 %d 个航点' % len(pts))
         source = 'points'
 
@@ -259,10 +297,13 @@ def do_points(client, acct, args, must_points=None):
         or source == 'stadium'
         or bool(getattr(args, 'route_close', False))
     )
-    if source != 'points' and must_points and pts and closed_user_route:
+    if (source != 'points' and must_points and pts and closed_user_route
+            and not sequential):
         first = pts[0]
         pts = P.merge_required(must_points, pts)
         pts = P.rotate_to(pts, first)
+    elif source != 'points' and sequential and must_points:
+        log('      顺序跑：保留当前路线顺序，不把策略必经点前置')
         log('      策略必经点并入用户路线 %d 个' % len(must_points))
 
     # ---- a user route must still pass the checkpoints -------------------
@@ -270,30 +311,40 @@ def do_points(client, acct, args, must_points=None):
         pts = _ensure_hits(pts, cps, args, RT)
 
     # ---- geofence: the run has to happen inside the campus -----------------
-    if pts and not args.no_points:
+    if pts:
         try:
-            fence = P.fetch_fence(client, acct)
-            bad = RT.outside_fence(pts, fence['polygon'])
-            bad_seg = RT.outside_fence_segments(pts, fence['polygon'])
-            if bad['count'] or bad_seg['count']:
-                worst = max([p['distance_m'] for p in bad['points']] or [0])
-                seg_worst = max([s['distance_m'] for s in bad_seg['segments']] or [0])
-                log('      ! 路线有 %d/%d 个点在围栏外（最远 %.0fm）'
-                    % (bad['count'], bad['total'], worst))
-                log('      ! 路线有 %d/%d 段穿过围栏外（最远 %.0fm）'
-                    % (bad_seg['count'], bad_seg['total'], seg_worst))
-                for b in bad['points'][:3]:
-                    log('        · 第 %d 点 越界 %.0fm'
-                        % (b['index'] + 1, b['distance_m']))
-                for s in bad_seg['segments'][:3]:
-                    log('        · 第 %d→%d 段 越界 %.0fm'
-                        % (s['index'] + 1, s['index'] + 2, s['distance_m']))
-                log('        ! 围栏外的路段很可能被判无效')
+            area = POL.select_run_area(policy_data, 0) \
+                if policy_data else None
+            if area is not None and area.get('valid') is False:
+                raise ValueError('跑区有效时间已更新，请重新选择')
+            fence = P.fetch_fence(client, acct, policy_data=policy_data,
+                                  run_area=area)
+            rings = fence.get('polygons') or (
+                [fence['polygon']] if fence.get('polygon') else [])
+            if not rings:
+                log('      该校区没有配置围栏，跳过围栏校验')
             else:
-                log('      路线全部在围栏内（%d 个围栏点，%d 段）'
-                    % (len(fence['polygon']), bad_seg['total']))
+                bad = RT.outside_fences(pts, rings)
+                bad_seg = RT.outside_fence_segments_multi(pts, rings)
+                if bad['count'] or bad_seg['count']:
+                    worst = max([p['distance_m'] for p in bad['points']] or [0])
+                    seg_worst = max([s['distance_m'] for s in bad_seg['segments']] or [0])
+                    log('      ! 路线有 %d/%d 个点不在任何围栏内（最远 %.0fm）'
+                        % (bad['count'], bad['total'], worst))
+                    log('      ! 路线有 %d/%d 段穿过围栏外（最远 %.0fm）'
+                        % (bad_seg['count'], bad_seg['total'], seg_worst))
+                    for b in bad['points'][:3]:
+                        log('        · 第 %d 点 越界 %.0fm'
+                            % (b['index'] + 1, b['distance_m']))
+                    for s in bad_seg['segments'][:3]:
+                        log('        · 第 %d→%d 段 越界 %.0fm'
+                            % (s['index'] + 1, s['index'] + 2, s['distance_m']))
+                    log('        ! 围栏外的路段很可能被判无效')
+                else:
+                    log('      路线全部在围栏内（%d 个围栏，%d 段）'
+                        % (len(rings), bad_seg['total']))
         except Exception as e:  # noqa: BLE001
-            log('      围栏校验跳过（%s）' % e)
+            raise ValueError('围栏校验失败，已停止: %s' % e)
 
     return cps, pts
 
@@ -330,7 +381,7 @@ def _altitude_kwargs(args):
             'altitude_profile': profile}
 
 
-def do_forge(acct, cps, wps, args, start_ms=None):
+def do_forge(acct, cps, wps, args, start_ms=None, sequential=False):
     log('[3/6] 造数...')
     try:
         alt = _altitude_kwargs(args)
@@ -347,6 +398,7 @@ def do_forge(acct, cps, wps, args, start_ms=None):
             start_ms=start_ms,
             run_uuid=new_run_uuid(getattr(acct, 'platform', None)),
             km_times=km_times,
+            sequential=sequential,
             **alt)
     except ValueError as e:
         raise SystemExit(_fail('造数参数无效: %s' % e, 1))
@@ -461,10 +513,27 @@ def do_policy(client, acct):
         return None, None
 
     ts = POL.policy_timestamp(pol)
-    mp = POL.extract_must_points(pol)          # raises -> caller decides
+    try:
+        mp = POL.extract_must_points(pol)
+    except Exception as e:  # noqa: BLE001
+        # Keep the policy/fence; the caller decides whether to continue with
+        # --ignore-must-points.  Returning None here would also discard the
+        # only authoritative fence source.
+        pol['_must_points_error'] = str(e)
+        mp = []
+    freeze = POL.freeze_seconds(pol)
+    face_on, face_why = POL.face_required(pol)
     log('      runMode=%d policy=%s timestamp=%s minDistance=%s 必经点=%d'
         % (rm, pol.get('policy'), ts,
            POL.rule_min_distance(pol) or '-', len(mp)))
+    if pol.get('_must_points_error'):
+        log('      ! 策略必经点无法解析: %s' % pol['_must_points_error'])
+    if freeze > 0:
+        log('      ! 账号处于跑步冻结期（剩余 %s）；仅提醒，不阻止提交'
+            % _cli_fmt_seconds(freeze))
+    if face_on:
+        log('      ! 学校启用了人脸抽检（%s）；本工具无法完成，将停止提交'
+            % face_why)
     if mp:
         pol['_must_points'] = mp
     return pol, ts
@@ -749,13 +818,51 @@ def main(argv=None, client_factory=None):
     if args.record_json is not None:
         return _raw_record(client, acct, args)
 
+    # ---- policy + campus centre ----------------------------------------
+    # policy supplies `runes`, the rule set, the run areas, and the only
+    # authoritative fence.  The separate getGeoFenceForRun reply is never used
+    # for validation (the official isInArea does not read it).
+    try:
+        pol, policy_ts = do_policy(client, acct)
+    except Exception as e:  # noqa: BLE001
+        if not getattr(args, 'ignore_must_points', False):
+            return _fail('策略必经点无法解析，已中止（确认无影响可加 '
+                         '--ignore-must-points）: %s' % e)
+        log('      ! 已忽略策略必经点: %s' % e)
+        pol, policy_ts = None, None
+    if pol is None:
+        return _fail('无法读取跑步策略，已停止（不会用旧围栏兜底）', 1)
+    if pol.get('_must_points_error'):
+        if not getattr(args, 'ignore_must_points', False):
+            return _fail('策略必经点无法解析，已中止（确认无影响可加 '
+                         '--ignore-must-points）: %s'
+                         % pol['_must_points_error'])
+        log('      ! 已忽略策略必经点: %s' % pol['_must_points_error'])
+        pol['_must_points'] = []
+
+    from ..application import policy as POL
+    area = POL.select_run_area(pol, 0)
+    if area is not None and area.get('valid') is False:
+        return _fail('跑区有效时间已更新，请重新选择', 1)
+
     # Resolve the campus centre before planning anything.  There is no
     # built-in campus default: submitting from a guessed coordinate writes a
     # record for the wrong campus and cannot be undone.
     try:
         from ..application import points as P
-        fence = P.fetch_fence(client, acct)
-        acct.center_lat, acct.center_lng = fence['center']
+        fence = P.fetch_fence(client, acct, policy_data=pol, run_area=area)
+        polygons = fence.get('polygons') or (
+            [fence['polygon']] if fence.get('polygon') else [])
+        if not polygons:
+            return _fail('学校没有配置跑步围栏，CLI 无法确定校区中心；'
+                         '请改用图形界面设置校区', 1)
+        if len(polygons) > 1:
+            return _fail('检测到多个跑步围栏，CLI 无法确定校区中心；'
+                         '请先在图形界面选择跑区或设置校区', 1)
+        center = fence['center']
+        if not center:
+            return _fail('围栏中心无效，已停止', 1)
+        acct.center_lat, acct.center_lng = float(center[0]), float(center[1])
         log('   校区围栏中心 %.6f, %.6f'
             % (acct.center_lat, acct.center_lng))
     except Exception as e:  # noqa: BLE001
@@ -856,23 +963,25 @@ def main(argv=None, client_factory=None):
         report['preflight'] = rc
 
     # ---- network steps -------------------------------------------------
-    # policy first: it supplies `runes` (timestamp), the rule set, and the
-    # minDistance that goes into selDistance (upstream flow.rs ordering).
-    try:
-        pol, policy_ts = do_policy(client, acct)
-    except Exception as e:  # noqa: BLE001
-        if not getattr(args, 'ignore_must_points', False):
-            return _fail('策略必经点无法解析，已中止（确认无影响可加 '
-                         '--ignore-must-points）: %s' % e)
-        log('      ! 已忽略策略必经点: %s' % e)
-        pol, policy_ts = None, None
+    from ..application import policy as POL
+    freeze = POL.freeze_seconds(pol) if pol else 0
+    face_on, face_why = POL.face_required(pol) if pol else (False, '')
+    sequential = bool(pol) and POL.policy_value(pol, 0) == 1
+    if face_on:
+        return _fail('学校启用了人脸抽检（%s），本工具无法完成人脸校验，'
+                     '已停止提交（不会伪造 faceCheck=1）' % face_why)
+    report['freeze_seconds'] = freeze
+    report['face_required'] = face_on
+    report['sequential'] = sequential
 
     try:
         cps, wps = do_points(client, acct, args,
-                             must_points=(pol or {}).get('_must_points'))
+                             must_points=(pol or {}).get('_must_points'),
+                             sequential=sequential, policy_data=pol)
     except ValueError as e:
         return _fail('路线不可用: %s' % e, 1)
-    run = do_forge(acct, cps, wps, args, start_ms=resolved_start)
+    run = do_forge(acct, cps, wps, args, start_ms=resolved_start,
+                   sequential=sequential)
 
     # ---- user-defined school rules -> qualification model --------------
     from ..application import qualification as Q

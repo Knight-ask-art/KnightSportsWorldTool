@@ -610,7 +610,7 @@ def download_status(store_dir: str) -> dict:
 def start_download(url, dest_dir: str, sha256: str = '', size: int = 0,
                    file: str = '', store_dir: str = '') -> dict:
     """Start a download in a daemon thread and return the initial state."""
-    global _DOWNLOAD_THREAD
+    global _DOWNLOAD_THREAD, _DOWNLOAD_STATE
     store = store_dir or dest_dir
     with _DOWNLOAD_LOCK:
         if _DOWNLOAD_THREAD is not None and _DOWNLOAD_THREAD.is_alive():

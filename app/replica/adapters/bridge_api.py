@@ -36,11 +36,10 @@ from ..transport.realclient import as_dict
 #: Prefer the user's own Web-service key.  Do not ship a hard-coded key in an
 #: open-source build; AMap binds keys to a domain/app and a leaked one is a
 #: billing and quota risk.
-# Fixed checkpoint-query distance for the UI.  Campus checkpoints belong to the
-# school, not to the distance the operator plans to run today; the requested
-# target must not cause a re-fetch or invalidate the points already displayed.
-# Submission still asks the server for the target-specific set and snaps the
-# route through any extra required point.
+# Default checkpoint-query distance for callers without a target (CLI/tests).
+# The UI passes the selected target distance because the endpoint is
+# distance-scoped: a fixed 2500 m can be an invalid distance for another school
+# and return no points.  Submission still asks for the target-specific set.
 CAMPUS_POINTS_DISTANCE_M = 2500
 AMAP_KEY = os.environ.get('JHP_AMAP_KEY', '')
 
@@ -67,6 +66,18 @@ def _ok(data=None, message='success'):
 
 def _fail(message='failed', code=500, data=None):
     return {'code': code, 'message': message, 'data': data}
+
+
+def _fmt_seconds(seconds):
+    """Human-readable remaining freeze time."""
+    total = max(0, int(seconds or 0))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return '%d 小时 %d 分' % (hours, minutes)
+    if minutes:
+        return '%d 分 %d 秒' % (minutes, secs)
+    return '%d 秒' % secs
 
 
 # --------------------------------------------------------------------------
@@ -1211,25 +1222,136 @@ class ReplicaApi:
         d['lon'] = round(float(lng), 6)
         self._write_session(d)
 
-    def _ensure_fence(self, acct, client=None) -> dict:
-        """Read this account's real campus fence and adopt its centre.
+    def real_set_campus_center(self, lat=None, lon=None):
+        """Operator-set campus centre for schools with no geofence.
 
-        This is the only source of the submit coordinate.  There is no
-        built-in fallback: if the fence cannot be read, callers must stop
-        instead of writing a record for the wrong campus.
+        The desktop tool has no GPS.  When the server returns no fence and no
+        usable centre, the operator pans the map to their campus and stores
+        that point.  It is only a coordinate; no network call is made here.
+        """
+        try:
+            lat = float(lat)
+            lon = float(lon)
+        except (TypeError, ValueError):
+            return _fail('校区坐标无效')
+        if not self._center_ok(lat, lon):
+            return _fail('校区坐标无效')
+        self._save_center(lat, lon)
+        return _ok({'lat': round(lat, 6), 'lon': round(lon, 6)})
+
+    def real_clear_campus_center(self):
+        d = self._read_session()
+        d.pop('lat', None)
+        d.pop('lon', None)
+        self._write_session(d)
+        return _ok(True)
+
+    def _fetch_run_policy(self, rc, acct):
+        """`runModePolicy` for this account (run areas + fence + rules).
+
+        The official UI calls it on entering the run page.  `runMode=1` may be
+        rejected outside the school's valid window, so try the free-run mode
+        too.  The official `RunPolicyViewModel` caches **one** reply; areas and
+        fence always belong together, so never splice the two modes: pick the
+        single most complete reply instead.
+        """
+        from ..application import policy as POL
+        replies = []
+        for rm in (1, 2):
+            try:
+                data = POL.fetch_policy(rc, acct, run_mode=rm)
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(data, dict) or not data:
+                continue
+            replies.append(data)
+            # This reply carries both halves; official caches exactly one.
+            if 'runAreaModels' in data and 'geoFence' in data:
+                break
+        if not replies:
+            return None
+        if len(replies) == 1:
+            return replies[0]
+
+        def score(data):
+            # A reply that carries both halves is authoritative.  Otherwise
+            # prefer the one with the fence (it decides the submit coordinate).
+            both = 'runAreaModels' in data and 'geoFence' in data
+            return (1 if both else 0,
+                    1 if 'geoFence' in data else 0,
+                    1 if 'runAreaModels' in data else 0,
+                    1 if data.get('policy') is not None else 0,
+                    len(data))
+
+        return max(replies, key=score)
+
+    def _ensure_fence(self, acct, client=None, policy_data=None,
+                      run_area=None, anchor=None) -> dict:
+        """Read this account's policy fence and resolve a campus centre.
+
+        The fence list is authoritative evidence for in-area checks, but it
+        does not always identify a single centre: a run area may own several
+        polygons and there may be no run area at all.  With one polygon its
+        centroid is the anchor; with several, use a saved/manual centre or the
+        route's first point only when it is actually inside one of them.
+        Never pick the first polygon just because it is first.
         """
         if client is None:
             from ..transport import realclient as R
             client = R.RealClient()
         from ..application import points as P
-        fence = P.fetch_fence(client, acct)
-        lat, lng = fence['center']
-        if not self._center_ok(lat, lng):
-            raise RuntimeError('围栏中心无效: %r' % (fence.get('center'),))
-        acct.center_lat = float(lat)
-        acct.center_lng = float(lng)
-        self._save_center(lat, lng)
-        return fence
+        if policy_data is None:
+            raise P.PolicyUnavailable(
+                'runModePolicy 未返回，无法确定围栏；不会用旧围栏兜底')
+        fence = P.fetch_fence(client, acct, policy_data=policy_data,
+                              run_area=run_area)
+        polygons = fence.get('polygons') or (
+            [fence['polygon']] if fence.get('polygon') else [])
+
+        if not polygons:
+            if self._center_ok(acct.center_lat, acct.center_lng):
+                fence['center'] = (acct.center_lat, acct.center_lng)
+                fence['center_source'] = 'manual'
+                return fence
+            raise P.FenceNotConfigured('学校未配置跑步围栏，且本地没有校区坐标')
+
+        from ..domain import routes as RT
+        if len(polygons) == 1:
+            center = fence.get('center')
+            if not center or not self._center_ok(center[0], center[1]):
+                raise RuntimeError('围栏中心无效: %r' % (center,))
+            lat, lng = float(center[0]), float(center[1])
+            acct.center_lat, acct.center_lng = lat, lng
+            self._save_center(lat, lng)
+            fence['center'] = (lat, lng)
+            fence['center_source'] = 'fence'
+            return fence
+
+        manual = None
+        if self._center_ok(acct.center_lat, acct.center_lng):
+            manual = (float(acct.center_lat), float(acct.center_lng))
+        if manual and RT.point_in_fences(manual[0], manual[1], polygons):
+            fence['center'] = manual
+            fence['center_source'] = 'manual'
+            return fence
+
+        if anchor and len(anchor) == 2 and RT.point_in_fences(
+                float(anchor[0]), float(anchor[1]), polygons):
+            lat, lng = float(anchor[0]), float(anchor[1])
+            # Transient only: a route's first point must not become the
+            # account's campus for later checkpoint queries.
+            acct.center_lat, acct.center_lng = lat, lng
+            fence['center'] = (lat, lng)
+            fence['center_source'] = 'route'
+            return fence
+
+        error = P.FenceAmbiguous(
+            '检测到多个跑步围栏，无法确定校区中心：请先在跑区下拉框选择跑区，'
+            '或把地图拖到学校后点「设为校区」')
+        # Keep the polygons on the exception so the preview can still draw
+        # them without adopting an out-of-fence map centre.
+        error.fence = fence
+        raise error
 
     def _real_account(self):
         """Build a realclient.Account from the stored session."""
@@ -1787,6 +1909,17 @@ class ReplicaApi:
             schoolName=profile.get('schoolName'),
             campusName=profile.get('campusName'),
             unid=sess.get('unid'), **extra)
+        # A new token replaces the identity block, including lat/lon.  Keep a
+        # manually set campus centre when the same campus logs in again; a
+        # school without a fence has no other way to recover it.
+        try:
+            old_unid = str(raw_session.get('unid') or '')
+            new_unid = str(sess.get('unid') or '')
+            if old_unid and old_unid == new_unid and self._center_ok(
+                    raw_session.get('lat'), raw_session.get('lon')):
+                self._save_center(raw_session['lat'], raw_session['lon'])
+        except Exception:  # noqa: BLE001
+            pass
         # Resolve the campus centre once, right after login.  A failure here
         # must not block login (records are still readable); submit retries and
         # refuses instead of falling back to a built-in coordinate.
@@ -1802,7 +1935,8 @@ class ReplicaApi:
         return _ok(data)
 
     def real_fetch_points(self, school='', glat=0.0, glon=0.0, unid=None,
-                          force=False, distance_m=CAMPUS_POINTS_DISTANCE_M):
+                          force=False, distance_m=CAMPUS_POINTS_DISTANCE_M,
+                          run_area_id=None):
         """Fetch the campus geofence + campus list from the real server.
 
         Both replies are real NetSecKit envelopes, decoded via the native w1228
@@ -1823,33 +1957,132 @@ class ReplicaApi:
             dist_m = max(1, int(round(float(distance_m))))
         except (TypeError, ValueError):
             dist_m = CAMPUS_POINTS_DISTANCE_M
-        out = {'unid': acct.unid, 'fence': None, 'campuses': None,
-               'polygon': None, 'center': None, 'errors': [],
-               'distance_m': dist_m}
+        out = {'unid': acct.unid, 'fence': None, 'fences': [],
+               'campuses': None, 'polygon': None, 'center': None,
+               'errors': [], 'notes': [],
+               'fence_missing': False, 'fence_count': 0,
+               'points_missing': False, 'points_empty': False,
+               'run_area': None, 'run_area_valid': None,
+               'run_areas': [], 'distance_m': dist_m}
 
-        # 1) geofence polygon + authoritative centre.  The server's fence is
-        # the only source of truth; the session value is a hint, and the
-        # caller's glat/glon is used only when the fence is unreadable.
+        # 0) The account's run areas come from runModePolicy, exactly like
+        # `RunPolicyViewModel.getPolicy()` (selectUnid = this account's unid).
+        # The official default is selectedPosition=0; the dialog only changes
+        # it when the operator explicitly picks another area.
+        from ..application import policy as POL
+        policy_data = self._fetch_run_policy(rc, acct)
+        area = POL.select_run_area(policy_data, 0) if policy_data else None
+        if run_area_id not in (None, '', 0, '0', -1, '-1'):
+            # Operator picked an area in the run page (official
+            # RunningAreaDialog).  Only an area the server currently offers
+            # may override the default.
+            chosen = POL.find_run_area(policy_data, run_area_id)
+            if chosen:
+                area = chosen
+            else:
+                out['notes'].append('所选跑区不可用，已按默认跑区重新匹配')
+        out['run_area'] = area
+        out['run_area_valid'] = (None if area is None
+                                 else area.get('valid') is not False)
+        out['run_areas'] = POL.run_area_models(policy_data) \
+            if policy_data else []
+        if area is not None and area.get('valid') is False:
+            out['notes'].append('默认跑区不在有效时间内，请在跑区下拉框选择其他跑区')
+        freeze = POL.freeze_seconds(policy_data) if policy_data else 0
+        face_on, face_why = (POL.face_required(policy_data)
+                             if policy_data else (False, ''))
+        sequential = bool(policy_data) and POL.policy_value(policy_data, 0) == 1
+        out['freeze_seconds'] = freeze
+        out['face_required'] = face_on
+        out['face_reason'] = face_why
+        out['sequential'] = sequential
+        if not policy_data:
+            out['notes'].append('跑区信息未读取，围栏/点位使用通用匹配')
+        if freeze > 0:
+            out['notes'].append(
+                '账号处于跑步冻结期（剩余 %s）；官方客户端此时不能开始跑步，'
+                '本工具只提醒，不阻止提交' % _fmt_seconds(freeze))
+        if face_on:
+            out['notes'].append(
+                '学校启用了人脸抽检（%s）；本工具无法完成人脸校验，提交会被阻止'
+                % face_why)
+
+        # 1) geofence polygon + authoritative centre.  A school without a
+        # fence is a valid configuration (the official client treats an empty
+        # list as "always in area"), so that is a note, not an error.  The
+        # caller's glat/glon is the fallback anchor when the fence is absent.
+        from ..application import points as P
+        anchor = (float(glat), float(glon)) if self._center_ok(glat, glon) \
+            else None
+        fence_polygons = []
         try:
-            fence = self._ensure_fence(acct, rc)
-            out['fence'] = [{'name': fence.get('name') or '',
-                             'points': [{'glat': a, 'glon': b}
-                                        for a, b in fence['polygon']]}]
-            out['polygon'] = [{'n': i + 1, 'lat': a, 'lon': b}
-                              for i, (a, b) in enumerate(fence['polygon'])]
+            fence = self._ensure_fence(acct, rc, policy_data=policy_data,
+                                       run_area=area, anchor=anchor)
+            polygons = fence.get('polygons') or (
+                [fence['polygon']] if fence.get('polygon') else [])
+            fence_polygons = polygons
+            out['fences'] = [
+                {'name': fence.get('name') or '', 'points': [
+                    {'glat': a, 'glon': b} for a, b in ring]}
+                for ring in polygons
+            ]
+            out['fence'] = out['fences']
+            out['fence_count'] = len(polygons)
+            if polygons:
+                out['polygon'] = [{'n': i + 1, 'lat': a, 'lon': b}
+                                  for i, (a, b) in enumerate(polygons[0])]
+            else:
+                out['fence_missing'] = True
+                out['notes'].append('该校区没有配置跑步围栏，不限制跑步位置')
             out['center'] = {'lat': round(acct.center_lat, 6),
                              'lon': round(acct.center_lng, 6)}
+        except P.FenceNotConfigured as e:
+            out['fence'] = []
+            out['fences'] = []
+            out['fence_count'] = 0
+            out['fence_missing'] = True
+            out['notes'].append('该校区没有配置跑步围栏，但本地没有校区坐标')
+            out['errors'].append(f'fence: {e}')
+        except P.PolicyUnavailable as e:
+            out['errors'].append(f'fence: {e}')
+            out['fence_error'] = str(e)
+            return _fail(str(e), data=out)
+        except P.FenceAmbiguous as e:
+            ambiguous = getattr(e, 'fence', None) or {}
+            fence_polygons = ambiguous.get('polygons') or []
+            out['fences'] = [
+                {'name': ambiguous.get('name') or '', 'points': [
+                    {'glat': a, 'glon': b} for a, b in ring]}
+                for ring in fence_polygons
+            ]
+            out['fence'] = out['fences']
+            out['fence_count'] = len(fence_polygons)
+            out['errors'].append(f'fence: {e}')
+            out['fence_error'] = str(e)
         except Exception as e:  # noqa: BLE001
             out['errors'].append(f'fence: {e}')
-            if self._center_ok(glat, glon):
+            out['fence_error'] = str(e)
+        if not self._center_ok(acct.center_lat, acct.center_lng) \
+                and self._center_ok(glat, glon):
+            from ..domain import routes as RT
+            # Only adopt the caller's map centre when there is no fence, or
+            # when it is actually inside one of the fences.  An ambiguous
+            # multi-fence school must not persist an out-of-area point.
+            if (not fence_polygons
+                    or RT.point_in_fences(float(glat), float(glon),
+                                          fence_polygons)):
                 acct.center_lat, acct.center_lng = float(glat), float(glon)
                 self._save_center(glat, glon)
-                out['center'] = {'lat': acct.center_lat,
-                                 'lon': acct.center_lng}
+        if self._center_ok(acct.center_lat, acct.center_lng):
+            out['center'] = {'lat': round(acct.center_lat, 6),
+                             'lon': round(acct.center_lng, 6)}
 
         if not self._center_ok(acct.center_lat, acct.center_lng):
-            return _fail('无法获取校区围栏中心，请检查登录/网络: %s'
-                         % ('; '.join(out['errors']) or 'unknown'), data=out)
+            return _fail('无法获取校区围栏/坐标：请把地图拖到你的学校，点「设为校区」；'
+                         '或先画一条以学校为起点的路线。'
+                         + ('（%s）' % '; '.join(out['errors'])
+                            if out['errors'] else ''),
+                         data=out)
 
         # 2) campus list for this school
         try:
@@ -1865,17 +2098,29 @@ class ReplicaApi:
 
         # 3) live checkpoints (the 必经点位 the replay draws)
         try:
-            from ..application import points as P
             pts = P.fetch_points(rc, acct, acct.center_lat, acct.center_lng,
-                                 force=bool(force), distance_m=dist_m)
+                                 run_area_id=area['id'] if area else None,
+                                 force=bool(force), distance_m=dist_m,
+                                 allow_empty=True)
             out['checkpoints'] = pts
             out['mandatory'] = [p for p in pts if p['isMustPoint']]
             out['route_order'] = P.route_order(
-                pts, acct.center_lat, acct.center_lng)
+                pts, acct.center_lat, acct.center_lng,
+                sequential=sequential)
+            if not pts:
+                # Preview may display "no points", but it is not proof that
+                # the campus allows a free run.  Submit defaults to blocking.
+                out['points_empty'] = True
+                out['notes'].append(
+                    '服务器没有返回打卡点；无法确认该校区是否允许自由跑，'
+                    '提交时默认阻止')
         except Exception as e:  # noqa: BLE001
             out['errors'].append(f'points: {e}')
+            out['points_error'] = str(e)
 
-        if out['center'] or out.get('checkpoints'):
+        # A missing fence/points list is not a failure once a campus centre is
+        # known.  Errors stay in ``errors`` so the UI can show them as notes.
+        if out['center']:
             return _ok(out)
         return _fail('; '.join(out['errors']) or '未取到围栏', data=out)
 
@@ -1971,15 +2216,29 @@ class ReplicaApi:
             return _fail('未配置 token（先在"账号"面板保存）')
         from ..transport import realclient as R
         from ..application import points as P
+        from ..application import policy as POL
         try:
             rc = R.RealClient()
-            f = P.fetch_fence(rc, acct)
+            policy_data = self._fetch_run_policy(rc, acct)
+            if policy_data is None:
+                return _fail('无法读取跑步策略，已停止（不会用旧围栏兜底）')
+            area = POL.select_run_area(policy_data, 0)
+            f = P.fetch_fence(rc, acct, policy_data=policy_data,
+                              run_area=area)
         except Exception as e:  # noqa: BLE001
             return _fail('围栏获取失败: %s' % e)
+        polygons = f.get('polygons') or (
+            [f['polygon']] if f.get('polygon') else [])
+        center = f.get('center')
         return _ok({
             'name': f.get('name') or '',
-            'polygon': [{'lat': a, 'lon': b} for a, b in f['polygon']],
-            'center': {'lat': f['center'][0], 'lon': f['center'][1]},
+            'polygon': [{'lat': a, 'lon': b} for a, b in (polygons[0] if polygons else [])],
+            'polygons': [[{'lat': a, 'lon': b} for a, b in ring]
+                         for ring in polygons],
+            'fence_count': len(polygons),
+            'center': ({'lat': center[0], 'lon': center[1]}
+                       if center else None),
+            'missing': not polygons,
         })
 
     def real_recent_records(self, limit=20):
@@ -2502,6 +2761,8 @@ class ReplicaApi:
                                             operate_type=op)
                     mapped = POL.rules_from_policy(data)
                     if mapped.get('rules'):
+                        freeze = POL.freeze_seconds(data)
+                        face_on, face_why = POL.face_required(data)
                         return _ok({
                             'rules': mapped['rules'],
                             'meta': mapped.get('meta') or {},
@@ -2510,6 +2771,10 @@ class ReplicaApi:
                             'run_mode': mode,
                             'operate_type': op,
                             'policy': data.get('policy'),
+                            'freeze_seconds': freeze,
+                            'face_required': face_on,
+                            'face_reason': face_why,
+                            'sequential': POL.policy_value(data, 0) == 1,
                             'source': 'runModePolicy',
                             'errors': errors,
                         })
@@ -2797,7 +3062,8 @@ class ReplicaApi:
                            daily_runs=None, daily_source=None, date=None,
                            closed=True, altitude_mode='auto',
                            altitude_range=None, altitude_profile=None,
-                           km_times=None, with_series=False, seed=None):
+                           km_times=None, with_series=False, seed=None,
+                           sequential=False):
         """Evaluate the user-entered rules against a local preview run.
 
         This is offline (no server call).  It lets the UI show a real score
@@ -2825,7 +3091,13 @@ class ReplicaApi:
                     continue
                 cps.append({'lat': float(lat), 'lon': float(lon),
                             'name': p.get('name') or p.get('pointName') or '',
-                            'isMustPoint': bool(p.get('isMustPoint'))})
+                            'isMustPoint': (bool(p.get('isMustPoint'))
+                                            or str(p.get('isFixed')).strip()
+                                            .lower() in ('1', 'true', 'yes',
+                                                         'y', '是')),
+                            'isFixed': p.get('isFixed'),
+                            'position': p.get('position'),
+                            'seq': p.get('seq')})
             d = self._read_session()
             lat = float(d.get('lat') or 0)
             lng = float(d.get('lon') or 0)
@@ -2856,6 +3128,7 @@ class ReplicaApi:
                 start_ms=start_ms,
                 closed=bool(closed),
                 km_times=km_times,
+                sequential=bool(sequential),
                 run_uuid=new_run_uuid(
                     self._effective_device(d).get('platform')))
             if daily_runs is None:
@@ -2920,7 +3193,7 @@ class ReplicaApi:
                         days_ago=0, start_time=None, date=None,
                         closed=True, altitude_mode='auto',
                         altitude_range=None, altitude_profile=None,
-                        km_times=None, seed=None):
+                        km_times=None, seed=None, run_area_id=None):
         """Forge a run, sign it with the official scheme, submit it for real,
         then read the record back so the caller sees the completion checklist.
 
@@ -2946,49 +3219,133 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001
             return _fail(f'sidecar/加密层启动失败: {e}')
 
-        # The submit coordinate comes from this account's real fence, never
-        # from a built-in default.  Stop before the write-ahead receipt when
-        # the fence cannot be resolved: a record in the wrong city is stored
-        # permanently, while a failed request is not.
-        try:
-            fence = self._ensure_fence(acct, rc)
-        except Exception as e:  # noqa: BLE001
-            return _fail('无法获取校区围栏中心，已停止提交（不会使用默认坐标）: %s'
-                         % e)
+        # The submit coordinate normally comes from this account's real fence.
+        # Some schools configure no fence at all (official client: empty fence
+        # list means "always in area"), and a manual campus point / the first
+        # waypoint is a legitimate anchor there.  A wrong coordinate is still
+        # worse than stopping, so never fall back to a built-in city.
+        wps = [(float(a), float(b)) for a, b in (waypoints or [])]
+        submit_notes = []
 
-        # ---- 0. policy: supplies the `runes` timestamp ---------------------
-        policy_ts = None
-        policy_data = None
+        # ---- 0. policy: the account's run areas + fence + runes ----------
+        # `RunPolicyViewModel.getPolicy()` sends selectUnid=user.unid and the
+        # reply carries `runAreaModels` and `geoFence`.  That is the official,
+        # per-account campus mapping; use it before any name/nearest guess.
+        from ..application import policy as POL
+        policy_data = self._fetch_run_policy(rc, acct)
+        if not policy_data:
+            return _fail('无法读取跑步策略，已停止提交（不会用旧围栏或猜测校区）')
+        area = POL.select_run_area(policy_data, 0)
+        if run_area_id not in (None, '', 0, '0', -1, '-1'):
+            chosen = POL.find_run_area(policy_data, run_area_id)
+            if chosen:
+                area = chosen
+            else:
+                submit_notes.append('所选跑区不可用，已按默认跑区重新匹配')
+        if area is not None and area.get('valid') is False:
+            return _fail('跑区有效时间已更新，请重新选择')
+        policy_ts = POL.policy_timestamp(policy_data)
+        freeze = POL.freeze_seconds(policy_data)
+        face_on, face_why = POL.face_required(policy_data)
+        sequential = POL.policy_value(policy_data, 0) == 1
+        if area:
+            submit_notes.append('跑区：%s' % (area.get('name') or area.get('id')))
+        if freeze > 0:
+            # A freeze is a strong warning, not a hard block: the operator may
+            # have a legitimate reason and the server decides.
+            submit_notes.append(
+                '账号处于跑步冻结期（剩余 %s）；官方客户端此时不能开始跑步，'
+                '仍按你的要求继续提交' % _fmt_seconds(freeze))
+        if face_on:
+            # The real client can only report `faceCheck=1` after a face check.
+            # This tool cannot perform one, so submitting would be a false
+            # claim; stop instead of guessing.
+            return _fail(
+                '学校启用了人脸抽检（%s），本工具无法完成人脸校验，已停止提交'
+                '（不会伪造 faceCheck=1）' % face_why)
+        if sequential:
+            submit_notes.append('顺序跑：按点位编号排序并依次经过')
+
+        fence = {'polygon': [], 'polygons': []}
         try:
-            from ..application import policy as POL
-            for rm in (1, 2):
-                try:
-                    policy_data = POL.fetch_policy(rc, acct, run_mode=rm)
-                    policy_ts = POL.policy_timestamp(policy_data)
-                    break
-                except Exception:
-                    continue
-        except Exception:
-            policy_data = None
+            fence = self._ensure_fence(
+                acct, rc, policy_data=policy_data, run_area=area,
+                anchor=(wps[0] if wps else None))
+            polygons = fence.get('polygons') or (
+                [fence['polygon']] if fence.get('polygon') else [])
+            if not polygons:
+                submit_notes.append('该校区未配置围栏，无法校验轨迹是否在围栏内')
+            elif fence.get('center_source') == 'route':
+                submit_notes.append(
+                    '检测到多个围栏：按路线首点确定本次校区（不会保存为账号校区）')
+            elif fence.get('center_source') == 'manual':
+                submit_notes.append('检测到多个围栏：按已保存的校区坐标提交')
+        except P.PolicyUnavailable as e:
+            return _fail(str(e))
+        except P.FenceAmbiguous as e:
+            return _fail(str(e))
+        except P.FenceNotConfigured as e:
+            center = None
+            if self._center_ok(acct.center_lat, acct.center_lng):
+                center = (acct.center_lat, acct.center_lng)
+                self._save_center(*center)
+                submit_notes.append('该校区未配置围栏，已按手动校区坐标提交')
+            elif wps:
+                # A route's first point is a valid transient anchor for a
+                # school with no fence, but it is not the account's campus.
+                center = wps[0]
+                acct.center_lat, acct.center_lng = float(center[0]), float(center[1])
+                submit_notes.append(
+                    '该校区未配置围栏，已按路线首点确定本次坐标（不会保存为校区）')
+            if center is None:
+                return _fail('学校未配置围栏，且没有可用的校区坐标：请先把地图'
+                             '拖到学校后点「设为校区」，或画一条以学校为起点的路线')
+        except Exception as e:  # noqa: BLE001
+            # A transient fence failure is not a licence to guess the campus.
+            # Only a coordinate the operator already stored is trustworthy;
+            # the route's first point may be anywhere, and persisting it here
+            # would poison later checkpoint queries.
+            if not self._center_ok(acct.center_lat, acct.center_lng):
+                return _fail('无法获取校区围栏，且本地没有已保存的校区坐标，'
+                             '已停止提交（不会用路线首点或默认坐标代替）: %s' % e)
+            submit_notes.append(
+                '围栏读取失败（%s），已按已保存的校区坐标继续提交' % e)
 
         # ---- 1. live checkpoints -> route through them --------------------
         # Checkpoints are fetched even when a route was supplied: a record
         # without them can never be complete (this used to be skipped for any
         # hand-drawn or imported route).
         cps = []
-        wps = [(float(a), float(b)) for a, b in (waypoints or [])]
         if use_points:
             try:
                 cps = P.fetch_points(rc, acct, acct.center_lat, acct.center_lng,
-                                     distance_m=float(km) * 1000.0)
+                                     run_area_id=area['id'] if area else None,
+                                     distance_m=float(km) * 1000.0,
+                                     allow_empty=False)
+                if not cps:
+                    return _fail(
+                        '服务器没有返回打卡点，无法确认该校区是否允许自由跑；'
+                        '如你确认学校没有点位，请勾选「跳过打卡点」后重试')
                 if not wps:
-                    wps = P.route_order(cps, acct.center_lat, acct.center_lng)
+                    wps = P.route_order(cps, acct.center_lat, acct.center_lng,
+                                        sequential=sequential)
+            except ValueError as e:
+                # Empty points are not proof of a free-run campus.  The
+                # decompiled client has no such branch on the normal distance
+                # endpoint; official free run is serviceType 3 / sportType 4.
+                return _fail(
+                    '服务器没有返回有效打卡点，无法确认该校区是否允许自由跑；'
+                    '如你确认学校没有点位，请勾选「跳过打卡点」后重试: %s' % e)
             except Exception as e:  # noqa: BLE001
                 # A record without the mandatory checkpoint hits cannot be
                 # complete.  Submitting anyway created an accepted-but-invalid
                 # run, so stop before the write-ahead receipt is reserved.
                 return _fail('点位加载失败，已停止提交（避免生成不完整记录）: %s'
                              % e)
+        else:
+            submit_notes.append(
+                '已按操作员确认跳过打卡点；本工具尚未实现官方自由跑'
+                '（serviceType=3），提交仍按普通跑步生成')
 
         # policy's must-points must be on the track even when the checkpoint
         # endpoint does not return them (policy.rs::route_points).  A malformed
@@ -3000,13 +3357,32 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001
             return _fail(f'策略必经点无法解析，已中止: {e}')
         if not use_points and mp:
-            return _fail('学校策略要求必经点位，不能使用自由跑（请关闭自由跑后重试）')
+            return _fail('学校策略要求必经点位，不能跳过打卡点'
+                         '（请取消「跳过打卡点」后重试）')
         if mp:
-            first = wps[0] if wps else None
-            wps = P.merge_required(mp, wps)
-            # The user's first tap is the start.  Policy must-points are
-            # prepended by merge_required, so rotate the loop back to it.
-            wps = P.rotate_to(wps, first)
+            if sequential:
+                # `merge_required` prepends must-points and `rotate_to` moves
+                # the user's first point back to index 0; either would break
+                # the school's numbering for a sequential run.  The checkpoint
+                # list already carries every point the route must visit, so
+                # only append a policy point that is genuinely absent.
+                missing = []
+                for p in mp:
+                    if not any(abs(p[0] - q[0]) < 1e-6
+                               and abs(p[1] - q[1]) < 1e-6 for q in wps):
+                        missing.append(p)
+                if missing:
+                    wps.extend(missing)
+                    submit_notes.append(
+                        '顺序跑：策略必经点不在点位列表，已追加到路线末尾')
+                else:
+                    submit_notes.append('顺序跑：策略必经点已包含在点位序列中')
+            else:
+                first = wps[0] if wps else None
+                wps = P.merge_required(mp, wps)
+                # The user's first tap is the start.  Policy must-points are
+                # prepended by merge_required, so rotate the loop back to it.
+                wps = P.rotate_to(wps, first)
 
         # ---- 1b. a user route must still pass the checkpoints -----------
         from ..domain import routes as RT
@@ -3078,6 +3454,8 @@ class ReplicaApi:
                                     start_ms=start_ms,
                                     closed=bool(closed),
                                     km_times=km_times,
+                                    run_area_id=area['id'] if area else None,
+                                    sequential=sequential,
                                     run_uuid=new_run_uuid(
                                         getattr(acct, 'platform', None)))
         except Exception as e:  # noqa: BLE001
@@ -3091,34 +3469,37 @@ class ReplicaApi:
             return _fail('提交前自检未通过: %s' % issues)
 
         # A wrong centre is the one mistake that still yields an *accepted*
-        # record.  Reject the track when it starts outside this account's
-        # fence, or when most of it is outside — that is what a stale/default
-        # coordinate looks like.
-        try:
-            import json as _json
-            from ..domain import routes as RT
-            wrap = run.get('locJsonEntity') or {}
-            raw = wrap.get('allLocJson') if isinstance(wrap, dict) else None
-            if isinstance(raw, str):
-                raw = _json.loads(raw)
-            gcj = [(float(p['gLat']), float(p['gLng']))
-                   for p in (raw or [])
-                   if isinstance(p, dict) and 'gLat' in p and 'gLng' in p]
-            if not gcj:
-                return _fail('提交前围栏校验失败：轨迹缺少 GCJ 坐标，已停止提交')
-            if not RT.point_in_polygon(gcj[0][0], gcj[0][1],
-                                       fence['polygon']):
-                return _fail('生成路线起点不在校区围栏内（坐标未初始化？），'
-                             '已停止提交')
-            bad = RT.outside_fence(gcj, fence['polygon'])
-            if bad['count']:
-                worst = max(p['distance_m'] for p in bad['points'])
-                if bad['count'] > len(gcj) * 0.25 or worst > 150:
-                    return _fail('生成路线有 %d/%d 个点在围栏外（最远 %.0fm），'
-                                 '已停止提交' % (bad['count'], bad['total'],
-                                                 worst))
-        except Exception as e:  # noqa: BLE001
-            return _fail('提交前围栏校验失败，已停止提交: %s' % e)
+        # record.  When the school has a fence, reject the track when it starts
+        # outside it, or when most of it is outside.  A school without a fence
+        # has nothing to validate against, and saying so is better than
+        # refusing a valid run.
+        polygons = fence.get('polygons') or (
+            [fence['polygon']] if fence.get('polygon') else [])
+        if polygons:
+            try:
+                import json as _json
+                from ..domain import routes as RT
+                wrap = run.get('locJsonEntity') or {}
+                raw = wrap.get('allLocJson') if isinstance(wrap, dict) else None
+                if isinstance(raw, str):
+                    raw = _json.loads(raw)
+                gcj = [(float(p['gLat']), float(p['gLng']))
+                       for p in (raw or [])
+                       if isinstance(p, dict) and 'gLat' in p and 'gLng' in p]
+                if not gcj:
+                    return _fail('提交前围栏校验失败：轨迹缺少 GCJ 坐标，已停止提交')
+                if not RT.point_in_fences(gcj[0][0], gcj[0][1], polygons):
+                    return _fail('生成路线起点不在任一校区围栏内（坐标未初始化？），'
+                                 '已停止提交')
+                bad = RT.outside_fences(gcj, polygons)
+                if bad['count']:
+                    worst = max(p['distance_m'] for p in bad['points'])
+                    if bad['count'] > len(gcj) * 0.25 or worst > 150:
+                        return _fail('生成路线有 %d/%d 个点不在任何围栏内（最远 %.0fm），'
+                                     '已停止提交' % (bad['count'], bad['total'],
+                                                     worst))
+            except Exception as e:  # noqa: BLE001
+                return _fail('提交前围栏校验失败，已停止提交: %s' % e)
 
         # User-entered school rules -> qualification model.  If the rules are
         # incomplete the model stays silent; it never guesses a school's rules.
@@ -3216,6 +3597,14 @@ class ReplicaApi:
         res['uuid'] = run_uuid
         res['policy'] = ent.get('policy')
         res['model'] = model
+        res['freeze_seconds'] = freeze
+        res['face_required'] = face_on
+        res['sequential'] = sequential
+        if freeze > 0:
+            res.setdefault('warnings', [])
+            if isinstance(res['warnings'], list):
+                res['warnings'].append(
+                    '账号处于跑步冻结期（剩余 %s）' % _fmt_seconds(freeze))
         res['start'] = {'ms': start_ms, 'text': S.fmt_beijing(start_ms),
                         'days_ago': start_days_ago}
         res['daily'] = {'date': day_key, 'runs': day_runs,
@@ -3300,8 +3689,9 @@ class ReplicaApi:
                         }
         except Exception as e:  # noqa: BLE001
             res['readback_error'] = str(e)
-        res['param_warnings'] = plausibility_warnings(pace, cadence) + (
-            [rules_warning] if rules_warning else [])
+        res['param_warnings'] = (plausibility_warnings(pace, cadence)
+                                 + ([rules_warning] if rules_warning else [])
+                                 + submit_notes)
         return _ok(res)
 
     # -- hardware-bound stubs (documented, need real env) ------------------------------

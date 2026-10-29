@@ -13,7 +13,7 @@ provides the three pieces that were missing:
 * `smooth()` — centripetal Catmull-Rom, so a 10-point sketch is a curve rather
   than a polygon, while still passing **through** every control point;
 * `missed_points()` — which checkpoints the route does not actually pass
-  (40 m, the same tolerance `isPass` uses).
+  (25 m, the official `RunRanLocationManager` pass radius).
 
 Coordinate frames
 -----------------
@@ -31,8 +31,9 @@ import re
 
 from . import coords
 
-#: `isPass` tolerance in the record (`wire.rs::passes_point`).
-HIT_RADIUS_M = 40.0
+#: `isPass` tolerance in the record: the official `RunRanLocationManager` and
+#: `RunSeqLocationManager` tick a checkpoint at `distance <= 25.0`.
+HIT_RADIUS_M = 25.0
 
 
 # --------------------------------------------------------------------------
@@ -344,6 +345,48 @@ def outside_fence(points: list[tuple[float, float]],
     return {'count': found, 'total': len(points), 'points': bad}
 
 
+def _clean_rings(rings) -> list[list[tuple[float, float]]]:
+    out = []
+    for ring in rings or []:
+        r = [(float(a), float(b)) for a, b in (ring or [])]
+        if len(r) >= 3:
+            out.append(r)
+    return out
+
+
+def point_in_fences(lat: float, lng: float, rings) -> bool:
+    """Official ``isInArea`` semantics: inside any fence is inside."""
+    rs = _clean_rings(rings)
+    if not rs:
+        return True
+    return any(point_in_polygon(lat, lng, ring) for ring in rs)
+
+
+def outside_fences(points: list[tuple[float, float]], rings,
+                   max_report: int = 0) -> dict:
+    """Which route points fall outside *all* campus fences.
+
+    A run area may own several fences and the official client accepts a point
+    inside any one of them.  Picking a single polygon here would reject valid
+    routes at a multi-campus school.
+    """
+    pts = [(float(a), float(b)) for a, b in (points or [])]
+    rs = _clean_rings(rings)
+    if not rs or not pts:
+        return {'count': 0, 'total': len(pts), 'points': []}
+    bad = []
+    for i, (lat, lng) in enumerate(pts):
+        if any(point_in_polygon(lat, lng, ring) for ring in rs):
+            continue
+        dist = min(distance_to_ring_m(lat, lng, ring) for ring in rs)
+        bad.append({'index': i, 'lat': lat, 'lon': lng,
+                    'distance_m': round(dist, 1)})
+    found = len(bad)
+    if max_report:
+        bad = bad[:max_report]
+    return {'count': found, 'total': len(pts), 'points': bad}
+
+
 def _segment_edge_t(a: tuple[float, float], b: tuple[float, float],
                     c: tuple[float, float], d: tuple[float, float]) -> float | None:
     """Where segment a→b crosses c→d, as t in [0, 1] along a→b."""
@@ -400,6 +443,52 @@ def outside_fence_segments(points: list[tuple[float, float]],
             if point_in_polygon(lat, lng, ring):
                 continue
             dist = distance_to_ring_m(lat, lng, ring)
+            if worst is None or dist > worst[0]:
+                worst = (dist, lat, lng)
+        if worst is not None:
+            dist, lat, lng = worst
+            bad.append({'index': i,
+                        'from': [round(a[0], 7), round(a[1], 7)],
+                        'to': [round(b[0], 7), round(b[1], 7)],
+                        'lat': round(lat, 7), 'lon': round(lng, 7),
+                        'distance_m': round(dist, 1)})
+    found = len(bad)
+    if max_report:
+        bad = bad[:max_report]
+    return {'count': found, 'total': total, 'segments': bad}
+
+
+def outside_fence_segments_multi(points: list[tuple[float, float]], rings,
+                                 max_report: int = 0) -> dict:
+    """Segment version of :func:`outside_fences` for several rings."""
+    pts = [(float(a), float(b)) for a, b in (points or [])]
+    rs = _clean_rings(rings)
+    total = max(0, len(pts) - 1)
+    if total == 0 or not rs:
+        return {'count': 0, 'total': total, 'segments': []}
+
+    edges = []
+    for ring in rs:
+        edges.extend(zip(ring, ring[1:] + ring[:1]))
+    bad = []
+    for i in range(total):
+        a, b = pts[i], pts[i + 1]
+        cuts = [0.0, 1.0]
+        for c, d in edges:
+            t = _segment_edge_t(a, b, c, d)
+            if t is not None:
+                cuts.append(t)
+        cuts = sorted(set(round(t, 12) for t in cuts))
+        worst = None
+        for t0, t1 in zip(cuts, cuts[1:]):
+            if t1 - t0 < 1e-12:
+                continue
+            tm = (t0 + t1) / 2.0
+            lat = a[0] + (b[0] - a[0]) * tm
+            lng = a[1] + (b[1] - a[1]) * tm
+            if any(point_in_polygon(lat, lng, ring) for ring in rs):
+                continue
+            dist = min(distance_to_ring_m(lat, lng, ring) for ring in rs)
             if worst is None or dist > worst[0]:
                 worst = (dist, lat, lng)
         if worst is not None:
