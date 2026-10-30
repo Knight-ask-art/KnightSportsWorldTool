@@ -233,6 +233,10 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
 .btn.ghost{border-color:transparent;color:var(--pencil)}
 .btn.ghost:hover{color:var(--ink);background:rgba(216,209,191,.45)}
 .btn.small{padding:3px 8px;font-size:11px}
+.btn:disabled{opacity:.45;cursor:not-allowed;background:rgba(216,209,191,.35)}
+.btn.primary:disabled{background:var(--faint);border-color:var(--faint);color:var(--paper-2);opacity:.55}
+.btn:disabled:hover{background:rgba(216,209,191,.35)}
+.btn.primary:disabled:hover{background:var(--faint)}
 
 .tag{
   display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--pencil);
@@ -780,8 +784,10 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
   background:rgba(251,248,240,.72);
 }
 .submit-result.ok{border-left-color:var(--green)}
+.submit-result.ok.warn{border-left-color:var(--amber)}
 .submit-result.fail{border-left-color:var(--stamp)}
 .submit-result.unknown{border-left-color:var(--amber);background:rgba(242,210,92,.12)}
+.submit-result.ok.warn .submit-result-badge{color:var(--amber)}
 .submit-result-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .submit-result-badge{
   font:9px/1 var(--sans);padding:2px 6px;border:1px solid currentColor;

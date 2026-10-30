@@ -450,6 +450,7 @@ def test_points_cooldown_button_ticks_and_disables_while_cooling():
     assert 'setInterval(syncPointsCooldownUI, 1000)' in JS
     assert "btn.textContent = '冷却 ' + left + 's'" in JS
     assert "btn.disabled = true" in _js_function('syncPointsCooldownUI')
+    assert '.btn:disabled{opacity:.45' in CSS
 
 
 def test_run_area_dropdown_can_return_to_automatic_matching():
