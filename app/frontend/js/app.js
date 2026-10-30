@@ -3240,6 +3240,12 @@ function finalizeRoute(reason){
     scheduleRouteFinalize(1000, reason);
     return;
   }
+  // An auto-filled target from a two-point stub is not a final line.  Keep
+  // waiting; a manual target is explicit and may be used without a route.
+  if(!distanceManual){
+    const m = route && route.length >= 2 ? pathLength(displayPath()) : 0;
+    if(!(m >= 80)){ refreshPointsDistanceState(); return; }
+  }
   const want = pointsTargetM();
   if(!(want > 0)){ refreshPointsDistanceState(); return; }
   if(LIVE.pointsDistance && Math.abs(want - LIVE.pointsDistance) < 1){
