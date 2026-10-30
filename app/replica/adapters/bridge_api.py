@@ -3455,6 +3455,15 @@ class ReplicaApi:
             cps = _normalise_ui_points(points)
             if cps:
                 submit_notes.append('使用地图上的 %d 个打卡点' % len(cps))
+                try:
+                    shown = float(points_distance_m or 0)
+                    target = float(km) * 1000.0
+                except (TypeError, ValueError):
+                    shown, target = 0.0, 0.0
+                if shown > 0 and target > 0 and abs(shown - target) >= 50:
+                    submit_notes.append(
+                        '点位按 %d m 加载，本次目标 %d m；提交复用该套点位'
+                        % (int(round(shown)), int(round(target))))
             else:
                 dist_points = P.points_distance_for_submit(
                     points_distance_m, km)

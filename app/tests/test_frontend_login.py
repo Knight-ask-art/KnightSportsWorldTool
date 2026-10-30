@@ -97,10 +97,15 @@ def test_points_failure_keeps_the_last_set_and_reports_provenance():
     assert 'points_distance_m' in load
     assert 'points_stale' in load
     assert 'points_retry_after_s' in load
-    # Auto refresh is budgeted and honours the persisted cooldown.
+    # Drawing only updates the "distance changed" state; the actual fetch
+    # happens when the line is finalized and is still budgeted.
     sched = _js_function('schedulePointsForDistance')
-    assert 'POINTS_AUTO_GAP_MS' in sched
-    assert 'pointsCooldownLeft()' in sched
+    assert 'finalizeRoute' in sched
+    assert 'refreshPointsDistanceState' in sched
+    fin = _js_function('finalizeRoute')
+    assert 'POINTS_AUTO_GAP_MS' in fin
+    assert 'pointsCooldownLeft()' in fin
+    assert 'distance_m: want' in fin
     # Submit sends the distance of the set the operator saw.
     assert 'points_distance_m: LIVE.pointsDistance' in SOURCE
     assert 'function livePointsPayload' in SOURCE
@@ -458,3 +463,39 @@ def test_run_area_dropdown_can_return_to_automatic_matching():
     assert '自动（按账号校区）' in render
     assert 'value=""' in render
     assert 'run_area_choice: {[key]: null}' in JS
+
+
+def test_target_distance_starts_at_zero_and_is_filled_by_the_route():
+    assert 'min="0" max="42.2" step="0.01" value="0"' in HTML
+    assert "if(key === 'km' && !(v > 0))" in JS
+    assert "先手绘一条路线，或在参数页填写目标距离" in JS
+    # Deleting the last point puts the auto-filled target back to 0.
+    assert "kmEl.value = '0'" in JS
+
+
+def test_points_are_fetched_on_route_finalize_not_every_10m():
+    sched = _js_function('schedulePointsForDistance')
+    # The auto/drawing branch must not call the endpoint.
+    auto_branch = sched.split('if(auto){', 1)[1].split('}', 1)[0]
+    assert 'loadPoints' not in auto_branch
+    assert 'refreshPointsDistanceState' in auto_branch
+    fin = _js_function('finalizeRoute')
+    assert 'pointsCooldownLeft()' in fin
+    assert 'POINTS_AUTO_GAP_MS' in fin
+    assert 'distance_m: want' in fin
+    for trigger in ('scheduleRouteFinalize(300, \'pen-off\')',
+                    "scheduleRouteFinalize(150, 'tab:'",
+                    "scheduleRouteFinalize(300, 'import')",
+                    "scheduleRouteFinalize(1500, 'drag')"):
+        assert trigger in JS, trigger
+
+
+def test_stale_points_distance_is_visible_and_actionable():
+    assert 'function pointsDistanceStale' in JS
+    assert 'function pointsDistanceText' in JS
+    assert '点位与目标距离' in JS
+    assert "action: 'refresh-points'" in JS
+    assert "checkAction === 'refresh-points'" in JS
+    assert '点位按 %d m 加载，本次目标 %d m' in (
+        ROOT / 'replica' / 'adapters' / 'bridge_api.py'
+    ).read_text(encoding='utf-8')

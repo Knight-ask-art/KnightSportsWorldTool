@@ -195,9 +195,12 @@ function renderPoints(points, opts){
       badge.textContent = '跳过点位 · 不查打卡点';
       badge.className = 'tag warn';
     }else if(livePoints.length){
+      const distMismatch = pointsDistanceStale();
       badge.textContent = livePoints.length + ' 个 · ' + must + ' 必经' +
-        (LIVE.pointsStale ? ' · 缓存' : '');
-      badge.className = 'tag ' + (LIVE.pointsStale ? 'warn' : 'ok');
+        (LIVE.pointsStale ? ' · 缓存'
+          : (distMismatch ? ' · 距离待刷新' : ''));
+      badge.className = 'tag ' +
+        ((LIVE.pointsStale || distMismatch) ? 'warn' : 'ok');
     }else if(LIVE.pointsEmpty){
       badge.textContent = '无打卡点（需确认）';
       badge.className = 'tag warn';
@@ -386,6 +389,7 @@ function applyRouteSnapshot(snap){
   redraw();
   refreshChecks();
   if(typeof scheduleModelPreview === 'function') scheduleModelPreview();
+  if(!pen) scheduleRouteFinalize(600, 'undo');
 }
 function popDifferentSnapshot(stack){
   const current = routeSnapshotKey(routeSnapshot());
@@ -426,7 +430,12 @@ function setPen(on, silent){
   map.getContainer().style.cursor = on ? 'crosshair' : '';
   if(on && !silent) toast('画笔已打开：单击加点，右键删点；地图仍可拖动');
 }
-$('#penBtn').addEventListener('click', () => setPen(!pen));
+$('#penBtn').addEventListener('click', () => {
+  const next = !pen;
+  setPen(next);
+  // Closing the pen is the clearest "line is done" signal.
+  if(!next) scheduleRouteFinalize(300, 'pen-off');
+});
 setPen(true, true);
 
 function setCloseUI(on){
@@ -559,6 +568,7 @@ function deleteRoutePoint(i){
   route.splice(i, 1);
   selRoutePoint = -1;
   redraw();
+  if(!pen) scheduleRouteFinalize(1200, 'delete');
   toast('已删除第 ' + (i + 1) + ' 点；Ctrl+Z 撤销');
 }
 function beginRoutePointDrag(i, ev){
@@ -598,6 +608,7 @@ document.addEventListener('mouseup', () => {
     routeClickGuardUntil = Date.now() + 300;
     pushRouteSnapshot(dragPointSnapshot, '移动第 ' + (i + 1) + ' 点');
     redraw();
+    scheduleRouteFinalize(1500, 'drag');
     toast('已移动第 ' + (i + 1) + ' 点');
   }
   dragPointSnapshot = null;
@@ -635,6 +646,13 @@ function redraw(){
     // setting a target before drawing must not be immediately overwritten.
     if(lastRouteLength) distanceManual = false;
     lastRouteLength = 0;
+    // No line means no target.  A manually entered distance is kept; the
+    // auto-filled value from the deleted line goes back to 0.
+    const kmEl = $('#inKm');
+    if(kmEl && !distanceManual && +kmEl.value !== 0){
+      kmEl.value = '0';
+      refreshParams();
+    }
     if(map.hasLayer(start)) map.removeLayer(start);
     $('#routeKm').innerHTML = '0.00<small>km</small>';
     $('#routeNote').innerHTML = '<b>·</b> 点击地图开始';
@@ -642,6 +660,7 @@ function redraw(){
     $('#runSummary').textContent = '单圈 0.00 km · 等待画线';
     $('#mapNoteKm').textContent = '0.00 km';
     $('#mapNoteMeta').textContent = '等待画线';
+    refreshPointsDistanceState();
     if(typeof scheduleModelPreview === 'function') scheduleModelPreview();
     return;
   }
@@ -654,17 +673,18 @@ function redraw(){
   autoFillDistanceFromRoute(m);
   const km = m / 1000;
   $('#routeKm').innerHTML = km.toFixed(2) + '<small>km</small>';
-  const target = (+$('#inKm').value || 2.5) * 1000;
+  const target = (+$('#inKm').value || 0) * 1000;
   const closed = routeClosed && route.length >= 3;
   // 0.5% tolerance: a target equal to one lap must stay one lap after the
   // route length was rounded to centimetres for the input field.
-  const laps = closed && m > 5
+  const laps = closed && m > 5 && target > 0
     ? Math.max(1, Math.ceil(target / m - 0.005)) : 0;
   const cov = typeof computeCoverage === 'function' ? computeCoverage() : null;
   let status;
   if(!routeClosed) status = '开放路线 · 再点可以继续';
   else if(route.length < 3) status = '再点一个点形成闭合';
   else if(m < 80) status = '路线太短（<80m），画大一点';
+  else if(!(target > 0)) status = '闭合路线 · 先画完或填写目标距离';
   else status = '闭合路线 · 打卡点 ' + (cov && cov.total ? (cov.passed + '/' + cov.total)
     : (LIVE.pointsEmpty ? '无（需确认）' : '未加载')) + ' · ' + laps + ' 圈';
   $('#routeNote').innerHTML = closed && m >= 80
@@ -677,7 +697,7 @@ function redraw(){
     ' · ' + (closed ? ('闭合 · 打卡 ' + (cov && cov.total ? (cov.passed + '/' + cov.total) : '未加载')) : '开放路线');
 
   $('#mapNoteKm').textContent = km.toFixed(2) + ' km';
-  $('#mapNoteMeta').textContent = closed && m >= 80
+  $('#mapNoteMeta').textContent = closed && m >= 80 && target > 0
     ? '闭合 · ×' + laps + ' 圈 · ' + durationText(totalMin)
     : status;
   if(typeof scheduleModelPreview === 'function') scheduleModelPreview();
@@ -710,6 +730,7 @@ $('#undoTool').addEventListener('click', undoRoute);
 $('#clearBtn').addEventListener('click', () => {
   if(route.length >= 3 && !confirm('清空当前路线？')) return;
   if(route.length) pushRouteHistory('清空路线');
+  clearTimeout(_routeFinalTimer);
   route = [];
   selRoutePoint = -1;
   redraw();
@@ -728,6 +749,7 @@ $('#closeToggle').addEventListener('click', () => {
   redraw();
   refreshChecks();
   if(typeof scheduleModelPreview === 'function') scheduleModelPreview();
+  if(!pen) scheduleRouteFinalize(600, 'closed');
   toast(routeClosed
     ? '闭合已开：3 个点也会首尾相连；关掉可画开放路线'
     : '闭合已关：保留起点到终点');
@@ -830,6 +852,11 @@ function validateRunParams(p){
   for(const key of Object.keys(RUN_LIMITS)){
     const spec = RUN_LIMITS[key], v = p[key];
     if(!isFinite(v)) return '请填写有效的' + spec.label;
+    // The target starts at 0 and is filled from the hand-drawn line.  A 0
+    // target is "not drawn yet", not an out-of-range number.
+    if(key === 'km' && !(v > 0)){
+      return '先手绘一条路线，或在参数页填写目标距离';
+    }
     if(spec.integer && Math.abs(v - Math.round(v)) > 1e-9){
       return spec.label + '需要是整数';
     }
@@ -1113,6 +1140,9 @@ async function refreshSplits(){
 
 /* ---------- run panel tabs / collapse ---------- */
 function switchRunTab(name){
+  // Leaving the route tab means the operator is done drawing/editing; this
+  // is the natural point to fetch the set for the final line length.
+  if(name !== 'route') scheduleRouteFinalize(150, 'tab:' + name);
   if(name !== 'params') closeDatePop();
   document.querySelectorAll('.rtab').forEach(t => {
     const on = t.dataset.rtab === name;
@@ -1204,6 +1234,7 @@ function autoGenerate(){
   route = out;
   setCloseUI(true);
   redraw();
+  scheduleRouteFinalize(300, 'auto');
   liveLog('自动路线仍在开发中', '仅作试验；建议改用手绘或导入 GPX', 'warn');
   toast('自动仍在开发中，不建议使用；已按 ' + livePoints.length + ' 个点位生成试验路线');
 }
@@ -1230,6 +1261,7 @@ function stadiumGenerate(){
   route = pts;
   setCloseUI(true);
   redraw();
+  scheduleRouteFinalize(300, 'stadium');
   toast('田径场 ' + size + 'm：生成一圈，提交时按目标距离刷圈');
 }
 function setMode(mode){
@@ -1385,6 +1417,7 @@ function importRouteFile(){
     route = pts;
     setCloseUI(false);
     redraw();
+    scheduleRouteFinalize(300, 'import');
     toast('已导入 ' + pts.length + ' 个点');
     liveLog('路线已导入', f.name + ' · ' + pts.length + ' 点', 'ok');
   };
@@ -1479,6 +1512,11 @@ function followDataGoto(el){
     setTimeout(() => {
       if(typeof runPreflight === 'function') runPreflight();
     }, 140);
+  }
+  if(el.dataset.checkAction === 'refresh-points'){
+    setTimeout(() => {
+      if(typeof loadPoints === 'function') loadPoints(true, {quiet: false});
+    }, 160);
   }
 }
 document.addEventListener('click', ev => {
@@ -2731,6 +2769,7 @@ function renderEmptyData(){
   LIVE.pointsStale = false;
   renderPoints([]);
   setFences([], '跑步围栏');
+  clearTimeout(_routeFinalTimer);
   route = [];
   resetRouteHistory();
   redraw();
@@ -3106,9 +3145,11 @@ function focusCampusOnMap(){
   return true;
 }
 const POINTS_AUTO_GAP_MS = 5 * 60 * 1000;
-const POINTS_AUTO_CHANGE_M = 200;
-const POINTS_MANUAL_CHANGE_M = 50;
+const POINTS_STALE_M = 50;
+const POINTS_FINAL_DELAY_MS = 900;
 let _pointsKmTimer = 0;
+let _routeFinalTimer = 0;
+let _pointsStateTimer = 0;
 function pointsSessionKey(){
   const s = LIVE.session || {};
   return String(s.uid || '') + ':' + String(s.unid || '');
@@ -3163,26 +3204,74 @@ function notePointsCooldown(seconds){
   startPointsCooldownTick();
   syncPointsCooldownUI();
 }
+function pointsTargetM(){
+  const km = +($('#inKm') && $('#inKm').value) || 0;
+  return km > 0 ? Math.max(1, Math.round(km * 1000)) : 0;
+}
+function pointsDistanceStale(){
+  if(!(LIVE.pointsDistance > 0) || !livePoints.length) return false;
+  const target = pointsTargetM();
+  if(!(target > 0)) return false;
+  return Math.abs(target - LIVE.pointsDistance) >= POINTS_STALE_M;
+}
+function pointsDistanceText(){
+  const target = pointsTargetM();
+  return '点位按 ' + (LIVE.pointsDistance / 1000).toFixed(2) +
+    ' km 加载，当前目标 ' + (target / 1000).toFixed(2) + ' km';
+}
+function refreshPointsDistanceState(){
+  // redraw() runs once during boot, before LIVE/hasSession are initialized.
+  // Defer both the chip and the checklist so a mid-draw state change never
+  // touches those bindings early.
+  clearTimeout(_pointsStateTimer);
+  _pointsStateTimer = setTimeout(() => {
+    if(typeof updateFenceChip === 'function') updateFenceChip();
+    if(typeof refreshChecks === 'function') refreshChecks();
+  }, 30);
+}
+function scheduleRouteFinalize(delay, reason){
+  clearTimeout(_routeFinalTimer);
+  _routeFinalTimer = setTimeout(() => {
+    _routeFinalTimer = 0;
+    finalizeRoute(reason);
+  }, Math.max(0, +delay || 0));
+}
+function finalizeRoute(reason){
+  if(!hasSession() || freeRunOn()){ refreshPointsDistanceState(); return; }
+  if(LIVE.pointsLoading){
+    scheduleRouteFinalize(1000, reason);
+    return;
+  }
+  const want = pointsTargetM();
+  if(!(want > 0)){ refreshPointsDistanceState(); return; }
+  if(LIVE.pointsDistance && Math.abs(want - LIVE.pointsDistance) < 1){
+    refreshPointsDistanceState();
+    return;
+  }
+  if(pointsCooldownLeft() > 0){ refreshPointsDistanceState(); return; }
+  if(Date.now() - (LIVE.pointsAutoAt || 0) < POINTS_AUTO_GAP_MS){
+    refreshPointsDistanceState();
+    return;
+  }
+  // One request per finalized line.  The caller passes the exact target so a
+  // route loaded from the library and a manual km entry both agree.
+  LIVE.pointsAutoAt = Date.now();
+  loadPoints(false, {quiet: true, distance_m: want, final: reason || 'route'});
+}
 function schedulePointsForDistance(auto){
   clearTimeout(_pointsKmTimer);
+  if(auto){
+    // While drawing, the length is still moving.  Never call the endpoint
+    // here: just expose that the displayed set belongs to an older length.
+    // The actual request happens when the route is finalized (pen off, tab
+    // switch, import, drag end, or a manual distance entry).
+    refreshPointsDistanceState();
+    return;
+  }
+  refreshPointsDistanceState();
   _pointsKmTimer = setTimeout(() => {
-    if(!hasSession() || freeRunOn()) return;
-    if(pointsCooldownLeft() > 0) return;
-    const km = +($('#inKm') && $('#inKm').value) || 0;
-    if(!(km > 0)) return;
-    const want = Math.round(km * 1000);
-    const minChange = auto ? POINTS_AUTO_CHANGE_M : POINTS_MANUAL_CHANGE_M;
-    if(LIVE.pointsDistance && Math.abs(want - LIVE.pointsDistance) < minChange)
-      return;
-    if(auto){
-      // Drawing changes the target every 10 m.  The endpoint allows 3 calls
-      // per 5 minutes and each call returns a *different* random five-point
-      // set, so an automatic re-pull is only worth one call per window.
-      if(Date.now() - (LIVE.pointsAutoAt || 0) < POINTS_AUTO_GAP_MS) return;
-      LIVE.pointsAutoAt = Date.now();
-    }
-    loadPoints(false, {quiet: true});
-  }, auto ? 3000 : 900);
+    finalizeRoute('distance');
+  }, POINTS_FINAL_DELAY_MS);
 }
 async function setCampusFromMap(){
   if(!hasSession()){ toast('先登录再设置校区'); return; }
@@ -3207,6 +3296,7 @@ async function loadPoints(force, opts){
     // `force` only bypasses the 300 s cache; it must not burn another call
     // while the server is still refusing this account.
     syncPointsCooldownUI();
+    refreshPointsDistanceState();
     if(!opts.quiet)
       toast('点位接口限流中，约 ' + cooling + ' 秒后可重试');
     return;
@@ -3219,8 +3309,13 @@ async function loadPoints(force, opts){
   // The checkpoint endpoint is distance-scoped.  Use today's target so the
   // points drawn on the map are the ones submit will actually route through;
   // a hard-coded 2500 m can be an invalid distance for another school.
+  // `distance_m` from a finalized route is exact.  Without it (first visit,
+  // before anything is drawn) use a neutral campus preview distance so the
+  // fence still loads; the target input itself stays at 0.
   const km = +($('#inKm') && $('#inKm').value) || 2.5;
-  const distance_m = Math.max(1, Math.round(km * 1000));
+  const distance_m = opts.distance_m > 0
+    ? Math.max(1, Math.round(+opts.distance_m))
+    : Math.max(1, Math.round(km * 1000));
   const j = await liveApi('real_fetch_points', {
     school: s.schoolName || '', glat: +s.lat || 0, glon: +s.lon || 0,
     unid: s.unid || null, force: !!force, distance_m,
@@ -3349,7 +3444,10 @@ async function loadPoints(force, opts){
       ? (LIVE.points.length + ' 个打卡点' +
          (LIVE.pointsStale
            ? '（缓存 ' + (LIVE.pointsDistance / 1000).toFixed(2) + ' km）'
-           : ''))
+           : (pointsDistanceStale()
+             ? '（按 ' + (LIVE.pointsDistance / 1000).toFixed(2) +
+               ' km 取，目标 ' + (pointsTargetM() / 1000).toFixed(2) + ' km）'
+             : '')))
       : (LIVE.pointsEmpty ? '无打卡点（需确认）'
         : (LIVE.pointsError ? '点位读取失败（沿用上次点位）' : '点位未加载'));
     const areaText = LIVE.runArea
@@ -3369,8 +3467,9 @@ function updateFenceChip(){
   const chip = $('#fenceChip');
   const top = $('#runFenceChip');
   const fenceOk = LIVE.fences.length > 0 || !!LIVE.fenceMissing;
+  const distMismatch = pointsDistanceStale();
   const pointOk = livePoints.length > 0 || freeRunOn();
-  const ok = fenceOk && pointOk;
+  const ok = fenceOk && pointOk && !distMismatch;
   const fenceLabel = LIVE.fenceMissing ? '无围栏'
     : (LIVE.fences.length > 1 ? (LIVE.fences.length + ' 个围栏')
       : (LIVE.fences.length ? '围栏已加载' : '围栏未加载'));
@@ -3388,10 +3487,14 @@ function updateFenceChip(){
   else if(LIVE.fenceMissing) label = '无围栏 · 点位已加载';
   else if(LIVE.pointsStale) label = fenceLabel + ' · 点位已加载（缓存 ' +
     (LIVE.pointsDistance / 1000).toFixed(2) + ' km）';
+  else if(distMismatch) label = fenceLabel + ' · 点位按 ' +
+    (LIVE.pointsDistance / 1000).toFixed(2) + ' km 取（目标 ' +
+    (pointsTargetM() / 1000).toFixed(2) + ' km）';
   else label = fenceLabel + ' · 点位已加载';
   if(chip){
     chip.textContent = label;
-    chip.className = 'tag ' + ((ok && !LIVE.pointsStale) ? '' : 'warn');
+    chip.className = 'tag ' +
+      ((ok && !LIVE.pointsStale && !distMismatch) ? '' : 'warn');
     const bits = [];
     if(LIVE.pointsAt){
       bits.push('上次同步：' + new Date(LIVE.pointsAt)
@@ -3399,6 +3502,9 @@ function updateFenceChip(){
     }
     if(LIVE.pointsError && LIVE.points.length){
       bits.push('点位读取失败，沿用上次点位：' + LIVE.pointsError);
+    }
+    if(distMismatch){
+      bits.push(pointsDistanceText() + '；点「刷新」按当前距离重取');
     }
     if(pointsCooldownLeft() > 0){
       bits.push('限流冷却：约 ' + pointsCooldownLeft() + ' 秒');
@@ -5134,7 +5240,7 @@ function dateRange(){
 function defaultRunDateKey(){
   const now = beijingNowDate();
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const dur = (+$('#inKm').value || 2.5) * (+$('#inPace').value || 6);
+  const dur = (+$('#inKm').value || 0) * (+$('#inPace').value || 6);
   if(Math.min(22 * 60, nowMin) - dur < 9 * 60){
     return fmtDateKey(new Date(now.getFullYear(), now.getMonth(),
                                now.getDate() - 1));
@@ -5169,7 +5275,7 @@ function selectedTimeInfo(){
   const raw = ($('#inStart') ? $('#inStart').value : '').trim();
   // Match the backend defaults in submitRun(), not 0: an empty input must not
   // make the window check believe the run lasts zero minutes.
-  const km = +$('#inKm').value || 2.5;
+  const km = +$('#inKm').value || 0;
   const pace = +$('#inPace').value || 6;
   const durMin = km * pace;
   const out = {
@@ -5846,6 +5952,13 @@ function refreshChecks(){
       : (noPoints ? '无法确认该校区允许自由跑'
         : (cov.total ? (cov.passed + '/' + cov.total + ' 在 ' + hitRadiusM() + 'm 内') : '未加载点位')),
     goto: 'run', rtab: 'route'});
+  if(livePoints.length && pointsDistanceStale()){
+    // Not a hard gate: the operator can still submit the displayed set.  But
+    // the card must say that the set belongs to an older line length.
+    checks.push({ok: true, warn: true, label: '点位与目标距离',
+      note: pointsDistanceText() + '；提交会复用旧点位，点此按当前距离刷新',
+      goto: 'run', rtab: 'route', action: 'refresh-points'});
+  }
   let fenceBad = {points: 0, segments: 0};
   const fenceReady = LIVE.fences.length > 0 && route && route.length >= 2;
   if(fenceReady){
@@ -5888,15 +6001,21 @@ function refreshChecks(){
   const maxKm = +ruleSet.max_km > 0 ? +ruleSet.max_km : 0;
   const kmInput = $('#inKm');
   const plannedKm = kmInput ? (+kmInput.value || 0) : 0;
+  const hasTarget = plannedKm > 0;
   if(minKm || maxKm){
-    const distOk = (!minKm || plannedKm >= minKm) && (!maxKm || plannedKm <= maxKm);
-    checks.push({ok: distOk, label: '距离达标',
-      note: plannedKm.toFixed(2) + ' km / 要求 ' +
-        (minKm ? ('≥ ' + minKm) : '') + (minKm && maxKm ? '、' : '') +
-        (maxKm ? ('≤ ' + maxKm) : '') + ' km',
+    const distOk = hasTarget &&
+      (!minKm || plannedKm >= minKm) && (!maxKm || plannedKm <= maxKm);
+    checks.push({ok: distOk, label: hasTarget ? '距离达标' : '目标距离',
+      note: hasTarget
+        ? (plannedKm.toFixed(2) + ' km / 要求 ' +
+           (minKm ? ('≥ ' + minKm) : '') + (minKm && maxKm ? '、' : '') +
+           (maxKm ? ('≤ ' + maxKm) : '') + ' km')
+        : '先手绘一条路线，或在参数页填写目标距离',
       goto: 'run', rtab: 'params', focus: 'inKm'});
   }else{
-    checks.push({ok: true, label: '距离要求', note: '学校未配置距离要求',
+    checks.push({ok: hasTarget, label: '目标距离',
+      note: hasTarget ? (plannedKm.toFixed(2) + ' km（学校未配置范围）')
+        : '先手绘一条路线，或在参数页填写目标距离',
       goto: 'run', rtab: 'params', focus: 'inKm'});
   }
 
@@ -5958,17 +6077,20 @@ function refreshChecks(){
   const locked = submitLocked();
   if($('#submitRun')){
     $('#submitRun').disabled = !hasSession() || !verified ||
-      LIVE.submitting || locked;
+      LIVE.submitting || locked || !hasTarget;
     if(!LIVE.submitting){
       $('#submitRun').textContent = locked
-        ? '先核对回执再提交' : '提交这次跑步';
+        ? '先核对回执再提交'
+        : (!hasTarget ? '先画路线' : '提交这次跑步');
     }
   }
   if($('#submitHint')){
     $('#submitHint').textContent = locked
       ? '上次提交结果未知：先到「记录」页点「只读核对未决」，核对完成后才能再次提交。'
-      : (all ? '检查通过。提交后该时段会被回执锁定，不能重复提交。'
-             : '先补齐上面的检查项；提交仍会由后端再次校验。');
+      : (!hasTarget
+        ? '目标距离当前为 0：先在「路线」页手绘，或手动填写目标距离。'
+        : (all ? '检查通过。提交后该时段会被回执锁定，不能重复提交。'
+               : '先补齐上面的检查项；提交仍会由后端再次校验。'));
   }
   refreshOverviewState();
 }
@@ -6326,6 +6448,7 @@ function routeLineKey(line){
   return (line || []).map(p => (+p[0]).toFixed(5) + ',' + (+p[1]).toFixed(5)).join('|');
 }
 function clearCurrentRouteAfterSubmit(message){
+  clearTimeout(_routeFinalTimer);
   route = [];
   // Do not let undo resurrect the route that was just submitted: reusing it
   // with a different time window is a deliberate act, not an undo slip.
@@ -7210,6 +7333,7 @@ function liveWire(){
         selRoutePoint = -1;
         route = d.route.map(p => [p[0], p[1]]);
         redraw();
+        scheduleRouteFinalize(500, 'snap');
       }
       const failed = (d.failed || []).length;
       liveLog('道路吸附完成', `${d.legs_ok || 0}/${d.legs_total || 0} 段` +
@@ -7237,6 +7361,7 @@ function liveWire(){
     const m = route && route.length >= 2 ? pathLength(displayPath()) : 0;
     if(!(m > 0)){ toast('先画一条路线；之后会自动按线路长度填写'); return; }
     redraw();
+    scheduleRouteFinalize(300, 'fill-route');
     toast('已按线路长度填写；继续画线会同步更新');
   });
   $('#runCheck').addEventListener('click', () => { refreshModelPreview(); scheduleSplitsPreview(); refreshChecks(); toast('已重新检查'); });
@@ -7343,6 +7468,7 @@ function liveWire(){
     route = line;
     setCloseUI(!!r.closed);
     redraw();
+    scheduleRouteFinalize(300, 'library');
     go('run');
     switchRunTab('route');
     toast('已设为当前路线');
