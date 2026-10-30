@@ -81,6 +81,7 @@ document.addEventListener('click', ev => {
    (redraw -> scheduleModelPreview) so no let/const is read in its TDZ. */
 let _pointsSeq = 0, _recordsSeq = 0, _overviewSeq = 0;
 let _receiptsSeq = 0, _dateCountsSeq = 0, _detailSeq = 0, _modelSeq = 0;
+let _pointsKmTimer = 0, _routeFinalTimer = 0, _pointsStateTimer = 0;
 let _profileSeq = 0, _violSeq = 0;
 let _headerDay = '', _modelTimer = null, accountBusy = false;
 let _pointsAutoAt = 0;
@@ -3147,9 +3148,6 @@ function focusCampusOnMap(){
 const POINTS_AUTO_GAP_MS = 5 * 60 * 1000;
 const POINTS_STALE_M = 50;
 const POINTS_FINAL_DELAY_MS = 900;
-let _pointsKmTimer = 0;
-let _routeFinalTimer = 0;
-let _pointsStateTimer = 0;
 function pointsSessionKey(){
   const s = LIVE.session || {};
   return String(s.uid || '') + ':' + String(s.unid || '');
