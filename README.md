@@ -21,7 +21,7 @@ GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两�
 - `https://gh.llkk.cc/` + 链接（时好时坏）
 
 例如：
-`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.6/haoxiangpao_v0.1.6_win64_setup.exe`
+`https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.7/haoxiangpao_v0.1.7_win64_setup.exe`
 
 注意：
 
@@ -51,7 +51,8 @@ GitHub 打不开时，在完整链接前面加镜像前缀（三选一，前两�
 
 两种方式都不会动 `data`。也可以手动下新的安装包或压缩包，覆盖旧目录，`data` 留着别删。
 
-需要回退到 0.1.5：下载 v0.1.5 的 zip 或安装包覆盖安装，`data` 同样保留；
+需要回退到 0.1.6：下载 v0.1.6 的 zip 或安装包覆盖安装，`data` 同样保留；
+0.1.7 把 token 封存成了 `token_enc`，0.1.6 不认识，回退后需要重新登录一次。
 `latest.json` 的 `rollback` 字段给出了四个下载地址。
 
 仓库里的 `latest.json` 是给程序检查更新用的，普通使用不用管。
