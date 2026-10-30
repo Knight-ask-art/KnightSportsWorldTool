@@ -113,13 +113,15 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
 | `assets.windows-x64-setup` | 安装版资产，`format=installer`；没有这个键时安装版回退到 zip |
 | `format` | `zip` 或 `installer`，决定更新器走哪条路径 |
 | `layout` | `onedir`（解压即用）或 `installer`（NSIS） |
-| `size` / `sha256` | 下载后必须校验；**安装包没有 sha256 会被直接拒绝**（下载完就要执行它） |
+| `size` / `sha256` | 下载后必须校验；**zip 和安装包缺少 sha256 都会被拒绝**（两者都会被自动执行/覆盖） |
 | `url` | 主下载地址，老客户端只认这一个 |
 | `urls` | 同一文件的全部渠道（镜像在前、官方直链在最后）；客户端探测后按实测速度排序，失败依次重试。老客户端忽略该字段 |
 | `rollback` | 上一稳定版，用于手动或自动回滚 |
 
 ## URL 约定
 
+- **只接受 https**；`http://localhost` / `127.0.0.1` / `::1` 仅用于本地测试。
+  明文 http 的资产或镜像会被更新器直接丢弃/拒绝，避免降级替换。
 - 默认写**相对 URL**（文件名经过百分号编码）。客户端用 `latest.json` 的最终 URL
   作为 base 解析；这样换域名、放本地目录、放对象存储都不用改清单。
 - 用 `-DownloadBaseUrl` / `--base-url` 时写绝对 URL，适合 CDN 或固定下载页。

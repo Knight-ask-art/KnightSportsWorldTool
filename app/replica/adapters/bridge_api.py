@@ -27,6 +27,7 @@ import requests
 
 from ..application import credentials as CRED
 from ..application import device_profile as DP
+from ..application import session_store as SESS
 from ..build_info import VERSION as APP_VERSION  # noqa: F401 - re-exported
 from ..build_info import build_info, version_string
 from ..domain import crypto as C
@@ -78,6 +79,41 @@ def _fmt_seconds(seconds):
     if minutes:
         return '%d 分 %d 秒' % (minutes, secs)
     return '%d 秒' % secs
+
+
+def _normalise_ui_points(points) -> list[dict]:
+    """Map the UI's rendered checkpoint rows back to the submit shape.
+
+    ``renderPoints`` stores ``{n, lat, lng, must, isFixed, position, seq}``
+    (GCJ).  Submit must use exactly that set: the endpoint returns a random
+    five-of-N draw per request, so a fresh fetch is a different set from the
+    one the operator previewed.  Invalid rows are dropped; the caller then
+    falls back to a live fetch.
+    """
+    out = []
+    for p in points or []:
+        if not isinstance(p, dict):
+            continue
+        try:
+            lat = float(p['lat'] if p.get('lat') is not None
+                        else p.get('glat'))
+            lon = float(p['lon'] if p.get('lon') is not None
+                        else (p.get('lng') if p.get('lng') is not None
+                              else p.get('glon')))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            continue
+        out.append({
+            'lat': lat,
+            'lon': lon,
+            'name': p.get('name') or p.get('n') or '',
+            'isMustPoint': bool(p.get('isMustPoint') or p.get('must')),
+            'isFixed': p.get('isFixed'),
+            'position': p.get('position'),
+            'seq': p.get('seq'),
+        })
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -556,6 +592,11 @@ class ReplicaApi:
         self._keeper_lock = threading.Lock()
         self._device_lock = threading.RLock()
         self._device_cache = None
+        # One-time migration: 0.1.6 and earlier wrote the token in clear text.
+        try:
+            SESS.migrate(self._session_path())
+        except Exception:  # noqa: BLE001 - a bad file must not block startup
+            pass
         self._load()
 
     # -- persistence ------------------------------------------------------
@@ -1044,13 +1085,11 @@ class ReplicaApi:
 
     def _read_session(self) -> dict:
         """Missing or half-written file -> {}, never a crash."""
-        d = _read_json(self._session_path(), {})
-        return d if isinstance(d, dict) else {}
+        return SESS.read(self._session_path())
 
     def _write_session(self, d: dict) -> None:
-        """Atomic replace: the server is threaded, a reader must never see
-        a truncated file (that would look like "token missing" mid-run)."""
-        _write_json(self._session_path(), d)
+        """Atomic replace; the token is DPAPI-sealed, never plaintext."""
+        SESS.write(self._session_path(), d)
 
     def _device_profile(self, session: dict | None = None) -> dict:
         """The installation profile, loaded once per process.
@@ -1097,7 +1136,7 @@ class ReplicaApi:
                       'physicPixel', 'logicPixel', 'isRoot', 'idfa',
                       'platform', 'appInstallTime', 'appUpdateTime')
         out = {k: v for k, v in d.items()
-               if k not in ('token',) + raw_device}
+               if k not in ('token', 'token_enc') + raw_device}
         out['token_present'] = bool(d.get('token'))
         out['token_masked'] = self._mask_secret(d.get('token'))
         try:
@@ -1971,6 +2010,10 @@ class ReplicaApi:
                'errors': [], 'notes': [],
                'fence_missing': False, 'fence_count': 0,
                'points_missing': False, 'points_empty': False,
+               'checkpoints': None, 'points_ok': None,
+               'points_distance_m': None, 'points_stale': False,
+               'points_source': '', 'points_rate_limited': False,
+               'points_retry_after_s': 0,
                'run_area': None, 'run_area_valid': None,
                'run_areas': [], 'distance_m': dist_m,
                'hit_radius_m': HIT_RADIUS_M}
@@ -2112,15 +2155,38 @@ class ReplicaApi:
 
         # 3) live checkpoints (the 必经点位 the replay draws)
         try:
-            pts = P.fetch_points(rc, acct, acct.center_lat, acct.center_lng,
-                                 run_area_id=area['id'] if area else None,
-                                 force=bool(force), distance_m=dist_m,
-                                 allow_empty=True)
+            meta = P.fetch_points_meta(
+                rc, acct, acct.center_lat, acct.center_lng,
+                run_area_id=area['id'] if area else None,
+                force=bool(force), distance_m=dist_m, allow_empty=True)
+        except P.PointsRateLimited as e:
+            out['errors'].append(f'points: {e}')
+            out['points_error'] = str(e)
+            out['points_ok'] = False
+            out['points_rate_limited'] = True
+            out['points_retry_after_s'] = int(
+                getattr(e, 'retry_after', 0) or 0)
+        except Exception as e:  # noqa: BLE001
+            out['errors'].append(f'points: {e}')
+            out['points_error'] = str(e)
+            out['points_ok'] = False
+        else:
+            pts = meta['points']
             out['checkpoints'] = pts
+            out['points_ok'] = True
+            out['points_distance_m'] = meta['distance_m']
+            out['points_stale'] = bool(meta['stale'])
+            out['points_source'] = meta['source']
+            out['points_rate_limited'] = bool(meta['rate_limited'])
+            out['points_retry_after_s'] = int(meta['retry_after_s'] or 0)
             out['mandatory'] = [p for p in pts if p['isMustPoint']]
             out['route_order'] = P.route_order(
                 pts, acct.center_lat, acct.center_lng,
                 sequential=sequential)
+            if meta['stale']:
+                out['notes'].append(
+                    '点位接口限流，沿用 %d m 的缓存点位（当前目标 %d m）'
+                    % (meta['distance_m'], dist_m))
             if not pts:
                 # Preview may display "no points", but it is not proof that
                 # the campus allows a free run.  Submit defaults to blocking.
@@ -2128,9 +2194,6 @@ class ReplicaApi:
                 out['notes'].append(
                     '服务器没有返回打卡点；无法确认该校区是否允许自由跑，'
                     '提交时默认阻止')
-        except Exception as e:  # noqa: BLE001
-            out['errors'].append(f'points: {e}')
-            out['points_error'] = str(e)
 
         # A missing fence/points list is not a failure once a campus centre is
         # known.  Errors stay in ``errors`` so the UI can show them as notes.
@@ -2829,14 +2892,17 @@ class ReplicaApi:
         """
         raw = _read_json(self._ui_state_path(), {})
         data = raw if isinstance(raw, dict) else {}
+        prefs = data.get('run_area_choice')
         return _ok({
             'onboard_done': bool(data.get('onboard_done')),
             'post_submit_route_action': str(
                 data.get('post_submit_route_action') or 'ask'),
             'onboard_done_at': data.get('onboard_done_at') or '',
+            'run_area_choice': prefs if isinstance(prefs, dict) else {},
         })
 
-    def real_set_ui_state(self, onboard_done=None, post_submit_route_action=None):
+    def real_set_ui_state(self, onboard_done=None, post_submit_route_action=None,
+                          run_area_choice=None):
         path = self._ui_state_path()
         raw = _read_json(path, {})
         data = raw if isinstance(raw, dict) else {}
@@ -2849,6 +2915,21 @@ class ReplicaApi:
             if action not in ('ask', 'save', 'clear'):
                 return _fail('post_submit_route_action 只能是 ask/save/clear')
             data['post_submit_route_action'] = action
+        if run_area_choice is not None:
+            if not isinstance(run_area_choice, dict):
+                return _fail('run_area_choice 必须是 {uid: areaId}')
+            stored = data.get('run_area_choice')
+            stored = dict(stored) if isinstance(stored, dict) else {}
+            for key, value in run_area_choice.items():
+                session_key = str(key)
+                if value in (None, '', 0, '0'):
+                    stored.pop(session_key, None)
+                    continue
+                try:
+                    stored[session_key] = int(value)
+                except (TypeError, ValueError):
+                    return _fail('跑区 id 无效: %r' % (value,))
+            data['run_area_choice'] = stored
         try:
             _write_json(path, data)
         except OSError as e:
@@ -3242,7 +3323,8 @@ class ReplicaApi:
                         days_ago=0, start_time=None, date=None,
                         closed=True, altitude_mode='auto',
                         altitude_range=None, altitude_profile=None,
-                        km_times=None, seed=None, run_area_id=None):
+                        km_times=None, seed=None, run_area_id=None,
+                        points_distance_m=None, points=None):
         """Forge a run, sign it with the official scheme, submit it for real,
         then read the record back so the caller sees the completion checklist.
 
@@ -3353,15 +3435,12 @@ class ReplicaApi:
                 return _fail('学校未配置围栏，且没有可用的校区坐标：请先把地图'
                              '拖到学校后点「设为校区」，或画一条以学校为起点的路线')
         except Exception as e:  # noqa: BLE001
-            # A transient fence failure is not a licence to guess the campus.
-            # Only a coordinate the operator already stored is trustworthy;
-            # the route's first point may be anywhere, and persisting it here
-            # would poison later checkpoint queries.
-            if not self._center_ok(acct.center_lat, acct.center_lng):
-                return _fail('无法获取校区围栏，且本地没有已保存的校区坐标，'
-                             '已停止提交（不会用路线首点或默认坐标代替）: %s' % e)
-            submit_notes.append(
-                '围栏读取失败（%s），已按已保存的校区坐标继续提交' % e)
+            # A saved centre says *where* the campus is, not whether the track
+            # is inside its polygon.  Continuing here used to leave `fence`
+            # empty and skip the in-area check entirely, so a transient read
+            # failure could submit an out-of-fence record.
+            return _fail('无法读取校区围栏，已停止提交（避免提交围栏外轨迹）: %s'
+                         % e)
 
         # ---- 1. live checkpoints -> route through them --------------------
         # Checkpoints are fetched even when a route was supplied: a record
@@ -3369,31 +3448,49 @@ class ReplicaApi:
         # hand-drawn or imported route).
         cps = []
         if use_points:
-            try:
-                cps = P.fetch_points(rc, acct, acct.center_lat, acct.center_lng,
-                                     run_area_id=area['id'] if area else None,
-                                     distance_m=float(km) * 1000.0,
-                                     allow_empty=False)
-                if not cps:
+            # Prefer the exact set the operator saw on the map.  The endpoint
+            # returns a different random five-point draw per request (see
+            # points.py), so re-querying at submit time would route through
+            # points that were never displayed.
+            cps = _normalise_ui_points(points)
+            if cps:
+                submit_notes.append('使用地图上的 %d 个打卡点' % len(cps))
+            else:
+                dist_points = P.points_distance_for_submit(
+                    points_distance_m, km)
+                try:
+                    meta = P.fetch_points_meta(
+                        rc, acct, acct.center_lat, acct.center_lng,
+                        run_area_id=area['id'] if area else None,
+                        distance_m=dist_points, allow_empty=False)
+                    cps = meta['points']
+                    if meta['stale']:
+                        submit_notes.append(
+                            '点位沿用 %d m 的缓存（当前目标 %d m；接口限流）'
+                            % (meta['distance_m'],
+                               int(round(float(km) * 1000))))
+                    if not cps:
+                        return _fail(
+                            '服务器没有返回打卡点，无法确认该校区是否允许自由跑；'
+                            '如你确认学校没有点位，请勾选「跳过打卡点」后重试')
+                except ValueError as e:
+                    # Empty points are not proof of a free-run campus.  The
+                    # decompiled client has no such branch on the normal
+                    # distance endpoint; official free run is serviceType 3 /
+                    # sportType 4.
                     return _fail(
-                        '服务器没有返回打卡点，无法确认该校区是否允许自由跑；'
-                        '如你确认学校没有点位，请勾选「跳过打卡点」后重试')
-                if not wps:
-                    wps = P.route_order(cps, acct.center_lat, acct.center_lng,
-                                        sequential=sequential)
-            except ValueError as e:
-                # Empty points are not proof of a free-run campus.  The
-                # decompiled client has no such branch on the normal distance
-                # endpoint; official free run is serviceType 3 / sportType 4.
-                return _fail(
-                    '服务器没有返回有效打卡点，无法确认该校区是否允许自由跑；'
-                    '如你确认学校没有点位，请勾选「跳过打卡点」后重试: %s' % e)
-            except Exception as e:  # noqa: BLE001
-                # A record without the mandatory checkpoint hits cannot be
-                # complete.  Submitting anyway created an accepted-but-invalid
-                # run, so stop before the write-ahead receipt is reserved.
-                return _fail('点位加载失败，已停止提交（避免生成不完整记录）: %s'
-                             % e)
+                        '服务器没有返回有效打卡点，无法确认该校区是否允许自由跑；'
+                        '如你确认学校没有点位，请勾选「跳过打卡点」后重试: %s' % e)
+                except Exception as e:  # noqa: BLE001
+                    # A record without the mandatory checkpoint hits cannot be
+                    # complete.  Submitting anyway created an
+                    # accepted-but-invalid run, so stop before the write-ahead
+                    # receipt is reserved.
+                    return _fail(
+                        '点位加载失败，已停止提交（避免生成不完整记录）: %s' % e)
+            if not wps:
+                wps = P.route_order(cps, acct.center_lat, acct.center_lng,
+                                    sequential=sequential)
         else:
             submit_notes.append(
                 '已按操作员确认跳过打卡点；本工具尚未实现官方自由跑'

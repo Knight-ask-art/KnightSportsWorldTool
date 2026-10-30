@@ -23,6 +23,17 @@ Rate limit
 ----------
 The endpoint allows only 3 calls per 5 minutes (error 10603), so every call is
 cached for 300 s keyed by uid + unid + runAreaId + anchor(~1e-4 deg).
+
+The reply is **not a stable campus list**: a live probe on 2026-10-30 asked for
+1000 / 1060 / 2500 m and each call returned five of at least seven points, with
+a different membership and a different ``isFixed`` point.  The distance changes
+which points are eligible, and the server draws five per request.  Two
+consequences drive the v0.1.7 rules:
+
+* the UI must not re-query for every 10 m of drawn route (it burns the 3/5 min
+  budget and the next answer is a different set anyway);
+* submit must reuse the set the operator actually saw, otherwise the record
+  routes through points that were never displayed.
 """
 
 from __future__ import annotations
@@ -61,8 +72,49 @@ def points_path(distance_m: float) -> str:
     except (TypeError, ValueError):
         metres = 2000
     return '%s%d' % (POINTS_PATH_PREFIX, max(1, metres))
+
+
+def points_distance_for_submit(points_distance_m=None, km=None,
+                               default_m: float = 2000.0) -> float:
+    """Distance to query when submitting.
+
+    The UI shows a set fetched for ``points_distance_m``.  Re-querying with the
+    current ``km`` would return a different random five-point draw (see the
+    module docstring), so the displayed set's distance wins; ``km`` is only a
+    fallback for callers that never loaded points.
+    """
+    try:
+        dist = float(points_distance_m)
+        if dist > 0:
+            return dist
+    except (TypeError, ValueError):
+        pass
+    try:
+        target = float(km)
+        if target > 0:
+            return target * 1000.0
+    except (TypeError, ValueError):
+        pass
+    return default_m
+
 CACHE_TTL = 300.0
+FALLBACK_TTL = 86400.0          # 10603 may reuse the last known set for a day
+RATE_LIMIT_WINDOW = 300.0       # 3 calls / 5 min, error 10603
 RATE_LIMIT_ERR = 10603
+
+
+class PointsRateLimited(RuntimeError):
+    """The endpoint is cooling down and no cached set can be served.
+
+    Carries ``retry_after`` seconds so the UI can show a countdown instead of
+    re-sending a request that is guaranteed to fail.
+    """
+
+    def __init__(self, retry_after: float, message: str = ''):
+        self.retry_after = max(1, int(round(float(retry_after or 1))))
+        super().__init__(message or (
+            '点位接口限流，约 %d 秒后可重试' % self.retry_after))
+
 
 _DEFAULT_CACHE = os.path.join(
     app_root(), 'data', 'points_cache.json')
@@ -106,6 +158,120 @@ def _save_cache(cache: dict) -> None:
                 pass
 
 
+# --------------------------------------------------------------------------
+# rate-limit cooldown (persisted, so a restart cannot start a new burst)
+# --------------------------------------------------------------------------
+
+def _ratelimit_path() -> str:
+    env = os.environ.get('JHP_POINTS_RATELIMIT', '')
+    if env:
+        return env
+    return os.path.join(os.path.dirname(_cache_path()) or '.',
+                        'points_ratelimit.json')
+
+
+def _write_json_atomic(path: str, payload: dict) -> None:
+    tmp = None
+    try:
+        folder = os.path.dirname(path) or '.'
+        os.makedirs(folder, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=folder, prefix='.tmp-', suffix='.json')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        tmp = None
+    except Exception:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _load_rate_limits() -> dict:
+    try:
+        with open(_ratelimit_path(), encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _account_key(uid, unid) -> str:
+    return '%s|%s' % (uid, '' if unid is None else unid)
+
+
+def _rate_limit_until(uid=None, unid=None) -> float:
+    data = _load_rate_limits()
+    accounts = data.get('accounts')
+    accounts = accounts if isinstance(accounts, dict) else {}
+    if uid is None:
+        # Diagnostic view: the newest cooldown anywhere (tests use this).
+        values = [float((v or {}).get('until') or 0)
+                  for v in accounts.values() if isinstance(v, dict)]
+        values.append(float(data.get('until') or 0))
+        return max(values or [0.0])
+    entry = accounts.get(_account_key(uid, unid))
+    if isinstance(entry, dict):
+        return float(entry.get('until') or 0)
+    # One-off migration: 0.1.7 test builds wrote a single {until}.  Apply it
+    # once to whichever account asks next; the first per-account write moves
+    # it under that account's key and drops the legacy field.
+    return float(data.get('until') or 0)
+
+
+def rate_limit_remaining(uid=None, unid=None) -> int:
+    """Seconds left for this account (0 when clear).
+
+    The cooldown is per ``uid|unid``: a 10603 on campus A must not block
+    campus B on the same machine.
+    """
+    return max(0, int(math.ceil(_rate_limit_until(uid, unid) - time.time())))
+
+
+def note_rate_limited(uid=None, unid=None, now=None) -> float:
+    """Record a 10603 for this account and return the absolute ``until``."""
+    current = time.time() if now is None else float(now)
+    data = _load_rate_limits()
+    raw_accounts = data.get('accounts')
+    accounts = dict(raw_accounts) if isinstance(raw_accounts, dict) else {}
+    legacy = float(data.get('until') or 0)
+    if uid is None:
+        until = max(legacy, current + RATE_LIMIT_WINDOW)
+        _write_json_atomic(_ratelimit_path(),
+                           {'until': until, 'noted_at': current})
+        return until
+    key = _account_key(uid, unid)
+    entry = accounts.get(key)
+    previous = (float(entry.get('until') or 0)
+                if isinstance(entry, dict) else 0.0)
+    until = max(previous, legacy, current + RATE_LIMIT_WINDOW)
+    accounts[key] = {'until': until, 'noted_at': current}
+    # Drop expired rows so the file cannot grow forever.
+    cutoff = current - RATE_LIMIT_WINDOW
+    accounts = {k: v for k, v in accounts.items()
+                if isinstance(v, dict) and float(v.get('until') or 0) > cutoff}
+    _write_json_atomic(_ratelimit_path(), {'accounts': accounts})
+    return until
+
+
+def clear_rate_limit(uid=None, unid=None) -> None:
+    """Forget one account's cooldown; no args clears the whole file (tests)."""
+    if uid is None:
+        try:
+            os.unlink(_ratelimit_path())
+        except OSError:
+            pass
+        return
+    data = _load_rate_limits()
+    raw_accounts = data.get('accounts')
+    accounts = dict(raw_accounts) if isinstance(raw_accounts, dict) else {}
+    accounts.pop(_account_key(uid, unid), None)
+    _write_json_atomic(_ratelimit_path(), {'accounts': accounts})
+
+
 def cache_key(uid, unid, run_area_id, lat: float, lon: float,
               distance_m: float = 2000.0) -> str:
     """Anchor quantised to ~11 m; the target distance is part of the scope.
@@ -121,18 +287,7 @@ def cache_key(uid, unid, run_area_id, lat: float, lon: float,
         uid, unid, run_area_id or '', lat, lon, dist)
 
 
-def cached_points(uid, unid, run_area_id, lat, lon,
-                  ttl: float = CACHE_TTL, distance_m: float = 2000.0):
-    """Return cached points if fresh, else None. Expired/future entries miss."""
-    with _CACHE_LOCK:
-        entry = _load_cache().get(
-            cache_key(uid, unid, run_area_id, lat, lon, distance_m))
-    if not entry:
-        return None
-    age = time.time() - float(entry.get('ts', 0))
-    if age < 0 or age > ttl:          # reject future and stale entries
-        return None
-    points = entry.get('points') or []
+def _normalise_points(points: list) -> list:
     # Old caches were written before `isFixed` was understood: normalise them
     # on read so an upgrade does not need to wait for the 300 s TTL (or a
     # forced refresh) to see the mandatory point and the sequence number.
@@ -146,42 +301,83 @@ def cached_points(uid, unid, run_area_id, lat, lon,
     return points
 
 
-def newest_cached_points(uid, unid, run_area_id, distance_m: float = 2000.0,
-                         ttl: float = 86400.0):
-    """Newest cache entry for the same account/area/distance, any anchor.
+def _entry_meta(key: str, entry, ttl: float):
+    """One cache row -> ``{points, distance_m, ts}``; None when unusable."""
+    if not isinstance(entry, dict):
+        return None
+    age = time.time() - float(entry.get('ts', 0) or 0)
+    if age < 0 or age > ttl:          # reject future and stale entries
+        return None
+    points = entry.get('points') or []
+    if not points:
+        return None
+    parts = str(key).split('|')
+    dist = 2000
+    if len(parts) > 5 and parts[5].startswith('d'):
+        try:
+            dist = max(1, int(parts[5][1:]))
+        except ValueError:
+            pass
+    return {'points': _normalise_points(points), 'distance_m': dist,
+            'ts': float(entry.get('ts', 0) or 0)}
 
-    The campus centre can move between refreshes (manual centre, fence-centre
-    correction), but the server's checkpoint set is scoped by school, run area
-    and distance.  Used only when the server rate-limits us, so a moved anchor
-    does not turn a known checkpoint set into "points unavailable".
+
+def cached_entry(uid, unid, run_area_id, lat, lon,
+                 ttl: float = CACHE_TTL, distance_m: float = 2000.0):
+    """Exact anchor + distance row, or None."""
+    key = cache_key(uid, unid, run_area_id, lat, lon, distance_m)
+    with _CACHE_LOCK:
+        entry = _load_cache().get(key)
+    if not entry:
+        return None
+    return _entry_meta(key, entry, ttl)
+
+
+def cached_points(uid, unid, run_area_id, lat, lon,
+                  ttl: float = CACHE_TTL, distance_m: float = 2000.0):
+    """Return cached points if fresh, else None. Expired/future entries miss."""
+    hit = cached_entry(uid, unid, run_area_id, lat, lon, ttl, distance_m)
+    return hit['points'] if hit else None
+
+
+def newest_cached_entry(uid, unid, run_area_id, distance_m=None,
+                        ttl: float = 86400.0):
+    """Newest cache row for the same account/area.
+
+    ``distance_m=None`` searches every distance.  Used only when the server
+    rate-limits us: the 10603 reply carries no points, and the last known set
+    is still a server-issued five-point set for this campus.  Callers must
+    mark the result as stale and tell the operator which distance it came
+    from.
     """
-    try:
-        dist = max(1, int(round(float(distance_m))))
-    except (TypeError, ValueError):
-        dist = 2000
     prefix = '%s|%s|%s|' % (uid, unid, run_area_id or '')
-    suffix = '|d%d' % dist
-    now = time.time()
+    suffix = ''
+    if distance_m is not None:
+        try:
+            dist = max(1, int(round(float(distance_m))))
+        except (TypeError, ValueError):
+            dist = 2000
+        suffix = '|d%d' % dist
     with _CACHE_LOCK:
         entries = [(k, v) for k, v in _load_cache().items()
                    if k.startswith(prefix) and k.endswith(suffix)]
     best = None
     for key, entry in entries:
-        age = now - float(entry.get('ts', 0))
-        if age < 0 or age > ttl or not entry.get('points'):
+        meta = _entry_meta(key, entry, ttl)
+        if meta is None:
             continue
-        if best is None or (float(entry.get('ts', 0))
-                            > float(best[1].get('ts', 0))):
-            best = (key, entry)
-    if best is None:
-        return None
-    parts = best[0].split('|')
-    try:
-        return cached_points(parts[0], parts[1], parts[2] or None,
-                             float(parts[3]), float(parts[4]),
-                             ttl=ttl, distance_m=dist)
-    except (IndexError, ValueError):
-        return None
+        if best is None or meta['ts'] > best['ts']:
+            best = meta
+    return best
+
+
+def newest_cached_points(uid, unid, run_area_id, distance_m: float = 2000.0,
+                         ttl: float = 86400.0, any_distance: bool = False):
+    """Points from the newest row (exact distance by default)."""
+    hit = newest_cached_entry(
+        uid, unid, run_area_id,
+        None if any_distance else distance_m, ttl)
+    return hit['points'] if hit else None
 
 
 def store_points(uid, unid, run_area_id, lat, lon, points,
@@ -349,28 +545,84 @@ def parse_points(business, allow_empty: bool = False) -> list[dict]:
 # public API
 # --------------------------------------------------------------------------
 
-def fetch_points(client, acct, lat: float, lon: float,
-                 run_area_id=None, force: bool = False,
-                 ttl: float = CACHE_TTL, log=None,
-                 distance_m: float = 2000.0,
-                 allow_empty: bool = False) -> list[dict]:
-    """Return the campus checkpoints for the target distance.
+def _cache_meta(hit: dict, dist: int, source: str, rate_limited: bool,
+                retry_after: int) -> dict:
+    return {
+        'points': hit['points'],
+        'distance_m': hit['distance_m'],
+        'source': source,
+        # `stale` means "this set was issued for another target distance".
+        'stale': hit['distance_m'] != dist,
+        'rate_limited': (bool(rate_limited)
+                         or source == 'cache-other-distance'),
+        'retry_after_s': max(0, int(retry_after or 0)),
+        'ts': hit['ts'],
+    }
 
-    The 300 s cache is scoped by distance: the server may return a different
-    checkpoint set for a 2 km and a 4 km run.
 
-    ``allow_empty`` is opt-in.  The normal submit path leaves it false so an
-    empty ``pointsResModels`` stops the run instead of being guessed as a free
-    run.  Preview may pass true to show "no points (unconfirmed)".
+def fetch_points_meta(client, acct, lat: float, lon: float,
+                      run_area_id=None, force: bool = False,
+                      ttl: float = CACHE_TTL, log=None,
+                      distance_m: float = 2000.0,
+                      allow_empty: bool = False) -> dict:
+    """Fetch checkpoints and describe where the set came from.
+
+    Resolution order (lowest network cost first):
+
+    1. exact anchor + distance, 300 s;
+    2. while cooling down after a 10603: exact distance any anchor, then the
+       newest set for this account/area at *any* distance (24 h, flagged
+       ``stale``) - no request is sent;
+    3. the live endpoint;
+    4. on a fresh 10603: same two cache fallbacks, then ``PointsRateLimited``.
+
+    The reply is a random five-of-N draw per request (see the module
+    docstring), so a cached set is a valid server-issued set; it is only
+    "stale" in the sense that it was ordered for another target distance.
+    Callers must surface that to the operator instead of silently pretending
+    the server answered for the current distance.
     """
     log = log or (lambda *_: None)
     dist = max(1, int(round(float(distance_m))))
+    remaining = rate_limit_remaining(acct.uid, acct.unid)
+
     if not force:
-        hit = cached_points(acct.uid, acct.unid, run_area_id, lat, lon, ttl,
-                            distance_m=dist)
+        hit = cached_entry(acct.uid, acct.unid, run_area_id, lat, lon, ttl,
+                           dist)
         if hit is not None:
-            log('[points] cache hit (%d points, %d m)' % (len(hit), dist))
+            log('[points] cache hit (%d points, %d m)'
+                % (len(hit['points']), dist))
+            return _cache_meta(hit, dist, 'cache', remaining > 0, remaining)
+
+    def _cached_fallback():
+        # Same distance, possibly a moved anchor (fence-centre correction).
+        hit = cached_entry(acct.uid, acct.unid, run_area_id, lat, lon,
+                           FALLBACK_TTL, dist)
+        if hit is not None:
+            return _cache_meta(hit, dist, 'cache', True, remaining)
+        # Last resort: the newest set for this account/area, any distance.
+        hit = newest_cached_entry(acct.uid, acct.unid, run_area_id,
+                                  None, FALLBACK_TTL)
+        if hit is not None:
+            same_distance = hit['distance_m'] == dist
+            if not same_distance:
+                log('[points] %d m request -> reusing %d m cache'
+                    % (dist, hit['distance_m']))
+            return _cache_meta(hit, dist,
+                               'cache' if same_distance
+                               else 'cache-other-distance',
+                               True, remaining)
+        return None
+
+    if remaining > 0:
+        # `force` only bypasses the 300 s cache, never the server's cooldown:
+        # every extra call extends the ban and the next reply is a different
+        # random set anyway.
+        hit = _cached_fallback()
+        if hit is not None:
+            log('[points] cooldown %ds - serving cached points' % remaining)
             return hit
+        raise PointsRateLimited(remaining)
 
     session = getattr(client, '_ns', None)
     if session is None:
@@ -385,17 +637,14 @@ def fetch_points(client, acct, lat: float, lon: float,
         raise RuntimeError('points request failed: %s (HTTP %s)'
                            % (res.get('error'), res.get('status')))
     if biz.get('error') == RATE_LIMIT_ERR:
+        until = note_rate_limited(acct.uid, acct.unid)
+        left = max(1, int(round(until - time.time())))
         log('[points] 10603 rate limited - reusing cache if any')
-        hit = cached_points(acct.uid, acct.unid, run_area_id, lat, lon,
-                            ttl=86400, distance_m=dist)
-        if hit is None:
-            # The anchor can differ after a fence-centre correction; the
-            # checkpoint set is still the same school/distance.
-            hit = newest_cached_points(acct.uid, acct.unid, run_area_id, dist,
-                                       ttl=86400)
+        hit = _cached_fallback()
         if hit is not None:
+            hit['retry_after_s'] = left
             return hit
-        raise RuntimeError('points rate limited and no cached copy available')
+        raise PointsRateLimited(left)
 
     points = parse_points(biz, allow_empty=allow_empty)
     # Do not cache an empty answer for 300 s: an empty response may be a
@@ -404,9 +653,38 @@ def fetch_points(client, acct, lat: float, lon: float,
     if points:
         store_points(acct.uid, acct.unid, run_area_id, lat, lon, points,
                      distance_m=dist)
+    # The server just answered, so the local window is no longer blocking.
+    # Without this a forced retry that succeeds would still keep the UI
+    # cooling down for the rest of the old 5-minute window.
+    clear_rate_limit(acct.uid, acct.unid)
     log('[points] fetched %d points (%d mandatory, %d m)'
         % (len(points), sum(1 for p in points if p['isMustPoint']), dist))
-    return points
+    return {'points': points, 'distance_m': dist, 'source': 'live',
+            'stale': False, 'rate_limited': False,
+            'retry_after_s': 0, 'ts': time.time()}
+
+
+def fetch_points(client, acct, lat: float, lon: float,
+                 run_area_id=None, force: bool = False,
+                 ttl: float = CACHE_TTL, log=None,
+                 distance_m: float = 2000.0,
+                 allow_empty: bool = False) -> list[dict]:
+    """Return the campus checkpoints for the target distance.
+
+    The 300 s cache is scoped by distance: the server may return a different
+    checkpoint set for a 2 km and a 4 km run.
+
+    ``allow_empty`` is opt-in.  The normal submit path leaves it false so an
+    empty ``pointsResModels`` stops the run instead of being guessed as a free
+    run.  Preview may pass true to show "no points (unconfirmed)".
+
+    Callers that need the provenance (source distance, 10603 fallback) use
+    :func:`fetch_points_meta`.
+    """
+    return fetch_points_meta(
+        client, acct, lat, lon, run_area_id=run_area_id, force=force,
+        ttl=ttl, log=log, distance_m=distance_m,
+        allow_empty=allow_empty)['points']
 
 
 def mandatory(points: list[dict]) -> list[dict]:
@@ -797,6 +1075,11 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(('cache key is distance-scoped',
                 cache_key('u', '1', None, a[0], a[1], 2000)
                 != cache_key('u', '1', None, a[0], a[1], 3000), 'd2000/d3000'))
+    out.append(('submit keeps the displayed distance',
+                points_distance_for_submit(1060, 1.06) == 1060.0
+                and points_distance_for_submit(None, 1.06) == 1060.0
+                and points_distance_for_submit(0, None) == 2000.0,
+                '1060 / 1060 / 2000'))
 
     # A run area can own several fences; all of them must be kept.
     parsed = _parse_fences([

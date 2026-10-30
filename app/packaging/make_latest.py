@@ -25,14 +25,34 @@ DEFAULT_DIST = APP_ROOT / 'dist'
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
 #: single source of truth, this only keeps standalone runs usable.
-DEFAULT_VERSION = '0.1.6'
+DEFAULT_VERSION = '0.1.7'
 DEFAULT_MIN_VERSION = '0.1.4'
-DEFAULT_ROLLBACK_VERSION = '0.1.5'
+DEFAULT_ROLLBACK_VERSION = '0.1.6'
 DEFAULT_ENTRY = '好想跑.exe'
 
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.1.7': [
+        '修复画线时点位反复加载失败：不再按每 10 m 目标距离重拉点位',
+        '自动刷新最多 1 次/5 分钟；10603 冷却按账号隔离，A 账号不再锁住 B 账号',
+        '点位读取失败时保留上次加载的点位，不再清空地图和检查表',
+        '提交复用地图上显示的那套点位，不再重新随机抽一组',
+        '10603 时允许复用同账号/跑区 24 h 内的缓存点位，并明确标注来源距离',
+        '后台刷新不再重置地图视野（画线时镜头不再被拉回围栏）',
+        '点位限流/读取失败时显示冷却倒计时与真实原因',
+        '会话 token 改为 DPAPI 封存（token_enc），旧明文启动时自动迁移',
+        '单实例保护：第二个窗口会聚焦已有窗口并退出，避免两个进程互相覆盖 data/',
+        '自动更新要求 zip 和安装包都带 sha256，且只接受 https（localhost 除外）',
+        '手动选择的跑区按账号保存，下次登录/重启自动恢复；跑区下拉可一键切回「自动」',
+        '围栏读取异常时停止提交，不再跳过区域校验',
+        '提交页常驻结果卡：结果未知时锁定提交，直到完成只读回执核对',
+        '检查表行可点击跳转；没有修复入口的提醒不再显示成按钮',
+        '路线撤销改为 50 个快照栈，支持 Ctrl+Z / Ctrl+Shift+Z',
+        '控制点悬停显示序号，可选中、Delete 删除、拖动微调',
+        '点位冷却期间刷新按钮置灰并每秒更新「冷却 Ns」',
+        '实测确认：点位接口每次随机返回 5 个点，距离只影响候选范围',
+    ],
     '0.1.6': [
         '策略 geoFence 为 null 时回退 getGeoFenceForRun，地图定位到围栏中心',
         '点位接口 10603 限流时按账号/跑区/距离复用缓存，不再误报点位读取失败',

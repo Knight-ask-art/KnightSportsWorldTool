@@ -29,6 +29,8 @@ import tempfile
 import threading
 import time
 
+from . import session_store
+
 DEFAULT_INTERVAL_S = 6 * 3600
 MIN_INTERVAL_S = 60
 MAX_INTERVAL_S = 7 * 24 * 3600
@@ -272,10 +274,10 @@ class TokenKeeper:
 
     # -- state -----------------------------------------------------------
     def _load(self) -> dict:
-        return _read_json(self.session_path)
+        return session_store.read(self.session_path)
 
     def _save(self, session: dict) -> None:
-        _write_json(self.session_path, session)
+        session_store.write(self.session_path, session)
 
     def _status_locked(self, session: dict | None = None,
                        now: int | None = None) -> dict:
@@ -606,7 +608,11 @@ def self_test() -> list[tuple[str, bool, str]]:
         r = k3.run_once(force=True)
         session = _read_json(path)
         out.append(('auto relogin action', r['ok'] and r['action'] == 'relogin', 'ok'))
-        out.append(('new token stored', session['token'] == 'tok-new', 'ok'))
+        out.append(('new token stored',
+                    session_store.read(path)['token'] == 'tok-new', 'ok'))
+        out.append(('token sealed at rest',
+                    'token' not in session and bool(session.get('token_enc')),
+                    'token_enc'))
         out.append(('expired cleared', session['keepalive']['token_expired'] is False, 'ok'))
         out.append(('password not stored', secret not in json.dumps(session), 'ok'))
         out.append(('status hides token', 'tok-' not in json.dumps(k3.status()), 'ok'))

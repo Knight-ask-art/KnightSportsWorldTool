@@ -72,10 +72,10 @@ def _blob(data: bytes):
             buf)
 
 
-def _protect(data: bytes) -> bytes:
+def _protect(data: bytes, entropy: bytes = _ENTROPY) -> bytes:
     crypt32, kernel32 = _api()
     pin, _in = _blob(data)
-    ent, _ent = _blob(_ENTROPY)
+    ent, _ent = _blob(entropy)
     pout = _DataBlob()
     if not crypt32.CryptProtectData(
             ctypes.byref(pin), 'haoxiangpao.local-login',
@@ -89,10 +89,10 @@ def _protect(data: bytes) -> bytes:
         kernel32.LocalFree(pout.pbData)
 
 
-def _unprotect(data: bytes) -> bytes:
+def _unprotect(data: bytes, entropy: bytes = _ENTROPY) -> bytes:
     crypt32, kernel32 = _api()
     pin, _in = _blob(data)
-    ent, _ent = _blob(_ENTROPY)
+    ent, _ent = _blob(entropy)
     pout = _DataBlob()
     desc = wintypes.LPWSTR()
     if not crypt32.CryptUnprotectData(
@@ -106,6 +106,17 @@ def _unprotect(data: bytes) -> bytes:
         if desc:
             kernel32.LocalFree(ctypes.cast(desc, wintypes.HLOCAL))
         kernel32.LocalFree(pout.pbData)
+
+
+def seal(text: str, entropy: bytes = _ENTROPY) -> str:
+    """DPAPI-seal UTF-8 ``text``; base64 for a JSON-safe field."""
+    raw = _protect(str(text).encode('utf-8'), entropy)
+    return base64.b64encode(raw).decode('ascii')
+
+
+def unseal(value: str, entropy: bytes = _ENTROPY) -> str:
+    """Reverse :func:`seal`; raises :class:`CredentialError` on a foreign blob."""
+    return _unprotect(base64.b64decode(str(value)), entropy).decode('utf-8')
 
 
 def _path(store_dir: str) -> str:

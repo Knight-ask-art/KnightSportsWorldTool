@@ -560,10 +560,14 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
 .check-list{margin:2px 0 0}
 .check-row{
   display:grid;grid-template-columns:19px 1fr auto;gap:8px;align-items:center;
-  padding:7px 2px;border-bottom:1px dotted rgba(216,209,191,.9);cursor:pointer;
+  padding:7px 2px;border-bottom:1px dotted rgba(216,209,191,.9);cursor:default;
   user-select:none;border-radius:4px;
 }
-.check-row:hover{background:rgba(242,210,92,.16)}
+/* Only rows with a real destination look clickable.  A warning row with no
+   fix on this page must not pretend to be a button. */
+.check-row[data-goto]{cursor:pointer}
+.check-row[data-goto]:hover{background:rgba(242,210,92,.16)}
+.check-row[data-goto]:focus-visible{outline:2px solid var(--ink-blue);outline-offset:1px}
 .cbox{
   width:16px;height:16px;border:1.4px solid var(--ink);border-radius:4px 3px 5px 3px;
   display:grid;place-items:center;background:var(--paper-2);transition:.12s;
@@ -767,6 +771,32 @@ h1 .date{font:11px/1 var(--mono);color:var(--faint);letter-spacing:0;margin-left
 .flow-step span{font:8.5px/1 var(--mono);color:var(--faint)}
 .flow-step b{display:block;font-size:10px;margin-top:2px}
 .flow-step small{display:block;font:8.5px/1.4 var(--mono);color:var(--faint);margin-top:1px}
+/* Persistent submit result: a 2.6 s toast disappears while a 180 s submit may
+   still be running.  This card stays in the submit tab and, for an unknown
+   result, keeps the submit button locked until the receipt is reconciled. */
+.submit-result{
+  margin:10px 0 8px;padding:9px 11px;border:1.2px solid var(--rule);
+  border-left:4px solid var(--faint);border-radius:var(--sketch-sm);
+  background:rgba(251,248,240,.72);
+}
+.submit-result.ok{border-left-color:var(--green)}
+.submit-result.fail{border-left-color:var(--stamp)}
+.submit-result.unknown{border-left-color:var(--amber);background:rgba(242,210,92,.12)}
+.submit-result-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.submit-result-badge{
+  font:9px/1 var(--sans);padding:2px 6px;border:1px solid currentColor;
+  border-radius:3px;white-space:nowrap;
+}
+.submit-result.ok .submit-result-badge{color:var(--green)}
+.submit-result.fail .submit-result-badge{color:var(--stamp)}
+.submit-result.unknown .submit-result-badge{color:var(--amber)}
+.submit-result-head b{font-size:11.5px;font-weight:600}
+.submit-result-time{margin-left:auto;font:9px/1 var(--mono);color:var(--faint)}
+.submit-result-text{font:10.5px/1.55 var(--sans);color:var(--pencil);margin-top:5px;word-break:break-word}
+.submit-result-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.route-dot{cursor:grab}
+body.dragging-route-point .route-dot{cursor:grabbing}
+body.dragging-route-point #map{cursor:grabbing!important}
 .field-line{min-width:0}
 .field-line label{display:block;font-size:10px;color:var(--faint);margin-bottom:2px}
 .field-line input,.field-line select{

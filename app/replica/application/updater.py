@@ -148,6 +148,17 @@ def _asset_format(asset: dict, url: str) -> str:
     return 'installer' if urlparse(url).path.lower().endswith('.exe') else 'zip'
 
 
+def _is_safe_url(parsed) -> bool:
+    """https only; loopback http is allowed for local tests/mirrors."""
+    if not parsed.netloc:
+        return False
+    if parsed.scheme == 'https':
+        return True
+    return (parsed.scheme == 'http'
+            and (parsed.hostname or '').lower() in
+            ('localhost', '127.0.0.1', '::1'))
+
+
 def installed_dir() -> str:
     """Install directory recorded by the NSIS installer ('' when absent).
 
@@ -200,8 +211,8 @@ def normalize(manifest, source: str, current: str = VERSION,
     """Validate one manifest.  Raises ``ValueError`` when it is unusable.
 
     ``prefer='installer'`` picks ``windows-x64-setup`` and falls back to the
-    zip when the manifest has no installer.  An installer without a sha256 is
-    refused outright: the updater is about to execute it.
+    zip when the manifest has no installer.  Both zip and installer must carry
+    a sha256: the updater is about to execute/unpack them.
     """
     if not isinstance(manifest, dict):
         raise ValueError('清单不是 JSON 对象')
@@ -223,8 +234,8 @@ def normalize(manifest, source: str, current: str = VERSION,
         raise ValueError('下载项缺少地址')
     url = urljoin(source, raw_url)
     parsed = urlparse(url)
-    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
-        raise ValueError('下载地址不是 http(s)')
+    if not _is_safe_url(parsed):
+        raise ValueError('下载地址必须是 https（localhost 除外）')
 
     # Every mirror the manifest carries, primary first.  Unknown or malformed
     # entries are dropped rather than failing the whole update: an old client
@@ -235,8 +246,7 @@ def normalize(manifest, source: str, current: str = VERSION,
             continue
         candidate = urljoin(source, extra.strip())
         parts = urlparse(candidate)
-        if parts.scheme in ('http', 'https') and parts.netloc \
-                and candidate not in urls:
+        if _is_safe_url(parts) and candidate not in urls:
             urls.append(candidate)
 
     file_name = os.path.basename(str(asset.get('file') or '').replace('\\', '/'))
@@ -248,8 +258,10 @@ def normalize(manifest, source: str, current: str = VERSION,
         sha = ''
 
     fmt = _asset_format(asset, url)
-    if fmt == 'installer' and not sha:
-        raise ValueError('安装包缺少 sha256，拒绝自动执行')
+    if not sha:
+        # Both zip and installer are executed automatically (zip is unpacked
+        # over the app directory).  A manifest without a hash is refused.
+        raise ValueError('下载项缺少 sha256，拒绝自动更新')
     layout = str(asset.get('layout') or
                  ('installer' if fmt == 'installer' else 'onedir'))
 
@@ -531,8 +543,8 @@ def download(url, dest_dir: str, sha256: str = '', size: int = 0,
         raise ValueError('下载地址不合法')
     for candidate in candidates:
         parsed = urlparse(candidate)
-        if parsed.scheme not in ('http', 'https') or not parsed.netloc:
-            raise ValueError('下载地址不合法')
+        if not _is_safe_url(parsed):
+            raise ValueError('下载地址不合法（必须是 https）')
 
     expected_size = _int_or_zero(size)
     if expected_size > MAX_DOWNLOAD_BYTES:

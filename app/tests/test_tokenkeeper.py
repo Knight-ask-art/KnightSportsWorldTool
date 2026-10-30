@@ -5,6 +5,7 @@ No network, no real account: probe/relogin are injected fakes.
 """
 import json
 
+from replica.application import session_store
 from replica.application import tokenkeeper as T
 
 
@@ -70,9 +71,12 @@ def test_auto_relogin_rotates_token(tmp_path):
         username='u1', password='secret-pass', now=lambda: 3000)
     res = k.run_once(force=True)
     data = _read(path)
+    plain = session_store.read(str(path))
     assert res['ok'] is True
     assert res['action'] == 'relogin'
-    assert data['token'] == 'tok-new'
+    # The token is DPAPI-sealed at rest; the reader gets it back in memory.
+    assert 'token' not in data and data.get('token_enc')
+    assert plain['token'] == 'tok-new'
     assert data['keepalive']['token_expired'] is False
     assert 'secret-pass' not in json.dumps(data)
 

@@ -143,7 +143,7 @@
       </button>
     </form>
 
-    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.6</span></div>
+    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.7</span></div>
   </section>
 </div>
 
@@ -236,7 +236,7 @@
         </div>
       </div>
       <div class="side-meta-row">
-        <div class="side-meta" id="sideVersion">v0.1.6</div>
+        <div class="side-meta" id="sideVersion">v0.1.7</div>
         <button class="update-btn" id="updateBtn" type="button" hidden
                 title="发现新版本" aria-label="发现新版本">
           <svg class="bi" aria-hidden="true"><use href="#bi-cloud-arrow-down"></use></svg>
@@ -752,6 +752,18 @@
                 <button class="btn primary" id="submitRun" disabled>提交这次跑步</button>
                 <span class="hint" id="submitHint" style="margin:0">提交后该时段会被回执锁定，不能重复提交。</span>
               </div>
+              <div class="submit-result" id="submitResult" hidden role="status" aria-live="polite">
+                <div class="submit-result-head">
+                  <span class="submit-result-badge" id="submitResultBadge">—</span>
+                  <b id="submitResultTitle">—</b>
+                  <span class="submit-result-time" id="submitResultTime"></span>
+                </div>
+                <div class="submit-result-text" id="submitResultText"></div>
+                <div class="submit-result-actions">
+                  <button class="btn small ghost" id="submitResultRecords">去记录页核对</button>
+                  <button class="btn small ghost" id="submitResultDismiss" hidden>收起</button>
+                </div>
+              </div>
               <div class="submit-flow">
                 <div class="flow-step"><span>01</span><b>回执</b><small>锁定时间窗</small></div>
                 <div class="flow-step"><span>02</span><b>上传轨迹</b><small>OBS 双 key</small></div>
@@ -1049,7 +1061,7 @@
         <header class="page-head">
           <div class="crumb">系统 <span style="color:var(--faint)">/</span> <b>设置</b></div>
           <div class="head-row">
-            <h1>设置<span class="date">v0.1.6</span></h1>
+            <h1>设置<span class="date">v0.1.7</span></h1>
           </div>
 
         </header>
@@ -1140,7 +1152,7 @@
 
         <section class="sec">
           <div class="sec-head"><h2>关于</h2></div>
-          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.6</span></div>
+          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.7</span></div>
           <div class="detail-row"><span>构建</span><span id="aboutBuild">—</span></div>
           <div class="detail-row"><span>更新</span><span id="updateState">未检查</span></div>
           <div class="form-actions" style="margin-top:8px">

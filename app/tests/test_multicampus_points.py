@@ -30,6 +30,15 @@ def _poly(lat, lon):
             (lat + 0.001, lon + 0.001), (lat, lon + 0.001)]
 
 
+def _meta(points=None, distance_m=2500, **kw):
+    """Shape returned by ``points.fetch_points_meta`` for bridge tests."""
+    data = {'points': list(points or []), 'distance_m': distance_m,
+            'source': 'live', 'stale': False, 'rate_limited': False,
+            'retry_after_s': 0, 'ts': 0.0}
+    data.update(kw)
+    return data
+
+
 class _FakeClient:
     def __init__(self, data, error=10000):
         self.data = data
@@ -174,7 +183,7 @@ def test_fetch_points_honours_the_selected_run_area(tmp_path, monkeypatch):
         return {'polygon': [], 'polygons': [], 'center': None, 'name': ''}
 
     monkeypatch.setattr(api, '_ensure_fence', fake_fence)
-    monkeypatch.setattr(P, 'fetch_points', lambda *a, **k: [])
+    monkeypatch.setattr(P, 'fetch_points_meta', lambda *a, **k: _meta())
     j = api.real_fetch_points(glat=22.41, glon=112.94, distance_m=2000,
                               run_area_id=2)
     assert j['code'] == 200, j
@@ -337,8 +346,13 @@ def test_rate_limited_fetch_reuses_cache_from_a_different_anchor(monkeypatch):
     assert P.newest_cached_points('1', '2', None, 3000) is None
 
 
-def test_fetch_points_uses_anchor_agnostic_cache_on_10603(monkeypatch):
+def test_fetch_points_uses_anchor_agnostic_cache_on_10603(
+        monkeypatch, tmp_path):
     import time
+
+    monkeypatch.setenv('JHP_POINTS_RATELIMIT',
+                       str(tmp_path / 'points_ratelimit.json'))
+    P.clear_rate_limit()
 
     class _Client:
         _ns = object()
@@ -359,6 +373,7 @@ def test_fetch_points_uses_anchor_agnostic_cache_on_10603(monkeypatch):
     acct = Account(name='a', uid='1', token='x', unid=2)
     pts = P.fetch_points(_Client(), acct, 22.41, 112.94, distance_m=2500)
     assert [p['name'] for p in pts] == ['点位1']
+    P.clear_rate_limit()
 
 
 def test_geo_fences_accepts_list_and_json_string_shapes():
@@ -403,7 +418,7 @@ def test_real_fetch_points_draws_all_fences_with_a_manual_anchor(
     ]}}
     monkeypatch.setattr(api, '_fetch_run_policy', lambda *a, **k: policy)
     monkeypatch.setattr(RC, 'RealClient', lambda *a, **k: object())
-    monkeypatch.setattr(P, 'fetch_points', lambda *a, **k: [])
+    monkeypatch.setattr(P, 'fetch_points_meta', lambda *a, **k: _meta())
     j = api.real_fetch_points(glat=31.0005, glon=121.0005, distance_m=2000)
     assert j['code'] == 200, j
     assert j['data']['fence_count'] == 2
@@ -568,7 +583,7 @@ def _submit_api(tmp_path, monkeypatch, policy):
     monkeypatch.setattr(api, '_fetch_run_policy', lambda rc, acct: policy)
     monkeypatch.setattr(api, '_ensure_fence', lambda *a, **k: {
         'polygon': [], 'center': (22.41, 112.94)})
-    monkeypatch.setattr(P, 'fetch_points', lambda *a, **k: [])
+    monkeypatch.setattr(P, 'fetch_points_meta', lambda *a, **k: _meta())
     monkeypatch.setattr(RC, 'RealClient', lambda *a, **k: object())
     monkeypatch.setattr(LIM, 'check', lambda *a, **k: None)
     reached = []
@@ -671,7 +686,7 @@ def test_generic_fence_failure_stops_without_a_saved_centre(tmp_path, monkeypatc
     assert not saved
 
 
-def test_generic_fence_failure_may_reuse_an_already_saved_centre(
+def test_generic_fence_failure_stops_submit_even_with_a_saved_centre(
         tmp_path, monkeypatch):
     import replica.transport.realclient as RC
 
@@ -687,7 +702,7 @@ def test_generic_fence_failure_may_reuse_an_already_saved_centre(
     saved, reached = [], []
     monkeypatch.setattr(api, '_save_center',
                         lambda *a, **k: saved.append((a, k)))
-    monkeypatch.setattr(P, 'fetch_points', lambda *a, **k: [])
+    monkeypatch.setattr(P, 'fetch_points_meta', lambda *a, **k: _meta())
 
     def boom(*a, **k):
         reached.append(1)
@@ -698,8 +713,11 @@ def test_generic_fence_failure_may_reuse_an_already_saved_centre(
         km=1.0, pace=6.0,
         waypoints=[(22.41, 112.94), (22.42, 112.95)],
         use_points=False, days_ago=1)
-    assert reached, res
-    # The stored coordinate is reused, not overwritten and not re-saved.
+    # A saved centre only says where the campus is; it is not a polygon.  A
+    # generic fence failure must stop instead of skipping the in-area check.
+    assert res['code'] != 200
+    assert '无法读取校区围栏' in res['message']
+    assert not reached
     assert not saved
 
 
@@ -716,6 +734,45 @@ def test_old_cache_is_normalized_on_read(monkeypatch):
                           ttl=999999999, distance_m=2500)
     assert pts[0]['isMustPoint'] is True
     assert pts[0]['seq'] == 2
+
+
+def test_submit_uses_the_points_shown_on_the_map(tmp_path, monkeypatch):
+    import replica.application.limits as LIM
+    import replica.transport.realclient as RC
+    import replica.domain.routes as RT
+
+    api = _api(tmp_path)
+    api.real_set_session(uid='1', token='x', lat=22.41, lon=112.94,
+                         campusName='某校区', schoolName='某大学', unid=9)
+    policy = {'policy': 1, 'freezeRunTime': 0, 'runAreaModels': [],
+              'runRuleModel': {}}
+    monkeypatch.setattr(api, '_fetch_run_policy', lambda *a: policy)
+    monkeypatch.setattr(api, '_ensure_fence', lambda *a, **k: {
+        'polygon': [], 'center': (22.41, 112.94)})
+
+    def _no_fetch(*a, **k):
+        raise AssertionError('submit must reuse the displayed points')
+
+    monkeypatch.setattr(P, 'fetch_points_meta', _no_fetch)
+    monkeypatch.setattr(RC, 'RealClient', lambda *a, **k: object())
+    monkeypatch.setattr(LIM, 'check', lambda *a, **k: None)
+    monkeypatch.setattr(RT, 'smooth', lambda w, **k: list(w))
+    captured = {}
+
+    def boom(*a, **k):
+        captured.update(k)
+        raise RuntimeError('REACHED_GENERATE')
+
+    monkeypatch.setattr(BAPI, 'generate_run_data', boom)
+    ui_points = [
+        {'lat': 22.4108, 'lon': 112.9408, 'name': '点位2',
+         'isMustPoint': True, 'seq': 2},
+        {'lat': 22.4118, 'lon': 112.9418, 'name': '点位1',
+         'isMustPoint': False, 'seq': 1},
+    ]
+    api.real_submit_run(km=1.0, pace=6.0, days_ago=1, points=ui_points)
+    assert captured.get('waypoints') == [
+        (22.4118, 112.9418), (22.4108, 112.9408)]
 
 
 def test_submit_sequential_orders_points_by_number(tmp_path, monkeypatch):
@@ -739,7 +796,7 @@ def test_submit_sequential_orders_points_by_number(tmp_path, monkeypatch):
         {'lat': 22.4100, 'lon': 112.9410, 'name': '点位3',
          'isMustPoint': False, 'isFixed': 0, 'seq': 3},
     ]
-    monkeypatch.setattr(P, 'fetch_points', lambda *a, **k: pts)
+    monkeypatch.setattr(P, 'fetch_points_meta', lambda *a, **k: _meta(pts))
     monkeypatch.setattr(RC, 'RealClient', lambda *a, **k: object())
     monkeypatch.setattr(LIM, 'check', lambda *a, **k: None)
     monkeypatch.setattr(RT, 'smooth', lambda w, **k: list(w))

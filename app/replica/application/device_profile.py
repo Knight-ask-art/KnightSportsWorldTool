@@ -163,7 +163,8 @@ def default_store_dir() -> str:
 
 def read_session(store_dir: str) -> dict:
     try:
-        data = _read_json(_session_path(store_dir), {})
+        from . import session_store
+        data = session_store.read(_session_path(store_dir))
     except DeviceProfileError:
         # A corrupt session must not block profile generation; the login gate
         # already has its own error handling.

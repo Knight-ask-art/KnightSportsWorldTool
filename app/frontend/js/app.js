@@ -195,8 +195,9 @@ function renderPoints(points, opts){
       badge.textContent = '跳过点位 · 不查打卡点';
       badge.className = 'tag warn';
     }else if(livePoints.length){
-      badge.textContent = livePoints.length + ' 个 · ' + must + ' 必经';
-      badge.className = 'tag ok';
+      badge.textContent = livePoints.length + ' 个 · ' + must + ' 必经' +
+        (LIVE.pointsStale ? ' · 缓存' : '');
+      badge.className = 'tag ' + (LIVE.pointsStale ? 'warn' : 'ok');
     }else if(LIVE.pointsEmpty){
       badge.textContent = '无打卡点（需确认）';
       badge.className = 'tag warn';
@@ -209,11 +210,15 @@ function renderPoints(points, opts){
     let msg;
     if(freeRunOn()) msg = '已勾选「跳过打卡点」：提交时不拉取打卡点。';
     else if(!hasSession()) msg = '登录后从服务器拉取打卡点。';
+    else if(LIVE.pointsError) msg = '点位读取失败：' + LIVE.pointsError +
+      '。已保留上次加载的点位；' + (pointsCooldownLeft() > 0
+        ? ('约 ' + pointsCooldownLeft() + ' 秒后可重试。')
+        : '点「刷新」重试。');
     else if(LIVE.pointsEmpty) msg = '服务器没有返回打卡点，无法确认该校区是否允许自由跑；提交默认阻止。如已确认，请勾选「跳过打卡点」。';
     else msg = '服务器没有返回打卡点；点「刷新」重试。';
     list.innerHTML = '<div class="empty-state">' + msg + '</div>';
   }
-  if(livePoints.length && opts.fit !== false){
+  if(livePoints.length && opts.fit === true){
     const b = L.latLngBounds(livePoints.map(p => [p.lat, p.lng]));
     map.fitBounds(b.pad(.18), runMapPadding());
   }
@@ -255,7 +260,7 @@ function setFences(polygons, name, opts){
       routeFenceExtra.push(layer);
     });
   }catch(e){}
-  if(first.length && (!opts || opts.fit !== false)){
+  if(first.length && opts && opts.fit === true){
     map.fitBounds(fenceBounds.pad(.18), runMapPadding());
   }
 }
@@ -324,6 +329,94 @@ const routeStart = L.circleMarker([0, 0], {radius: 5, color: '#FBF8F0', weight: 
 /* ---------- draw: click to add, smooth curve ---------- */
 let pen = false, smoothOn = true, routeClosed = false;
 let ctrlDots = [];
+let selRoutePoint = -1;
+let dragPointIndex = -1, dragPointSnapshot = null, dragPointMoved = false;
+let routeClickGuardUntil = 0;
+
+/* Route edits are snapshots, not a single pop().  Deleting the 3rd point and
+   then pressing undo must restore the 3rd point, not remove the last one. */
+const ROUTE_HISTORY_LIMIT = 50;
+const routeHistory = {undo: [], redo: []};
+function routeSnapshot(){
+  return {route: route.map(p => [+p[0], +p[1]]), closed: !!routeClosed};
+}
+function routeSnapshotKey(snap){
+  return JSON.stringify([snap.route || [], !!snap.closed]);
+}
+function pushRouteSnapshot(snap, label){
+  if(!snap) return false;
+  const top = routeHistory.undo[routeHistory.undo.length - 1];
+  if(top && routeSnapshotKey(top) === routeSnapshotKey(snap)) return false;
+  routeHistory.undo.push({
+    route: (snap.route || []).map(p => [+p[0], +p[1]]),
+    closed: !!snap.closed,
+    label: label || ''
+  });
+  if(routeHistory.undo.length > ROUTE_HISTORY_LIMIT) routeHistory.undo.shift();
+  routeHistory.redo = [];
+  syncRouteHistoryButtons();
+  return true;
+}
+function pushRouteHistory(label){
+  return pushRouteSnapshot(routeSnapshot(), label);
+}
+function syncRouteHistoryButtons(){
+  const canUndo = routeHistory.undo.length > 0;
+  const top = canUndo ? routeHistory.undo[routeHistory.undo.length - 1] : null;
+  ['#undoTool', '#undoBtn'].forEach(sel => {
+    const btn = $(sel);
+    if(!btn) return;
+    btn.disabled = !canUndo;
+    btn.title = canUndo
+      ? ('撤销' + (top.label ? '：' + top.label : '') +
+         '（Ctrl+Z；重做 Ctrl+Shift+Z）')
+      : '没有可撤销的操作（重做 Ctrl+Shift+Z）';
+  });
+}
+function resetRouteHistory(){
+  routeHistory.undo = [];
+  routeHistory.redo = [];
+  selRoutePoint = -1;
+  syncRouteHistoryButtons();
+}
+function applyRouteSnapshot(snap){
+  route = (snap.route || []).map(p => [+p[0], +p[1]]);
+  setCloseUI(!!snap.closed);
+  selRoutePoint = -1;
+  redraw();
+  refreshChecks();
+  if(typeof scheduleModelPreview === 'function') scheduleModelPreview();
+}
+function popDifferentSnapshot(stack){
+  const current = routeSnapshotKey(routeSnapshot());
+  let skipped = 0;
+  while(stack.length){
+    const snap = stack.pop();
+    if(routeSnapshotKey(snap) !== current) return {snap, skipped};
+    // An edit that returned to the previous state (add B, delete B) can
+    // leave a no-op snapshot; skip it instead of showing "已撤销" with no
+    // visible change.
+    skipped++;
+  }
+  return {snap: null, skipped};
+}
+function undoRoute(){
+  const {snap: prev} = popDifferentSnapshot(routeHistory.undo);
+  if(!prev){ toast('没有可撤销的操作'); return; }
+  routeHistory.redo.push(Object.assign(routeSnapshot(), {label: prev.label}));
+  applyRouteSnapshot(prev);
+  syncRouteHistoryButtons();
+  toast(prev.label ? ('已撤销：' + prev.label) : '已撤销');
+}
+function redoRoute(){
+  const {snap: next} = popDifferentSnapshot(routeHistory.redo);
+  if(!next){ toast('没有可重做的操作'); return; }
+  routeHistory.undo.push(Object.assign(routeSnapshot(), {label: next.label}));
+  if(routeHistory.undo.length > ROUTE_HISTORY_LIMIT) routeHistory.undo.shift();
+  applyRouteSnapshot(next);
+  syncRouteHistoryButtons();
+  toast('已重做');
+}
 
 function setPen(on, silent){
   pen = on;
@@ -396,19 +489,120 @@ function displayPath(){
   if(!smoothOn) return routeClosed ? route.concat([route[0]]) : route.slice();
   return smoothPath(route, routeClosed);
 }
+function routeDotStyle(i){
+  if(i === selRoutePoint){
+    return {radius: 7, color: '#B6483C', weight: 2.2,
+            fillColor: '#F2D25C', fillOpacity: 1};
+  }
+  return {
+    radius: i === 0 ? 5 : 3.5,
+    color: '#2E4A7D', weight: 1.3,
+    fillColor: i === 0 ? '#2E4A7D' : '#FBF8F0', fillOpacity: 1
+  };
+}
+function paintDots(){
+  ctrlDots.forEach((d, i) => {
+    const style = routeDotStyle(i);
+    d.setStyle(style);
+    if(d.setRadius) d.setRadius(style.radius);
+  });
+}
+function routeCountText(){
+  const base = route.length + ' 个控制点';
+  return (selRoutePoint >= 0 && selRoutePoint < route.length)
+    ? (base + ' · 已选第 ' + (selRoutePoint + 1) + ' 点') : base;
+}
 function drawDots(){
   ctrlDots.forEach(d => map.removeLayer(d));
   ctrlDots = [];
+  if(selRoutePoint >= route.length) selRoutePoint = -1;
   route.forEach((p, i) => {
-    const d = L.circleMarker(p, {
-      radius: i === 0 ? 5 : 3,
-      color: '#2E4A7D', weight: 1.3,
-      fillColor: i === 0 ? '#2E4A7D' : '#FBF8F0', fillOpacity: 1
-    }).addTo(map);
-    if(i === 0) d.bindTooltip('起点', {direction: 'top', offset: [0, -5], className: 'pt-tip'});
+    const style = routeDotStyle(i);
+    const d = L.circleMarker(p, Object.assign({
+      bubblingMouseEvents: false,
+      className: 'route-dot'
+    }, style)).addTo(map);
+    // Every control point says which one it is; after loading a saved route
+    // the old UI only labelled the start, so point order was invisible.
+    d.bindTooltip(i === 0 ? '起点 · 第 1 点' : ('第 ' + (i + 1) + ' 点'),
+      {direction: 'top', offset: [0, -5], className: 'pt-tip'});
+    d.on('click', ev => {
+      if(ev && ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+      selectRoutePoint(i);
+    });
+    d.on('contextmenu', ev => {
+      if(ev && ev.originalEvent){
+        L.DomEvent.stopPropagation(ev.originalEvent);
+        L.DomEvent.preventDefault(ev.originalEvent);
+      }
+      routeClickGuardUntil = Date.now() + 300;
+      deleteRoutePoint(i);
+    });
+    d.on('mousedown', ev => {
+      if(ev && ev.originalEvent && ev.originalEvent.button !== 0) return;
+      if(ev && ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+      beginRoutePointDrag(i, ev);
+    });
     ctrlDots.push(d);
   });
 }
+function selectRoutePoint(i){
+  if(i < 0 || i >= route.length) return;
+  selRoutePoint = i;
+  paintDots();
+  if($('#ptCount')) $('#ptCount').textContent = routeCountText();
+  toast('已选中第 ' + (i + 1) + ' 点；拖拽移动，Delete 删除，Esc 取消');
+}
+function deleteRoutePoint(i){
+  if(i < 0 || i >= route.length) return;
+  pushRouteHistory('删除第 ' + (i + 1) + ' 点');
+  route.splice(i, 1);
+  selRoutePoint = -1;
+  redraw();
+  toast('已删除第 ' + (i + 1) + ' 点；Ctrl+Z 撤销');
+}
+function beginRoutePointDrag(i, ev){
+  if(i < 0 || i >= route.length) return;
+  selRoutePoint = i;
+  paintDots();
+  dragPointIndex = i;
+  dragPointSnapshot = routeSnapshot();
+  dragPointMoved = false;
+  routeClickGuardUntil = Date.now() + 300;
+  map.dragging.disable();
+  document.body.classList.add('dragging-route-point');
+  if(ev && ev.originalEvent) ev.originalEvent.preventDefault();
+}
+document.addEventListener('mousemove', ev => {
+  if(dragPointIndex < 0) return;
+  const box = map.getContainer().getBoundingClientRect();
+  if(ev.clientX < box.left || ev.clientX > box.right ||
+     ev.clientY < box.top || ev.clientY > box.bottom) return;
+  const ll = map.mouseEventToLatLng(ev);
+  route[dragPointIndex] = [+ll.lat, +ll.lng];
+  dragPointMoved = true;
+  const dot = ctrlDots[dragPointIndex];
+  if(dot) dot.setLatLng(ll);
+  const path = displayPath();
+  hi.setLatLngs(path);
+  ink.setLatLngs(path);
+  ev.preventDefault();
+});
+document.addEventListener('mouseup', () => {
+  if(dragPointIndex < 0) return;
+  const i = dragPointIndex;
+  dragPointIndex = -1;
+  map.dragging.enable();
+  document.body.classList.remove('dragging-route-point');
+  if(dragPointMoved && dragPointSnapshot){
+    routeClickGuardUntil = Date.now() + 300;
+    pushRouteSnapshot(dragPointSnapshot, '移动第 ' + (i + 1) + ' 点');
+    redraw();
+    toast('已移动第 ' + (i + 1) + ' 点');
+  }
+  dragPointSnapshot = null;
+  dragPointMoved = false;
+});
 function autoFillDistanceFromRoute(m){
   // Keep the target distance tied to the line until the operator edits it.
   // A closed line is one lap: 996 m must not round up to 1.00 km and become
@@ -423,10 +617,11 @@ function autoFillDistanceFromRoute(m){
   el.value = String(Math.round(value * 100) / 100);
   refreshParams();
   updateRunDateLabel();
-  // The checkpoint endpoint is distance-scoped: the points already on the map
-  // belong to the old target.  Re-pull after the same debounce as a manual
-  // edit so submit does not route through points the user never saw.
-  schedulePointsForDistance();
+  // The checkpoint endpoint is distance-scoped, but drawing changes the
+  // target every 10 m and each call returns a different random five-point
+  // set (3 calls / 5 min).  Pull at most once per 5 min, after the line has
+  // settled; submit reuses whatever set is on the map.
+  schedulePointsForDistance(true);
   return true;
 }
 function redraw(){
@@ -475,7 +670,7 @@ function redraw(){
   $('#routeNote').innerHTML = closed && m >= 80
     ? '<b>✓</b> ' + status
     : '<b>·</b> ' + status;
-  $('#ptCount').textContent = route.length + ' 个控制点';
+  $('#ptCount').textContent = routeCountText();
   const pace = (+$('#inPace').value || 6);
   const totalMin = (target / 1000) * pace;
   $('#runSummary').textContent = '单圈 ' + km.toFixed(2) + ' km · ' + _paceText(pace) +
@@ -490,8 +685,12 @@ function redraw(){
 
 map.on('click', e => {
   if(!pen) return;
+  // A control-point click/drag must never fall through to "add a new point".
+  if(Date.now() < routeClickGuardUntil) return;
   const p = [e.latlng.lat, e.latlng.lng];
   if(route.length && distM(route[route.length - 1], p) < 6) return;
+  pushRouteHistory('添加第 ' + (route.length + 1) + ' 点');
+  selRoutePoint = -1;
   route.push(p);
   redraw();
   toast('已加点：' + route.length + ' 个；右键删点');
@@ -504,21 +703,15 @@ map.on('contextmenu', e => {
     const d = sp.distanceTo(e.containerPoint);
     if(d < bd){ bd = d; best = i; }
   });
-  if(best >= 0 && bd < 26){
-    route.splice(best, 1);
-    redraw();
-    toast('已删除 1 个点');
-  }
+  if(best >= 0 && bd < 26) deleteRoutePoint(best);
 });
 
-$('#undoTool').addEventListener('click', () => {
-  if(route.length <= 1){ toast('没有可撤销的点了'); return; }
-  route.pop();
-  redraw();
-});
+$('#undoTool').addEventListener('click', undoRoute);
 $('#clearBtn').addEventListener('click', () => {
   if(route.length >= 3 && !confirm('清空当前路线？')) return;
+  if(route.length) pushRouteHistory('清空路线');
   route = [];
+  selRoutePoint = -1;
   redraw();
   toast('已清空：从你的第一个落点开始画');
 });
@@ -530,6 +723,7 @@ $('#smoothToggle').addEventListener('click', () => {
   toast(smoothOn ? '平滑曲线已开' : '平滑已关，按折线显示');
 });
 $('#closeToggle').addEventListener('click', () => {
+  if(route.length) pushRouteHistory(routeClosed ? '关闭闭合' : '打开闭合');
   setCloseUI(!routeClosed);
   redraw();
   refreshChecks();
@@ -541,6 +735,7 @@ $('#closeToggle').addEventListener('click', () => {
 $('#snapTool').addEventListener('click', () => $('#snapBtn').click());
 
 redraw();
+syncRouteHistoryButtons();
 
 /* ---------- base layer toggle (satellite default) ---------- */
 let sat = true;
@@ -1004,6 +1199,8 @@ function autoGenerate(){
     cur = left.splice(bi, 1)[0];
     out.push(cur);
   }
+  if(out.length) pushRouteHistory('生成自动路线');
+  selRoutePoint = -1;
   route = out;
   setCloseUI(true);
   redraw();
@@ -1028,6 +1225,8 @@ function stadiumGenerate(){
     const a = 2 * Math.PI * i / 20;
     pts.push([cx + rLat * Math.sin(a), cy + rLng * Math.cos(a)]);
   }
+  pushRouteHistory('生成田径场路线');
+  selRoutePoint = -1;
   route = pts;
   setCloseUI(true);
   redraw();
@@ -1181,6 +1380,8 @@ function importRouteFile(){
     if(pts.length < parsed.length){
       liveLog('导入路线已抽稀', `${parsed.length} → ${pts.length} 点（避免生成过慢）`, 'warn');
     }
+    pushRouteHistory('导入路线文件');
+    selRoutePoint = -1;
     route = pts;
     setCloseUI(false);
     redraw();
@@ -1224,7 +1425,8 @@ function go(page){
       // current?" moment.  The backend has a 300 s cache, so this does not
       // hammer the points endpoint; 5 s only prevents double-fire from a
       // click that both navigates and switches the tab.
-      if(hasSession() && Date.now() - _pointsAutoAt > 5000){
+      if(hasSession() && pointsCooldownLeft() === 0 &&
+         Date.now() - _pointsAutoAt > 5000){
         _pointsAutoAt = Date.now();
         loadPoints(false, {quiet: true});
       }
@@ -1254,15 +1456,38 @@ function go(page){
 document.querySelectorAll('.nav-item').forEach(btn => {
   btn.addEventListener('click', () => go(btn.dataset.page));
 });
+function followDataGoto(el){
+  if(!el) return;
+  if(el.dataset.modeTarget) setMode(el.dataset.modeTarget);
+  const page = el.dataset.goto;
+  if(page === 'run'){
+    switchRunTab(el.dataset.rtab || 'route');
+  }else if(el.dataset.rtab){
+    switchRunTab(el.dataset.rtab);
+  }
+  if(page) go(page);
+  if(el.dataset.focus){
+    const id = el.dataset.focus;
+    setTimeout(() => {
+      const target = $('#' + id);
+      if(target) target.focus();
+    }, 90);
+  }
+  if(el.dataset.checkAction === 'preflight'){
+    // Clicking the network row is the operator asking for the check; the
+    // egress lookup never runs automatically.
+    setTimeout(() => {
+      if(typeof runPreflight === 'function') runPreflight();
+    }, 140);
+  }
+}
 document.addEventListener('click', ev => {
   const t = eventTargetEl(ev);
   if(!t) return;
   const el = t.closest('[data-goto]');
   if(!el) return;
   if(el.tagName === 'A') ev.preventDefault();
-  if(el.dataset.modeTarget) setMode(el.dataset.modeTarget);
-  if(el.dataset.goto === 'run') switchRunTab('route');
-  go(el.dataset.goto);
+  followDataGoto(el);
 });
 document.addEventListener('keydown', ev => {
   const t = eventTargetEl(ev);
@@ -1271,9 +1496,31 @@ document.addEventListener('keydown', ev => {
   if(!el) return;
   if(ev.key === 'Enter' || ev.key === ' '){
     ev.preventDefault();
-    if(el.dataset.modeTarget) setMode(el.dataset.modeTarget);
-    if(el.dataset.goto === 'run') switchRunTab('route');
-    go(el.dataset.goto);
+    followDataGoto(el);
+  }
+});
+document.addEventListener('keydown', ev => {
+  if(!document.querySelector('#page-run.active')) return;
+  const t = eventTargetEl(ev);
+  if(t && t.closest('input,textarea,select,[contenteditable="true"]')) return;
+  if($('#dataPreview') && !$('#dataPreview').hidden) return;
+  if($('#postSubmit') && !$('#postSubmit').hidden) return;
+  if((ev.ctrlKey || ev.metaKey) && !ev.altKey &&
+     String(ev.key || '').toLowerCase() === 'z'){
+    ev.preventDefault();
+    if(ev.shiftKey) redoRoute(); else undoRoute();
+    return;
+  }
+  if((ev.key === 'Delete' || ev.key === 'Backspace') && selRoutePoint >= 0){
+    ev.preventDefault();
+    deleteRoutePoint(selRoutePoint);
+    return;
+  }
+  if(ev.key === 'Escape' && selRoutePoint >= 0){
+    ev.preventDefault();
+    selRoutePoint = -1;
+    paintDots();
+    redraw();
   }
 });
 document.getElementById('newRunBtn').addEventListener('click', () => {
@@ -1295,7 +1542,11 @@ const LIVE = {
   session: null, checked: null, points: [], fence: [], fences: [],
   fenceMissing: false, fenceCount: 0, pointsMissing: false, pointsEmpty: false,
   fenceError: '', pointsError: '', pointsDistance: 0, hitRadiusM: 25,
+  pointsStale: false, pointsSource: '', pointsFitted: false,
+  pointsCooldownUntil: 0, pointsCooldownKey: '', pointsAutoAt: 0,
+  pointsLoading: false,
   runArea: null, runAreas: [], runAreaChoice: null, runAreaChoiceKey: '',
+  runAreaPrefs: {},
   sequential: false,
   freezeSeconds: 0, faceRequired: false, faceReason: '',
   records: [], recordsLoaded: false, recordsLoading: false, recordFilter: 'all',
@@ -1311,7 +1562,7 @@ const LIVE = {
   receipts: [], receiptsLoaded: false, receiptsError: null,
   preflight: null, lastDetail: null,
   tokenUpdatedAt: null,
-  log: [], submitting: false, lastSubmit: null,
+  log: [], submitting: false, lastSubmit: null, submitResult: null,
   loginCover: '', coverBusy: false
 };
 
@@ -2224,6 +2475,13 @@ function clearAccountActivity(){
   LIVE.checked = null;
   LIVE.tokenUpdatedAt = null;
   LIVE.lastSubmit = null;
+  LIVE.submitResult = null;
+  if(typeof renderSubmitResult === 'function') renderSubmitResult();
+  LIVE.pointsLoading = false;
+  LIVE.pointsCooldownUntil = 0;
+  LIVE.pointsCooldownKey = '';
+  if(typeof stopPointsCooldownTick === 'function') stopPointsCooldownTick();
+  if(typeof syncPointsCooldownUI === 'function') syncPointsCooldownUI();
   LIVE.plan = null;
   LIVE.daily = null;
   LIVE.model = null;
@@ -2417,6 +2675,8 @@ async function liveInitSession(){
                              : '暂时无法验证登录状态，请检查网络后重试。'};
   }
   liveLog('token 有效', (LIVE.session.campusName || '') + ' · ' + (LIVE.session.schoolName || ''), 'ok');
+  await loadUiPrefs();
+  applySavedRunArea();
   await Promise.all([loadPoints(false), loadOverview()]);
   refreshChecks();
   refreshModelPreview();
@@ -2466,9 +2726,13 @@ function renderEmptyData(){
   // without checkpoints.
   const free = $('#freeRun');
   if(free) free.checked = false;
+  LIVE.pointsError = '';
+  LIVE.pointsEmpty = false;
+  LIVE.pointsStale = false;
   renderPoints([]);
   setFences([], '跑步围栏');
   route = [];
+  resetRouteHistory();
   redraw();
   LIVE.points = [];
   LIVE.fence = [];
@@ -2480,6 +2744,15 @@ function renderEmptyData(){
   LIVE.fenceError = '';
   LIVE.pointsError = '';
   LIVE.pointsDistance = 0;
+  LIVE.pointsStale = false;
+  LIVE.pointsSource = '';
+  LIVE.pointsFitted = false;
+  LIVE.pointsCooldownUntil = 0;
+  LIVE.pointsCooldownKey = '';
+  LIVE.pointsAutoAt = 0;
+  LIVE.pointsLoading = false;
+  stopPointsCooldownTick();
+  if(typeof syncPointsCooldownUI === 'function') syncPointsCooldownUI();
   LIVE.hitRadiusM = 25;
   LIVE.runArea = null;
   LIVE.runAreas = [];
@@ -2499,6 +2772,8 @@ function renderEmptyData(){
   LIVE.plan = null;
   LIVE.daily = null;
   LIVE.lastSubmit = null;
+  LIVE.submitResult = null;
+  if(typeof renderSubmitResult === 'function') renderSubmitResult();
   LIVE.preflight = null;
   LIVE.semester = null; LIVE.semesterError = null;
   LIVE.profile = null; LIVE.profileError = null; LIVE.profileLoading = false;
@@ -2830,17 +3105,84 @@ function focusCampusOnMap(){
   map.setView(c, 16);
   return true;
 }
+const POINTS_AUTO_GAP_MS = 5 * 60 * 1000;
+const POINTS_AUTO_CHANGE_M = 200;
+const POINTS_MANUAL_CHANGE_M = 50;
 let _pointsKmTimer = 0;
-function schedulePointsForDistance(){
+function pointsSessionKey(){
+  const s = LIVE.session || {};
+  return String(s.uid || '') + ':' + String(s.unid || '');
+}
+function pointsCooldownLeft(){
+  // The server cooldown is per uid|unid; a 10603 on campus A must not lock
+  // campus B on the same machine.
+  if(LIVE.pointsCooldownKey !== pointsSessionKey()) return 0;
+  return Math.max(0,
+    Math.ceil(((LIVE.pointsCooldownUntil || 0) - Date.now()) / 1000));
+}
+let pointsCooldownTimer = null;
+function stopPointsCooldownTick(){
+  if(pointsCooldownTimer){
+    clearInterval(pointsCooldownTimer);
+    pointsCooldownTimer = null;
+  }
+}
+function syncPointsCooldownUI(){
+  const left = pointsCooldownLeft();
+  const btn = $('#fetchPoints');
+  if(btn && !LIVE.pointsLoading){
+    if(left > 0){
+      btn.disabled = true;
+      btn.textContent = '冷却 ' + left + 's';
+      btn.title = '点位接口限流中，' + left + ' 秒后可重试';
+    }else{
+      btn.disabled = false;
+      btn.textContent = '刷新';
+      btn.title = '';
+    }
+  }
+  if(left > 0){
+    const chip = $('#fenceChip');
+    if(chip) chip.title = '限流冷却：约 ' + left + ' 秒后可重试';
+  }else{
+    stopPointsCooldownTick();
+    if(btn && !LIVE.pointsLoading && btn.title === '') btn.disabled = false;
+    if(typeof updateFenceChip === 'function') updateFenceChip();
+  }
+}
+function startPointsCooldownTick(){
+  if(pointsCooldownTimer) return;
+  pointsCooldownTimer = setInterval(syncPointsCooldownUI, 1000);
+}
+function notePointsCooldown(seconds){
+  const s = +seconds || 0;
+  if(s <= 0) return;
+  LIVE.pointsCooldownKey = pointsSessionKey();
+  LIVE.pointsCooldownUntil = Math.max(LIVE.pointsCooldownUntil || 0,
+                                      Date.now() + s * 1000);
+  startPointsCooldownTick();
+  syncPointsCooldownUI();
+}
+function schedulePointsForDistance(auto){
   clearTimeout(_pointsKmTimer);
   _pointsKmTimer = setTimeout(() => {
     if(!hasSession() || freeRunOn()) return;
+    if(pointsCooldownLeft() > 0) return;
     const km = +($('#inKm') && $('#inKm').value) || 0;
     if(!(km > 0)) return;
     const want = Math.round(km * 1000);
-    if(LIVE.pointsDistance && Math.abs(want - LIVE.pointsDistance) < 1) return;
+    const minChange = auto ? POINTS_AUTO_CHANGE_M : POINTS_MANUAL_CHANGE_M;
+    if(LIVE.pointsDistance && Math.abs(want - LIVE.pointsDistance) < minChange)
+      return;
+    if(auto){
+      // Drawing changes the target every 10 m.  The endpoint allows 3 calls
+      // per 5 minutes and each call returns a *different* random five-point
+      // set, so an automatic re-pull is only worth one call per window.
+      if(Date.now() - (LIVE.pointsAutoAt || 0) < POINTS_AUTO_GAP_MS) return;
+      LIVE.pointsAutoAt = Date.now();
+    }
     loadPoints(false, {quiet: true});
-  }, 900);
+  }, auto ? 3000 : 900);
 }
 async function setCampusFromMap(){
   if(!hasSession()){ toast('先登录再设置校区'); return; }
@@ -2860,9 +3202,19 @@ async function setCampusFromMap(){
 async function loadPoints(force, opts){
   opts = opts || {};
   if(!hasSession()){ if(!opts.quiet) toast('先登录后再刷新点位'); return; }
+  const cooling = pointsCooldownLeft();
+  if(cooling > 0){
+    // `force` only bypasses the 300 s cache; it must not burn another call
+    // while the server is still refusing this account.
+    syncPointsCooldownUI();
+    if(!opts.quiet)
+      toast('点位接口限流中，约 ' + cooling + ' 秒后可重试');
+    return;
+  }
   const seq = ++_pointsSeq;
   const s = LIVE.session;
   const btn = $('#fetchPoints');
+  LIVE.pointsLoading = true;
   if(btn){ btn.textContent = '刷新中…'; btn.disabled = true; }
   // The checkpoint endpoint is distance-scoped.  Use today's target so the
   // points drawn on the map are the ones submit will actually route through;
@@ -2876,7 +3228,8 @@ async function loadPoints(force, opts){
   });
   // A slower older request must not overwrite a newer campus/distance.
   if(seq !== _pointsSeq) return;
-  if(btn){ btn.textContent = '刷新'; btn.disabled = false; }
+  LIVE.pointsLoading = false;
+  syncPointsCooldownUI();
   if(!liveOk(j)){
     const errors = (j.data && Array.isArray(j.data.errors)) ? j.data.errors : [];
     liveLog('围栏/点位加载失败',
@@ -2890,12 +3243,15 @@ async function loadPoints(force, opts){
     const failRings = fenceRingsFromData(failD);
     LIVE.fenceError = failD.fence_error || LIVE.fenceError;
     LIVE.pointsError = failD.points_error || LIVE.pointsError;
+    notePointsCooldown(failD.points_retry_after_s);
     if(failRings.length){
       LIVE.fences = failRings;
       LIVE.fence = failRings[0];
       LIVE.fenceCount = Math.max(failRings.length, +(failD.fence_count || 0));
       LIVE.fenceMissing = !!failD.fence_missing;
-      setFences(failRings, (s.campusName || '') + '跑步围栏', {fit: true});
+      // A failed background refresh must not move the camera away from the
+      // line the operator is drawing.
+      setFences(failRings, (s.campusName || '') + '跑步围栏', {fit: false});
     }
     if(!(LIVE.points.length || LIVE.fence.length)){
       setFences([], '跑步围栏');
@@ -2921,14 +3277,26 @@ async function loadPoints(force, opts){
   LIVE.fences = fenceRingsFromData(d);
   LIVE.fence = LIVE.fences.length ? LIVE.fences[0] : [];
   LIVE.fenceCount = Math.max(LIVE.fences.length, +(d.fence_count || 0));
-  LIVE.points = (Array.isArray(d.checkpoints) ? d.checkpoints : [])
-    .filter(p => p && isFinite(+(p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
+  // A failed checkpoint call still comes back as a successful envelope (the
+  // fence/policy reply is usable).  `checkpoints` is null in that case; only
+  // replace the map when the backend actually returned a list, otherwise a
+  // transient 10603 would wipe the points submit is going to use.
+  const gotPoints = Array.isArray(d.checkpoints);
+  if(gotPoints){
+    LIVE.points = d.checkpoints
+      .filter(p => p && isFinite(+(p.lat ?? p.glat)) && isFinite(+(p.lon ?? p.glon)));
+    LIVE.pointsEmpty = !!d.points_empty || !!d.points_missing;
+    LIVE.pointsMissing = LIVE.pointsEmpty;   // legacy name used by older code
+    LIVE.pointsError = '';
+    LIVE.pointsStale = !!d.points_stale;
+    LIVE.pointsSource = d.points_source || '';
+    LIVE.pointsDistance = +d.points_distance_m || distance_m;
+  }else{
+    LIVE.pointsError = d.points_error || LIVE.pointsError || '点位读取失败';
+  }
   LIVE.fenceMissing = !!d.fence_missing;
-  LIVE.pointsEmpty = !!d.points_empty || !!d.points_missing;
-  LIVE.pointsMissing = LIVE.pointsEmpty;   // legacy name used by older code
   LIVE.fenceError = d.fence_error || '';
-  LIVE.pointsError = d.points_error || '';
-  LIVE.pointsDistance = d.distance_m || distance_m;
+  notePointsCooldown(d.points_retry_after_s);
   // Backend owns the checkpoint radius (25 m); never hard-code it here again.
   const hitR = +d.hit_radius_m;
   LIVE.hitRadiusM = (isFinite(hitR) && hitR > 0) ? hitR : 25;
@@ -2949,8 +3317,15 @@ async function loadPoints(force, opts){
   // Always redraw, even when the server returned an empty list: otherwise the
   // previous campus's fence/points stayed on the map after switching accounts.
   const hasPoints = LIVE.points.length > 0;
-  setFences(LIVE.fences, (s.campusName || '') + '跑步围栏', {fit: !hasPoints});
-  renderPoints(LIVE.points, {fit: hasPoints});
+  // Fit once per campus/session, and never while a route is being drawn or
+  // after a background distance refresh: the old behaviour snapped the camera
+  // back to the fence on every 900 ms refresh.
+  const wantFit = opts.fit === true ||
+    (!route.length && (!LIVE.pointsFitted || force));
+  setFences(LIVE.fences, (s.campusName || '') + '跑步围栏',
+            {fit: wantFit && !hasPoints});
+  renderPoints(LIVE.points, {fit: wantFit && hasPoints});
+  if(wantFit && (hasPoints || LIVE.fences.length)) LIVE.pointsFitted = true;
   updateCampusControls();
   if((Array.isArray(d.errors) && d.errors.length) ||
      (Array.isArray(d.notes) && d.notes.length)){
@@ -2970,8 +3345,13 @@ async function loadPoints(force, opts){
         ? (LIVE.fences.length + ' 个围栏')
         : (LIVE.fence.length + ' 个围栏顶点'))
       : (LIVE.fenceMissing ? '无围栏' : '围栏未加载');
-    const pointText = LIVE.points.length ? (LIVE.points.length + ' 个打卡点')
-      : (LIVE.pointsEmpty ? '无打卡点（需确认）' : '点位未加载');
+    const pointText = LIVE.points.length
+      ? (LIVE.points.length + ' 个打卡点' +
+         (LIVE.pointsStale
+           ? '（缓存 ' + (LIVE.pointsDistance / 1000).toFixed(2) + ' km）'
+           : ''))
+      : (LIVE.pointsEmpty ? '无打卡点（需确认）'
+        : (LIVE.pointsError ? '点位读取失败（沿用上次点位）' : '点位未加载'));
     const areaText = LIVE.runArea
       ? (' · 跑区 ' + (LIVE.runArea.name || LIVE.runArea.id)) : '';
     liveLog('围栏/点位已加载',
@@ -3006,14 +3386,24 @@ function updateFenceChip(){
     + ' · 跳过点位';
   else if(LIVE.fenceMissing && LIVE.pointsEmpty) label = '无围栏 · 无打卡点（需确认）';
   else if(LIVE.fenceMissing) label = '无围栏 · 点位已加载';
+  else if(LIVE.pointsStale) label = fenceLabel + ' · 点位已加载（缓存 ' +
+    (LIVE.pointsDistance / 1000).toFixed(2) + ' km）';
   else label = fenceLabel + ' · 点位已加载';
   if(chip){
     chip.textContent = label;
-    chip.className = 'tag ' + (ok ? '' : 'warn');
+    chip.className = 'tag ' + ((ok && !LIVE.pointsStale) ? '' : 'warn');
+    const bits = [];
     if(LIVE.pointsAt){
-      chip.title = '上次同步：' + new Date(LIVE.pointsAt)
-        .toLocaleTimeString('zh-CN', {hour12:false, hour:'2-digit', minute:'2-digit'});
+      bits.push('上次同步：' + new Date(LIVE.pointsAt)
+        .toLocaleTimeString('zh-CN', {hour12:false, hour:'2-digit', minute:'2-digit'}));
     }
+    if(LIVE.pointsError && LIVE.points.length){
+      bits.push('点位读取失败，沿用上次点位：' + LIVE.pointsError);
+    }
+    if(pointsCooldownLeft() > 0){
+      bits.push('限流冷却：约 ' + pointsCooldownLeft() + ' 秒');
+    }
+    chip.title = bits.join('；');
   }
   if(top){
     top.textContent = fenceOk ? fenceLabel
@@ -3031,6 +3421,27 @@ function updateFenceChip(){
 function runAreaSessionKey(s){
   s = s || LIVE.session || {};
   return String(s.uid || '') + ':' + String(s.unid || '');
+}
+async function loadUiPrefs(){
+  try{
+    const j = await liveApi('real_get_ui_state', {}, 8000);
+    if(liveOk(j) && j.data){
+      const prefs = j.data.run_area_choice;
+      LIVE.runAreaPrefs = (prefs && typeof prefs === 'object') ? prefs : {};
+    }
+  }catch(e){}
+}
+function applySavedRunArea(){
+  // ui_state stores {uid:unid -> areaId}; the backend re-validates the id
+  // against runAreaModels and falls back to the account's default when the
+  // saved area is gone.
+  if(!LIVE.session) return false;
+  const key = runAreaSessionKey(LIVE.session);
+  const saved = (LIVE.runAreaPrefs || {})[key];
+  if(saved == null) return false;
+  LIVE.runAreaChoice = +saved;
+  LIVE.runAreaChoiceKey = key;
+  return true;
 }
 function chosenRunAreaId(s){
   // Only an explicit pick made for the current account is sent: an area id
@@ -3051,18 +3462,36 @@ function renderRunAreas(){
     sel.innerHTML = '';
     return;
   }
-  const cur = chosenRunAreaId() != null ? +chosenRunAreaId()
-    : (LIVE.runArea ? +LIVE.runArea.id : null);
-  sel.innerHTML = areas.map(a => {
-    const id = +a.id;
-    const name = a.name || ('跑区 ' + id);
-    const invalid = a.valid === false;
-    return `<option value="${id}"${invalid ? ' disabled' : ''}` +
-      `${id === cur ? ' selected' : ''}>${esc(name)}` +
-      `${invalid ? '（无效）' : ''}</option>`;
-  }).join('');
+  const chosen = chosenRunAreaId();
+  const cur = chosen != null ? +chosen : null;
+  sel.innerHTML =
+    `<option value=""${cur == null ? ' selected' : ''}>自动（按账号校区）</option>` +
+    areas.map(a => {
+      const id = +a.id;
+      const name = a.name || ('跑区 ' + id);
+      const invalid = a.valid === false;
+      return `<option value="${id}"${invalid ? ' disabled' : ''}` +
+        `${id === cur ? ' selected' : ''}>${esc(name)}` +
+        `${invalid ? '（无效）' : ''}</option>`;
+    }).join('');
   sel.hidden = false;
-  sel.title = '切换跑区：使用该跑区自己的围栏和打卡点';
+  sel.title = '切换跑区：使用该跑区自己的围栏和打卡点；「自动」按账号校区匹配';
+}
+function reloadRunArea(message){
+  // The displayed set belongs to the old area.  A failed refresh must not
+  // leave it eligible for submit (cache fallback is scoped by area id, so
+  // the backend would at least not reuse the old area's cache).
+  LIVE.points = [];
+  LIVE.pointsEmpty = false;
+  LIVE.pointsStale = false;
+  LIVE.pointsError = '';
+  LIVE.pointsDistance = 0;
+  LIVE.pointsFitted = false;
+  LIVE.runArea = null;
+  renderPoints([]);
+  updateFenceChip();
+  liveLog('已切换跑区', message, 'info');
+  loadPoints(true, {quiet: false});
 }
 function updateCampusControls(){
   // Official default is runAreaModels[0].  A manual campus point is only
@@ -4005,9 +4434,9 @@ function renderReceipts(){
 async function reconcileReceipts(){
   if(LIVE.submitting){
     toast('提交进行中，等结果出来后再核对回执');
-    return;
+    return null;
   }
-  if(accountBusy){ toast('账号操作进行中，请稍候'); return; }
+  if(accountBusy){ toast('账号操作进行中，请稍候'); return null; }
   const btn = $('#receiptReconcile');
   if(btn){ btn.disabled = true; btn.textContent = '核对中…'; }
   try{
@@ -4015,16 +4444,43 @@ async function reconcileReceipts(){
     if(!liveOk(j)){
       toast('核对失败：' + (j.message || ''));
       liveLog('回执核对失败', j.message || '', 'warn');
-      return;
+      return null;
     }
     const d = j.data || {};
-    const matched = (d.matched || []).length;
+    const matchedRows = d.matched || [];
+    const matched = matchedRows.length;
     const unmatched = (d.unmatched || []).length;
     toast(`核对完成：${matched} 条已匹配${unmatched ? '，' + unmatched + ' 条仍未决' : ''}`);
     liveLog('回执只读核对', `匹配 ${matched} · 未决 ${unmatched} · 查了 ${d.records || 0} 条记录`,
             matched ? 'ok' : 'warn');
     await loadReceipts();
+    // A completed read-only reconciliation is what unlocks an "unknown"
+    // submit result.  It does not re-submit and does not pretend an
+    // unmatched receipt was rejected: the server may still have accepted it.
+    if(LIVE.submitResult && LIVE.submitResult.state === 'unknown' &&
+       !LIVE.submitResult.checked && LIVE.submitResult.key === submitResultKey()){
+      if(matched){
+        LIVE.submitResult.state = 'ok';
+        LIVE.submitResult.checked = true;
+        LIVE.submitResult.warn = false;
+        LIVE.submitResult.rrid = matchedRows[0].rrid || '';
+        LIVE.submitResult.title = '只读核对完成：已找到服务器记录';
+        LIVE.submitResult.detail = '服务器最近记录中有 ' + matched +
+          ' 条匹配' + (matchedRows[0].rrid ? ('（rrid ' + matchedRows[0].rrid + '）') : '') +
+          '；这次提交已入库，不要重复提交。';
+      }else{
+        LIVE.submitResult.checked = true;
+        LIVE.submitResult.warn = true;
+        LIVE.submitResult.title = '只读核对完成：最近记录没有匹配项';
+        LIVE.submitResult.detail = d.checked
+          ? '没有找到匹配记录。该时段仍可能被服务器受理；后端回执会拦截重复提交。已解除页面锁定，换时段前请先确认。'
+          : '没有待核对的回执。已解除页面锁定；如果刚提交过，请先刷新记录确认。';
+      }
+      renderSubmitResult();
+      refreshChecks();
+    }
     if(matched){ await loadRecords(); if(typeof loadOverview === 'function') loadOverview(); }
+    return d;
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '只读核对未决'; }
   }
@@ -5034,16 +5490,21 @@ function wireDatePicker(){
 }
 
 function scheduleModelPreview(){ clearTimeout(_modelTimer); _modelTimer = setTimeout(refreshModelPreview, 300); scheduleSplitsPreview(); }
+function livePointsPayload(){
+  // The exact set drawn on the map, in the bridge's checkpoint shape.  Submit
+  // must use it: the endpoint returns a different random five-point draw per
+  // request, so a fresh fetch would route through points nobody saw.
+  return livePoints.map(p => ({lat: p.lat, lon: p.lng, name: p.n,
+                               isMustPoint: p.must, isFixed: p.isFixed,
+                               position: p.position, seq: p.seq}));
+}
 function previewArgs(params, ti){
   const di = dailyCountInfo();
   return {
     km: params.km, pace: params.pace,
     cadence: params.cadence, altitude: params.altitude,
     waypoints: route && route.length >= 2 ? route : null,
-    checkpoints: freeRunOn() ? null :
-      livePoints.map(p => ({lat: p.lat, lon: p.lng, name: p.n,
-                            isMustPoint: p.must, isFixed: p.isFixed,
-                            position: p.position, seq: p.seq})),
+    checkpoints: freeRunOn() ? null : livePointsPayload(),
     sequential: !!LIVE.sequential,
     date: ti.date,
     start_time: ti.time,
@@ -5272,20 +5733,90 @@ async function runPreflight(){
   }
 }
 
+function submitResultKey(){
+  return pointsSessionKey();
+}
+function submitLocked(){
+  const r = LIVE.submitResult;
+  return !!(r && r.state === 'unknown' && !r.checked &&
+            r.key === submitResultKey());
+}
+function renderSubmitResult(){
+  const box = $('#submitResult');
+  if(!box) return;
+  const r = LIVE.submitResult;
+  if(!r || r.key !== submitResultKey()){
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.className = 'submit-result ' + (r.state || 'unknown') +
+    (r.warn ? ' warn' : '');
+  const badge = $('#submitResultBadge');
+  const title = $('#submitResultTitle');
+  const text = $('#submitResultText');
+  const time = $('#submitResultTime');
+  const rec = $('#submitResultRecords');
+  const dismiss = $('#submitResultDismiss');
+  const labels = {ok: '已提交', fail: '未提交', unknown: '结果未知'};
+  if(badge) badge.textContent = (r.state === 'unknown' && r.checked)
+    ? '已核对' : (labels[r.state] || '—');
+  if(title) title.textContent = r.title || '';
+  if(text) text.textContent = r.detail || '';
+  if(time) time.textContent = r.at
+    ? new Date(r.at).toLocaleTimeString('zh-CN',
+        {hour12: false, hour: '2-digit', minute: '2-digit'})
+    : '';
+  if(rec){
+    rec.hidden = false;
+    rec.textContent = (r.state === 'unknown' && !r.checked)
+      ? '去记录页只读核对' : '查看提交记录';
+  }
+  if(dismiss){
+    // While the result is unknown and unreconciled this card is the only
+    // durable warning; do not let it be dismissed before the read-only check.
+    dismiss.hidden = !(r.state !== 'unknown' || r.checked);
+  }
+}
+function setSubmitResult(state, title, detail, extra){
+  LIVE.submitResult = Object.assign({
+    state: state,
+    title: title || '',
+    detail: detail || '',
+    at: Date.now(),
+    key: submitResultKey(),
+    checked: state !== 'unknown',
+    warn: false,
+    rrid: ''
+  }, extra || {});
+  renderSubmitResult();
+  refreshChecks();
+}
+function clearSubmitResult(){
+  if(!LIVE.submitResult) return;
+  LIVE.submitResult = null;
+  renderSubmitResult();
+  refreshChecks();
+}
+
 function refreshChecks(){
   const checks = [];
   const verified = !!(LIVE.checked && liveOk(LIVE.checked));
-  checks.push({ok: verified, label: 'token 有效', note: verified ? '服务端已验证' : (hasSession() ? '未验证/失效' : '未登录')});
+  checks.push({ok: verified, label: 'token 有效',
+    note: verified ? '服务端已验证' : (hasSession() ? '未验证/失效' : '未登录'),
+    goto: 'accounts'});
   // Network egress is part of the pre-submit checklist: the run detail page
   // shows the IP's city, so a campus in Jiangmen on a Guangzhou egress is an
   // avoidable exposure.  The check is advisory; submission is never blocked.
   const pf = LIVE.preflight;
   if(!pf){
     checks.push({ok: false, warn: true, label: '网络出口',
-      note: '未自检；点「开始自检」确认与校区同城（仅提醒）'});
+      note: '未自检；点「开始自检」确认与校区同城（仅提醒）',
+      goto: 'run', rtab: 'submit', action: 'preflight'});
   }else if(pf.error){
     checks.push({ok: false, warn: true, label: '网络出口',
-      note: pf.error + '（仅提醒）'});
+      note: pf.error + '（仅提醒）',
+      goto: 'run', rtab: 'submit', action: 'preflight'});
   }else{
     checks.push({
       ok: !!pf.ok,
@@ -5293,7 +5824,8 @@ function refreshChecks(){
       label: '网络出口',
       note: pf.ok
         ? ('同城 · ' + (pf.city || pf.want || '已确认'))
-        : ('不一致 · ' + (pf.city || '未知') + ' / ' + (pf.want || '校区未知'))
+        : ('不一致 · ' + (pf.city || '未知') + ' / ' + (pf.want || '校区未知')),
+      goto: 'run', rtab: 'submit', action: 'preflight'
     });
   }
   const free = freeRunOn();
@@ -5304,14 +5836,16 @@ function refreshChecks(){
     note: free ? '不拉取打卡点；官方自由跑（serviceType=3）尚未支持'
       : (livePoints.length ? (livePoints.length + ' 个 · ' + livePoints.filter(p => p.must).length + ' 必经')
         : (noPoints ? '服务器未返回打卡点，提交默认阻止'
-          : (LIVE.pointsError ? ('读取失败：' + LIVE.pointsError) : '未加载')))});
+          : (LIVE.pointsError ? ('读取失败：' + LIVE.pointsError) : '未加载'))),
+    goto: 'run', rtab: 'route'});
   const cov = computeCoverage();
   checks.push({ok: free || (cov.total > 0 && cov.missed === 0),
     warn: free || noPoints,
     label: '经过全部打卡点',
     note: free ? '已勾选跳过打卡点'
       : (noPoints ? '无法确认该校区允许自由跑'
-        : (cov.total ? (cov.passed + '/' + cov.total + ' 在 ' + hitRadiusM() + 'm 内') : '未加载点位'))});
+        : (cov.total ? (cov.passed + '/' + cov.total + ' 在 ' + hitRadiusM() + 'm 内') : '未加载点位')),
+    goto: 'run', rtab: 'route'});
   let fenceBad = {points: 0, segments: 0};
   const fenceReady = LIVE.fences.length > 0 && route && route.length >= 2;
   if(fenceReady){
@@ -5326,9 +5860,12 @@ function refreshChecks(){
             : (fenceBad.points || fenceBad.segments
               ? ('越界 ' + fenceBad.points + ' 点 / ' + fenceBad.segments + ' 段')
               : ('整段检查通过' + (LIVE.fences.length > 1
-                ? '（' + LIVE.fences.length + ' 个围栏任一）' : ''))))))});
+                ? '（' + LIVE.fences.length + ' 个围栏任一）' : '')))))),
+    goto: 'run', rtab: 'route'});
   const configured = !!(LIVE.rules && LIVE.rules.configured);
-  checks.push({ok: configured, label: '学校要求已配置', note: configured ? '模型已启用' : '设置 → 学校要求'});
+  checks.push({ok: configured, label: '学校要求已配置',
+    note: configured ? '模型已启用' : '设置 → 学校要求',
+    goto: 'settings'});
 
   // Freeze / face / distance belong in the same checklist as the points:
   // they used to exist only as log lines, so the dock could read "可以提交"
@@ -5356,14 +5893,18 @@ function refreshChecks(){
     checks.push({ok: distOk, label: '距离达标',
       note: plannedKm.toFixed(2) + ' km / 要求 ' +
         (minKm ? ('≥ ' + minKm) : '') + (minKm && maxKm ? '、' : '') +
-        (maxKm ? ('≤ ' + maxKm) : '') + ' km'});
+        (maxKm ? ('≤ ' + maxKm) : '') + ' km',
+      goto: 'run', rtab: 'params', focus: 'inKm'});
   }else{
-    checks.push({ok: true, label: '距离要求', note: '学校未配置距离要求'});
+    checks.push({ok: true, label: '距离要求', note: '学校未配置距离要求',
+      goto: 'run', rtab: 'params', focus: 'inKm'});
   }
 
   const ti = selectedTimeInfo();
-  checks.push({ok: ti.dateOk, label: '提交日期', note: ti.dateNote});
-  checks.push({ok: ti.timeOk, label: '开始时间', note: ti.timeNote || ti.note});
+  checks.push({ok: ti.dateOk, label: '提交日期', note: ti.dateNote,
+    goto: 'run', rtab: 'params', focus: 'dateBtn'});
+  checks.push({ok: ti.timeOk, label: '开始时间', note: ti.timeNote || ti.note,
+    goto: 'run', rtab: 'params', focus: 'inStart'});
 
   const di = dailyCountInfo();
   let dWarn = false, dNote = '';
@@ -5380,10 +5921,23 @@ function refreshChecks(){
       (di.ok ? '' : '（已达上限，仅提醒）') +
       (di.source === 'local' ? '（本地回执）' : '');
   }
-  checks.push({ok: true, warn: dWarn, label: '当日次数', note: dNote});
+  checks.push({ok: true, warn: dWarn, label: '当日次数', note: dNote,
+    goto: 'records'});
 
   const wrap = $('#checks');
-  if(wrap) wrap.innerHTML = checks.map(c => `<div class="check-row ${c.ok ? 'checked' : 'warn'}${c.warn ? ' note-warn' : ''}"><span class="cbox"></span><span class="clabel">${esc(c.label)}</span><span class="cnote">${esc(c.note)}</span></div>`).join('');
+  if(wrap){
+    wrap.innerHTML = checks.map(c => {
+      const attrs = [];
+      if(c.goto) attrs.push(`data-goto="${esc(c.goto)}"`);
+      if(c.rtab) attrs.push(`data-rtab="${esc(c.rtab)}"`);
+      if(c.focus) attrs.push(`data-focus="${esc(c.focus)}"`);
+      if(c.action) attrs.push(`data-check-action="${esc(c.action)}"`);
+      if(c.goto) attrs.push('role="button" tabindex="0"');
+      return `<div class="check-row ${c.ok ? 'checked' : 'warn'}${c.warn ? ' note-warn' : ''}" ${attrs.join(' ')}>` +
+        `<span class="cbox"></span><span class="clabel">${esc(c.label)}</span>` +
+        `<span class="cnote">${esc(c.note)}</span></div>`;
+    }).join('');
+  }
   const done = checks.filter(c => c.ok).length;
   const all = done === checks.length;
   if($('#checkSummary')) $('#checkSummary').textContent = done + '/' + checks.length + ' 已核对';
@@ -5401,8 +5955,21 @@ function refreshChecks(){
   }
   if(stamp){ stamp.textContent = all ? '已核对' : '未核对'; stamp.classList.toggle('show', all); }
   const dot = $('#submitDot'); if(dot) dot.classList.toggle('ok', all);
-  if($('#submitRun')) $('#submitRun').disabled = !hasSession() || !verified || LIVE.submitting;
-  if($('#submitHint')) $('#submitHint').textContent = all ? '检查通过。提交后该时段会被回执锁定，不能重复提交。' : '先补齐上面的检查项；提交仍会由后端再次校验。';
+  const locked = submitLocked();
+  if($('#submitRun')){
+    $('#submitRun').disabled = !hasSession() || !verified ||
+      LIVE.submitting || locked;
+    if(!LIVE.submitting){
+      $('#submitRun').textContent = locked
+        ? '先核对回执再提交' : '提交这次跑步';
+    }
+  }
+  if($('#submitHint')){
+    $('#submitHint').textContent = locked
+      ? '上次提交结果未知：先到「记录」页点「只读核对未决」，核对完成后才能再次提交。'
+      : (all ? '检查通过。提交后该时段会被回执锁定，不能重复提交。'
+             : '先补齐上面的检查项；提交仍会由后端再次校验。');
+  }
   refreshOverviewState();
 }
 
@@ -5437,6 +6004,11 @@ function previewPendingFrom(params, ti, allReady){
 async function submitRun(){
   if(LIVE.submitting) return;
   if(PENDING_SUBMIT) return;
+  if(submitLocked()){
+    toast('上次提交结果未知；先到「记录」页完成只读核对');
+    go('records');
+    return;
+  }
   if(accountBusy){ toast('账号操作进行中，请稍候'); return; }
   if(!hasSession()){ toast('先登录'); switchRunTab('submit'); return; }
   if(!LIVE.checked || !liveOk(LIVE.checked)){
@@ -5655,21 +6227,50 @@ async function doSubmitRun(pending){
       km_times: splitRows ? splitRows.map(r => r.seconds) : null,
       seed: pending.seed || null,
       run_area_id: chosenRunAreaId(),
+      // Submit the set the operator saw, not a fresh random draw for the
+      // current line length.
+      points_distance_m: LIVE.pointsDistance || null,
+      points: (!freeRunOn() && livePoints.length) ? livePointsPayload() : null,
       ...altitudeArgs(params)
     }, 180000);
   }finally{
     LIVE.submitting = false;
-    if(btn){ btn.disabled = false; btn.textContent = '提交这次跑步'; }
+    if(btn){
+      btn.disabled = submitLocked();
+      btn.textContent = submitLocked()
+        ? '先核对回执再提交' : '提交这次跑步';
+    }
   }
   if(!liveOk(j)){
     const d = j.data || {};
     if(d.model){ _modelSeq++; LIVE.model = d.model; renderModel(); }
-    const timeout = /超时/.test(String(j.message || ''));
-    liveLog(timeout ? '提交结果未知' : '提交失败', j.message || '', timeout ? 'warn' : 'err');
-    toast((timeout ? '提交结果未知（后台可能仍在执行，请勿重复提交）：'
-                    : '提交失败：') + (j.message || ''));
+    const msg = String(j.message || '');
+    const unknown = /超时|未知|已锁定|可能仍在执行|bridge 不可用|bridge 返回非 JSON/.test(msg);
+    if(unknown){
+      setSubmitResult('unknown', '提交结果未知',
+        (msg || '没有拿到服务器结果。') +
+        ' 后台可能已经受理；已禁用重复提交。请到「记录」页点「只读核对未决」，确认结果后再操作。',
+        {warn: true});
+      // A write-ahead receipt is the durable proof of an in-flight submit;
+      // surface its count on the card without asking the operator to hunt.
+      await loadReceipts();
+      const pending = (LIVE.receipts || [])
+        .filter(r => r.state === 'pending' || r.state === 'unknown');
+      if(pending.length && LIVE.submitResult){
+        LIVE.submitResult.detail += ' 已记录 ' + pending.length + ' 条未决回执。';
+        renderSubmitResult();
+      }
+    }else{
+      setSubmitResult('fail', '提交失败', msg || '服务器拒绝了这次提交。');
+      loadReceipts();
+    }
+    liveLog(unknown ? '提交结果未知' : '提交失败', msg, unknown ? 'warn' : 'err');
+    toast((unknown ? '提交结果未知（后台可能仍在执行，请勿重复提交）：'
+                   : '提交失败：') + msg);
+    // Stay on the submit tab: the persistent card explains the lock.  The
+    // old code jumped to the log and the toast vanished after 2.6 s.
+    switchRunTab('submit');
     refreshChecks();
-    loadReceipts();
     return;
   }
   const d = j.data || {};
@@ -5703,6 +6304,12 @@ async function doSubmitRun(pending){
     liveLog('提交成功', summary, 'ok');
     toast('提交成功：rrid ' + (d.rrid || ''));
   }
+  setSubmitResult(
+    'ok',
+    (warnings.length ? '提交已受理（有提醒）' : '提交成功') +
+      (d.rrid ? (' · rrid ' + d.rrid) : ''),
+    summary + (warnings.length ? (' · ' + warnings.join('；')) : ''),
+    {warn: warnings.length > 0, rrid: d.rrid || ''});
   refreshChecks();
   switchRunTab('log');
   openPostSubmit(d, pending, warnings);
@@ -5720,6 +6327,9 @@ function routeLineKey(line){
 }
 function clearCurrentRouteAfterSubmit(message){
   route = [];
+  // Do not let undo resurrect the route that was just submitted: reusing it
+  // with a different time window is a deliberate act, not an undo slip.
+  resetRouteHistory();
   redraw();
   if($('#ptCount')) $('#ptCount').textContent = '0 个控制点';
   toast(message || '已清空路线，可以画下一条');
@@ -6438,12 +7048,28 @@ function liveWire(){
   $('#fetchPoints').addEventListener('click', () => loadPoints(true));
   if($('#setCampusBtn')) $('#setCampusBtn').addEventListener('click', setCampusFromMap);
   if($('#runAreaSel')) $('#runAreaSel').addEventListener('change', e => {
-    const id = +e.target.value;
+    const raw = e.target.value;
+    if(raw === ''){
+      // Back to the server's automatic match by the account's campus name.
+      // Persist the removal so the next login does not restore the manual id.
+      LIVE.runAreaChoice = null;
+      LIVE.runAreaChoiceKey = '';
+      const key = runAreaSessionKey();
+      liveApi('real_set_ui_state', {
+        run_area_choice: {[key]: null}
+      }, 5000).catch(() => {});
+      renderRunAreas();
+      reloadRunArea('已恢复自动匹配：按当前账号校区选择围栏和打卡点');
+      return;
+    }
+    const id = +raw;
     if(!isFinite(id)) return;
     LIVE.runAreaChoice = id;
     LIVE.runAreaChoiceKey = runAreaSessionKey();
-    liveLog('已切换跑区', '正在重新读取该跑区的围栏和打卡点', 'info');
-    loadPoints(true, {quiet: false});
+    liveApi('real_set_ui_state', {
+      run_area_choice: {[LIVE.runAreaChoiceKey]: id}
+    }, 5000).catch(() => {});
+    reloadRunArea('正在重新读取该跑区的围栏和打卡点');
   });
   $('#freeRun').addEventListener('change', () => {
     if(freeRunOn()) liveLog('已勾选跳过打卡点',
@@ -6463,6 +7089,18 @@ function liveWire(){
     finally{ btn.disabled = false; btn.textContent = old; }
   });
   $('#receiptReconcile').addEventListener('click', reconcileReceipts);
+  if($('#submitResultRecords')){
+    $('#submitResultRecords').addEventListener('click', async () => {
+      go('records');
+      if(LIVE.submitResult && LIVE.submitResult.state === 'unknown' &&
+         !LIVE.submitResult.checked){
+        await reconcileReceipts();
+      }
+    });
+  }
+  if($('#submitResultDismiss')){
+    $('#submitResultDismiss').addEventListener('click', clearSubmitResult);
+  }
   $('#routeImport').addEventListener('click', importRouteToLibrary);
   $('#routeExport').addEventListener('click', () => exportRouteGpx(LIVE.routes[LIVE.selectedRoute]));
   $('#routeExportOne').addEventListener('click', () => exportRouteGpx(LIVE.routes[LIVE.selectedRoute]));
@@ -6567,7 +7205,12 @@ function liveWire(){
       const j = await liveApi('real_snap_route', {points: route, key: null, max_legs: 24});
       if(!liveOk(j)){ toast(j.message || '吸附失败'); liveLog('吸附失败', j.message || '', 'warn'); return; }
       const d = j.data || {};
-      if(d.route && d.route.length){ route = d.route.map(p => [p[0], p[1]]); redraw(); }
+      if(d.route && d.route.length){
+        pushRouteHistory('道路吸附');
+        selRoutePoint = -1;
+        route = d.route.map(p => [p[0], p[1]]);
+        redraw();
+      }
       const failed = (d.failed || []).length;
       liveLog('道路吸附完成', `${d.legs_ok || 0}/${d.legs_total || 0} 段` +
         (failed ? ` · ${failed} 段失败` : ''), failed ? 'warn' : 'ok');
@@ -6693,8 +7336,11 @@ function liveWire(){
   $('#routeUse').addEventListener('click', () => {
     const r = LIVE.routes[LIVE.selectedRoute];
     if(!r) return;
-    route = validRouteLine(r.line);
-    if(route.length < 2){ toast('这条路线没有有效坐标'); return; }
+    const line = validRouteLine(r.line);
+    if(line.length < 2){ toast('这条路线没有有效坐标'); return; }
+    pushRouteHistory('载入路线库：' + (r.name || '未命名'));
+    selRoutePoint = -1;
+    route = line;
     setCloseUI(!!r.closed);
     redraw();
     go('run');

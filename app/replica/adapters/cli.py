@@ -59,7 +59,8 @@ def _keepalive_cli(args):
     liveness; a fresh password login is the only reliable renewal.  The
     password is held in memory and is never written to the session file.
     """
-    from ..application.tokenkeeper import TokenKeeper, _read_json, _write_json, probe_real_session, relogin_real, ensure_state
+    from ..application.tokenkeeper import TokenKeeper, probe_real_session, relogin_real, ensure_state
+    from ..application import session_store
     from ..build_info import app_root
 
     path = os.path.join(app_root(), 'data', 'accounts_emu.json')
@@ -67,7 +68,7 @@ def _keepalive_cli(args):
     if args.token:
         if not args.uid:
             return _fail('--token 需要配合 --uid', 1)
-        session = _read_json(path)
+        session = session_store.read(path)
         session['uid'] = str(args.uid)
         session['token'] = args.token
         session.pop('disabled', None)
@@ -77,10 +78,10 @@ def _keepalive_cli(args):
         state['token_updated_at'] = int(time.time())
         state['token_expired'] = False
         state['last_error'] = ''
-        _write_json(path, session)
-        log('已写入本机会话 token（不打印）')
+        session_store.write(path, session)
+        log('已写入本机会话 token（DPAPI 封存，不打印）')
 
-    session = _read_json(path)
+    session = session_store.read(path)
     if session.get('disabled'):
         return _fail('该账号已禁用；请换账号，或显式写入新 token 后再试', 1)
     if not session.get('token'):

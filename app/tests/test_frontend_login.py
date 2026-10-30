@@ -80,11 +80,39 @@ def _js_function(name):
 
 def test_every_distance_change_reloads_distance_scoped_points():
     # Drawing/importing a route, the random preset and the plan "fill" button
-    # all change #inKm.  Leaving the old distance's points on the map made the
-    # preview disagree with what submit would actually route through.
-    assert 'schedulePointsForDistance()' in _js_function(
+    # all change #inKm.  Drawing is the automatic path: it is debounced and
+    # budgeted (the endpoint allows 3 calls / 5 min and each reply is a
+    # different random five-point draw).
+    assert 'schedulePointsForDistance(true)' in _js_function(
         'autoFillDistanceFromRoute')
     assert 'schedulePointsForDistance()' in _js_function('applyPlanSlot')
+
+
+def test_points_failure_keeps_the_last_set_and_reports_provenance():
+    load = _js_function('loadPoints')
+    # A points failure arrives as a successful envelope with checkpoints=null;
+    # it must not be turned into an empty list (that wiped the map and the
+    # checklist on every 10603).
+    assert 'Array.isArray(d.checkpoints)' in load
+    assert 'points_distance_m' in load
+    assert 'points_stale' in load
+    assert 'points_retry_after_s' in load
+    # Auto refresh is budgeted and honours the persisted cooldown.
+    sched = _js_function('schedulePointsForDistance')
+    assert 'POINTS_AUTO_GAP_MS' in sched
+    assert 'pointsCooldownLeft()' in sched
+    # Submit sends the distance of the set the operator saw.
+    assert 'points_distance_m: LIVE.pointsDistance' in SOURCE
+    assert 'function livePointsPayload' in SOURCE
+    assert 'points: (!freeRunOn() && livePoints.length) ? livePointsPayload() : null' in SOURCE
+
+
+def test_background_refresh_never_refits_the_map():
+    # Only an explicit fit may move the camera; otherwise every 900 ms refresh
+    # snapped the view back to the fence while the line was being drawn.
+    assert 'opts.fit === true' in _js_function('setFences')
+    assert 'opts.fit === true' in _js_function('renderPoints')
+    assert 'const wantFit' in _js_function('loadPoints')
 
 
 def test_multi_fence_ui_uses_all_rings_and_marks_invalid_areas():
@@ -382,3 +410,50 @@ def test_toasts_wait_for_the_boot_splash():
 
 def test_version_footer_drops_the_commit_hash():
     assert "const short = 'v' + (d.version || '?');" in JS
+
+
+def test_submit_result_is_a_persistent_card_not_a_toast():
+    assert 'id="submitResult"' in HTML
+    assert 'id="submitResultRecords"' in HTML
+    assert 'function submitLocked' in JS
+    assert '先核对回执再提交' in JS
+    # An unknown result must lock submit until the read-only receipt check.
+    assert "setSubmitResult('unknown'" in JS
+    assert "await reconcileReceipts()" in JS
+    assert 'state === \'unknown\' &&\n       !LIVE.submitResult.checked' in JS
+
+
+def test_submit_checklist_rows_only_look_clickable_when_they_go_somewhere():
+    checks = _js_function('refreshChecks')
+    for target in ("goto: 'accounts'", "goto: 'settings'",
+                   "goto: 'records'", "rtab: 'route'"):
+        assert target in checks, target
+    assert 'function followDataGoto' in JS
+    assert '.check-row[data-goto]{cursor:pointer}' in CSS
+    # Rows without a destination stay a plain label, not a fake button.
+    assert 'cursor:default' in CSS
+
+
+def test_route_undo_keeps_full_snapshots_and_supports_redo():
+    assert 'const ROUTE_HISTORY_LIMIT = 50' in JS
+    for name in ('routeSnapshot', 'pushRouteSnapshot', 'undoRoute',
+                 'redoRoute', 'deleteRoutePoint', 'beginRoutePointDrag'):
+        assert 'function ' + name in JS, name
+    assert "ev.key === 'Delete'" in JS
+    assert "String(ev.key || '').toLowerCase() === 'z'" in JS
+    # Every point carries its order, not only the start.
+    assert "'起点 · 第 1 点'" in JS
+    assert "('第 ' + (i + 1) + ' 点')" in JS
+
+
+def test_points_cooldown_button_ticks_and_disables_while_cooling():
+    assert 'setInterval(syncPointsCooldownUI, 1000)' in JS
+    assert "btn.textContent = '冷却 ' + left + 's'" in JS
+    assert "btn.disabled = true" in _js_function('syncPointsCooldownUI')
+
+
+def test_run_area_dropdown_can_return_to_automatic_matching():
+    render = _js_function('renderRunAreas')
+    assert '自动（按账号校区）' in render
+    assert 'value=""' in render
+    assert 'run_area_choice: {[key]: null}' in JS

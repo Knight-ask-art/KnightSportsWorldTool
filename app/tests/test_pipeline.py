@@ -144,6 +144,10 @@ def _ensure_data_dir():
         tmp = tempfile.mkdtemp(prefix='jhp_pipe_')
         os.environ['JHP_DATA_DIR'] = tmp
     os.environ.setdefault('JHP_POINTS_CACHE', os.path.join(tmp, 'points.json'))
+    # A persisted 10603 cooldown from another test module would make every
+    # dry-run refuse points; keep it inside this runner's own data dir.
+    os.environ.setdefault('JHP_POINTS_RATELIMIT',
+                          os.path.join(tmp, 'points_ratelimit.json'))
     return tmp
 
 
@@ -456,6 +460,8 @@ def main():
     tmp = tempfile.mkdtemp(prefix='jhp_pipe_')
     os.environ['JHP_DATA_DIR'] = tmp
     os.environ['JHP_POINTS_CACHE'] = os.path.join(tmp, 'points.json')
+    os.environ['JHP_POINTS_RATELIMIT'] = os.path.join(
+        tmp, 'points_ratelimit.json')
     real_upload = obs.upload_obs
     obs.upload_obs = lambda *a, **k: {'uploaded': 2, 'verified': 2, 'of': 2,
                                       'keys': [], 'bytes': 1, 'errors': []}
@@ -480,6 +486,7 @@ def main():
         obs.upload_obs = real_upload
         os.environ.pop('JHP_DATA_DIR', None)
         os.environ.pop('JHP_POINTS_CACHE', None)
+        os.environ.pop('JHP_POINTS_RATELIMIT', None)
 
     total = len(PASSED) + len(FAILED)
     print('\n' + '=' * 56)
@@ -501,6 +508,12 @@ def _reset_store(tmp):
     if cache and os.path.exists(cache):
         try:
             os.remove(cache)
+        except OSError:
+            pass
+    ratelimit = os.environ.get('JHP_POINTS_RATELIMIT')
+    if ratelimit and os.path.exists(ratelimit):
+        try:
+            os.remove(ratelimit)
         except OSError:
             pass
 

@@ -19,7 +19,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !ifndef VERSION
-  !define VERSION "0.1.6"
+  !define VERSION "0.1.7"
 !endif
 !ifndef SRCDIR
   !define SRCDIR "..\build_stage\好想跑"
