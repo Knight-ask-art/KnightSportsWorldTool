@@ -58,7 +58,7 @@ def test_open_route_longer_than_target_is_rejected():
         generate_run_data(0.1, 6.0, 172, waypoints=wps, closed=False)
 
 
-def _fake_obs(monkeypatch, corrupt=False, platform=None):
+def _fake_obs(monkeypatch, corrupt=False, platform=None, key_mode='single'):
     run = generate_run_data(2.5, 6.0, 172, center_lat=22.4108,
                             center_lng=112.9408, rng=random.Random(1))
     attrs = {'uid': '42'}
@@ -86,7 +86,8 @@ def _fake_obs(monkeypatch, corrupt=False, platform=None):
     monkeypatch.setattr(obs, 'put_object', put)
     monkeypatch.setattr(obs, 'get_object_bytes', get)
     monkeypatch.setattr(obs.time, 'sleep', lambda *_: None)
-    return obs.upload_obs(object(), acct, run, 123, 'UUID', verify=True), seen
+    return obs.upload_obs(object(), acct, run, 123, 'UUID', verify=True,
+                          key_mode=key_mode), seen
 
 
 def test_obs_upload_verifies_sha256(monkeypatch):
@@ -107,6 +108,11 @@ def test_obs_follows_an_ios_profile(monkeypatch):
     _, seen = _fake_obs(monkeypatch, platform='ios')
     assert seen['put_ua'].startswith('SWCampus/7.3.40 (iPhone; iOS 18.1;')
     assert seen['get_ua'] == seen['put_ua']
+
+
+def test_obs_legacy_key_mode_writes_two_keys(monkeypatch):
+    res, _ = _fake_obs(monkeypatch, key_mode='legacy')
+    assert res['uploaded'] == 2 and res['verified'] == 2
 
 
 def test_obs_same_length_corruption_is_rejected(monkeypatch):

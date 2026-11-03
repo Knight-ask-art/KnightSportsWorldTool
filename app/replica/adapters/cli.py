@@ -355,6 +355,17 @@ def do_points(client, acct, args, must_points=None, sequential=False,
     return cps, pts
 
 
+def _parse_pauses(values):
+    out = []
+    for raw in values or []:
+        try:
+            at, sec = str(raw).split(':', 1)
+            out.append({'after_s': float(at), 'seconds': float(sec)})
+        except (TypeError, ValueError):
+            raise ValueError('--pause 需要 AFTER:SECONDS，例如 300:45')
+    return out
+
+
 def _altitude_kwargs(args):
     """Resolve the elevation flags into generator kwargs.
 
@@ -408,6 +419,10 @@ def do_forge(acct, cps, wps, args, start_ms=None, sequential=False,
             run_area_id=run_area_id,
             geo_fences=(fence or {}).get('fences') or None,
             sequential=sequential,
+            pause_profile=getattr(args, 'pause_profile', 'none') or 'none',
+            pauses=_parse_pauses(getattr(args, 'pause', None)),
+            gps_profile=getattr(args, 'gps_profile', 'urban') or 'urban',
+            terrain_coupling=bool(getattr(args, 'terrain_coupling', False)),
             **alt)
     except ValueError as e:
         raise SystemExit(_fail('造数参数无效: %s' % e, 1))
@@ -577,9 +592,13 @@ def do_submit(client, acct, run, ent, store, policy_ts=None):
     # OBS trail: this is what the replay reads
     try:
         from ..transport import obs as OBS
+        from ..application import device_profile as DP
+        from ..application import preferences as PREF
         time.sleep(1.0)                      # reference: flow.rs sleeps 1 s here
         fpj = json.dumps(run['fixed_point_json'], separators=(',', ':'))
-        o = OBS.upload_obs(client, acct, run, res['rrid'], res['uuid'], fpj, log=log)
+        o = OBS.upload_obs(
+            client, acct, run, res['rrid'], res['uuid'], fpj, log=log,
+            key_mode=PREF.get(DP.default_store_dir(), 'obs_key_mode', 'single'))
         log('      OBS %d/%d 个对象，回读校验 %d 个，%d 字节'
             % (o['uploaded'], o['of'], o['verified'], o['bytes']))
         if o['uploaded'] < o['of'] or o['verified'] < o['of']:
@@ -653,6 +672,17 @@ def main(argv=None, client_factory=None):
                        help='海拔区间（米）；给定时默认 range 模式')
     run_g.add_argument('--altitude-template', default=None, metavar='PATH',
                        help='本地 GPX/JSON 海拔模板；只在本机解析，不上传')
+    run_g.add_argument('--pause-profile', choices=('none', 'auto', 'manual'),
+                       default='none',
+                       help='暂停建模：none=旧行为，auto=自动插入，manual=用 --pause')
+    run_g.add_argument('--pause', action='append', default=None,
+                       metavar='AFTER:SECONDS',
+                       help='手动暂停，如 300:45；可重复，仅 --pause-profile manual')
+    run_g.add_argument('--gps-profile', choices=('urban', 'clean', 'tunnel'),
+                       default='urban',
+                       help='GPS 质量档案：urban=默认漂移，clean=固定，tunnel=短时低质量')
+    run_g.add_argument('--terrain-coupling', action='store_true',
+                       help='有海拔模板时按坡度调整每公里配速')
     run_g.add_argument('--days-ago', type=int, default=None, metavar='N',
                        help='补跑日期：0=今天，1=昨天，最多 3 天前（北京时间）；'
                             '不填且不给 --time 时保持“以当前时间倒推”的旧行为')
@@ -689,6 +719,8 @@ def main(argv=None, client_factory=None):
     ap.add_argument('--proxy', default=None,
                     help='出网代理（http://host:port）——让出口 IP 和校区同城')
     ap.add_argument('--dry-run', action='store_true', help='只造数不提交')
+    ap.add_argument('--audit', action='store_true',
+                    help='造数后只跑 7.4.0 形状审计并退出（不提交）')
     ap.add_argument('--no-preflight', action='store_true', help='跳过风控预检')
     ap.add_argument('--random', action='store_true',
                     help='随机档位（距离/配速/步频按上游实现的区间抽样）')
@@ -894,8 +926,15 @@ def main(argv=None, client_factory=None):
             return _fail('学校没有配置跑步围栏，CLI 无法确定校区中心；'
                          '请改用图形界面设置校区', 1)
         if len(polygons) > 1:
-            return _fail('检测到多个跑步围栏，CLI 无法确定校区中心；'
-                         '请先在图形界面选择跑区或设置校区', 1)
+            try:
+                fence = P.match_fence(
+                    fence.get('fences') or
+                    [{'polygon': p} for p in polygons],
+                    anchor=(wps[0] if wps else None), route=wps)
+                log('   多个围栏：按路线首点选中 id=%s（%s）'
+                    % (fence.get('id'), fence.get('source')))
+            except P.FenceAmbiguous as e:
+                return _fail('%s；请先在图形界面选择跑区或设置校区' % e, 1)
         center = fence['center']
         if not center:
             return _fail('围栏中心无效，已停止', 1)
@@ -969,7 +1008,16 @@ def main(argv=None, client_factory=None):
     resolved_start = None
     if backfill:
         days_ago = 0 if args.days_ago is None else int(args.days_ago)
+        try:
+            pauses_for_estimate = _parse_pauses(
+                getattr(args, 'pause', None))
+        except ValueError as e:
+            return _fail(str(e), 1)
+        from ..domain.rundata import estimate_pause_seconds
         duration_s = args.km * args.pace * 60.0
+        duration_s += estimate_pause_seconds(
+            getattr(args, 'pause_profile', 'none'), pauses_for_estimate,
+            int(duration_s))
         try:
             resolved_start = safety.resolve_start_ms(
                 days_ago, args.time, duration_s)
@@ -1024,6 +1072,16 @@ def main(argv=None, client_factory=None):
     run = do_forge(acct, cps, wps, args, start_ms=resolved_start,
                    sequential=sequential, fence=fence,
                    run_area_id=(area or {}).get('id'))
+
+    if args.audit:
+        from ..application import audit as A
+        from ..application import device_profile as DP
+        from ..application import preferences as PREF
+        report = A.audit_generated(
+            run, key_mode=PREF.get(DP.default_store_dir(), 'obs_key_mode',
+                                   'single'))
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report['summary']['ok'] else 2
 
     # ---- user-defined school rules -> qualification model --------------
     from ..application import qualification as Q

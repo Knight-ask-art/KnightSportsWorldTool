@@ -321,6 +321,20 @@
               <div class="sec-head"><h2>最近记录</h2><a class="mini" href="#" data-goto="records">全部记录</a></div>
               <div class="record-list" id="ovRecords"><div class="empty-state">登录后从服务器读取记录。</div></div>
             </section>
+
+            <section class="sec" id="inspectionSection">
+              <div class="sec-head">
+                <h2>只读巡检</h2>
+                <div class="sec-actions">
+                  <span class="mini" id="inspectAt">未登录</span>
+                  <button class="btn small ghost" id="inspectRefresh" disabled>巡检</button>
+                </div>
+              </div>
+              <p class="hint" style="margin:-4px 0 8px" id="inspectHint">检查 token、冷却、今日次数、最近记录与服务器时间。<b>只读</b>，不会提交或上传任何数据。</p>
+              <div class="inspect-list" id="inspectList">
+                <div class="inspect-empty">登录后可手动巡检。</div>
+              </div>
+            </section>
           </div>
 
           <aside class="col side">
@@ -336,6 +350,12 @@
             <div class="callout">
               <div class="callout-title">本周节奏</div>
               <p id="ovRhythm">登录后显示。</p>
+            </div>
+            <div class="callout error-note" id="ovErrorNote" hidden>
+              <div class="callout-title">错误解释</div>
+              <p><b id="ovErrorTitle">—</b></p>
+              <p id="ovErrorCause"></p>
+              <p id="ovErrorAction"></p>
             </div>
           </aside>
         </div>
@@ -654,6 +674,22 @@
               </div>
               <div class="hint" id="timeHint">选择提交日期与开始时间（09:00–22:00）；开始时间留空则在该时段随机。结束时间也要在 22:00 前。</div>
 
+              <div class="quick-card" id="presetCard">
+                <div class="quick-head"><b>预设</b><span id="presetStatus">未读取</span></div>
+                <div class="preset-row">
+                  <select id="presetSel" class="preset-sel" aria-label="跑步预设" disabled>
+                    <option value="">— 选择预设 —</option>
+                  </select>
+                  <button class="btn small" id="presetApply" disabled>应用</button>
+                </div>
+                <div class="preset-row">
+                  <input id="presetName" class="preset-name" maxlength="40" placeholder="预设名称（如：周末 5 公里）" autocomplete="off">
+                  <button class="btn small ghost" id="presetSave" disabled>保存</button>
+                  <button class="btn small ghost" id="presetDelete" disabled>删除</button>
+                </div>
+                <div class="hint" id="presetHint" style="margin:4px 0 0">保存当前距离、配速、步频、海拔与路线；最多 30 条，只存本机，不保存任何账号信息。</div>
+              </div>
+
               <div class="quick-card">
                 <div class="quick-head"><b>快速填充</b><span>点一下写入参数</span></div>
                 <div class="quick-row">
@@ -730,6 +766,18 @@
                 <div class="hint" id="preflightText" style="margin-top:5px">仅提醒，不影响提交；点一次查出口 IP、校区城市和服务器时间。时钟偏差由软件自动校正，不需要改系统设置。</div>
               </div>
 
+              <div class="audit-card" id="auditCard">
+                <div class="audit-head">
+                  <div><span class="eyebrow">提交前审计（离线，不联网）</span><b id="auditSummary">未审计</b></div>
+                  <div class="audit-actions">
+                    <button class="btn small ghost" id="auditBtn" disabled>开始审计</button>
+                    <button class="btn small ghost" id="auditCopy" disabled>复制 JSON</button>
+                  </div>
+                </div>
+                <div class="audit-note" id="auditNote">检查 27 字段、速度/步频窗口、分段、打卡点与 OBS 键。生成路径不联网，记录路径只读。</div>
+                <ul class="audit-checks" id="auditChecks"></ul>
+              </div>
+
               <div class="model-card" id="modelCard">
                 <div class="model-top">
                   <div class="model-score" id="modelScore">—</div>
@@ -760,9 +808,11 @@
                 </div>
                 <div class="submit-result-text" id="submitResultText"></div>
                 <div class="submit-result-actions">
+                  <button class="btn small ghost" id="submitResultVerify">只读核验</button>
                   <button class="btn small ghost" id="submitResultRecords">去记录页核对</button>
                   <button class="btn small ghost" id="submitResultDismiss" hidden>收起</button>
                 </div>
+                <div class="verify-timeline" id="submitVerify" hidden></div>
               </div>
               <div class="submit-flow">
                 <div class="flow-step"><span>01</span><b>回执</b><small>锁定时间窗</small></div>
@@ -791,7 +841,13 @@
               <div class="log-actions">
                 <button class="btn small ghost" id="logCopy">复制</button>
                 <button class="btn small ghost" id="logExport">导出</button>
+                <button class="btn small ghost" id="logExplain" disabled title="先在列表里点一条错误或提醒">解释选中</button>
                 <button class="btn small ghost" id="logClear">清空</button>
+              </div>
+              <div class="explain-box" id="logExplainBox" hidden>
+                <b id="logExplainTitle">—</b>
+                <p><span>原因</span><em id="logExplainCause">—</em></p>
+                <p><span>下一步</span><em id="logExplainAction">—</em></p>
               </div>
 
               <div class="log-meta">
@@ -901,11 +957,31 @@
             <h1>记录<span class="date" id="recCount">—</span></h1>
             <div class="head-actions">
               <button class="btn small ghost" id="recExport">导出 CSV</button>
+              <button class="btn small ghost" id="recFit" disabled>FIT</button>
+              <button class="btn small ghost" id="recStats">统计</button>
+              <button class="btn small ghost" id="recDiagZip" disabled>诊断包</button>
               <button class="btn small ghost" id="recRefresh">刷新</button>
             </div>
           </div>
           <div class="status-row" id="recChips"></div>
         </header>
+
+        <div class="stats-panel" id="statsPanel" hidden>
+          <div class="receipt-head">
+            <h2>训练统计</h2>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <select id="statsWeeks" aria-label="统计周数">
+                <option value="4">近 4 周</option>
+                <option value="12" selected>近 12 周</option>
+                <option value="26">近 26 周</option>
+                <option value="52">近 52 周</option>
+              </select>
+              <button class="btn small ghost" id="statsRun">读取</button>
+              <button class="btn small ghost" id="statsClose">收起</button>
+            </div>
+          </div>
+          <div class="stats-body" id="statsBody"><div class="receipt-empty">点「读取」按本机回执与服务器记录统计；只读。</div></div>
+        </div>
 
         <div class="receipt-panel" id="receiptPanel">
           <div class="receipt-head">
@@ -953,9 +1029,13 @@
               <div class="hint" id="rdMapHint" style="margin-top:4px">选择记录后显示轨迹与打卡点。</div>
               <div class="record-map-actions">
                 <button class="btn small ghost" id="rdGpx" disabled>导出 GPX</button>
+                <button class="btn small ghost" id="rdFit" disabled>导出 FIT</button>
                 <button class="btn small ghost" id="rdSaveRoute" disabled>存为路线</button>
                 <button class="btn small ghost" id="rdCharts" disabled>数据图表</button>
+                <button class="btn small ghost" id="rdReplay" disabled>回放</button>
+                <button class="btn small ghost" id="rdVerify" disabled>只读核验</button>
               </div>
+              <div class="verify-timeline" id="rdVerifyBox" hidden></div>
             </div>
             <div class="detail-verdict" id="rdVerdict" hidden></div>
             <div class="detail-reasons">
@@ -1150,6 +1230,48 @@
           </div>
         </section>
 
+        <section class="sec" id="realismSection">
+          <div class="sec-head"><h2>真实性与兼容</h2><span class="mini" id="realismStatus">未读取</span></div>
+          <p class="hint" style="margin:-4px 0 9px">只影响<b>之后生成</b>的轨迹。暂停/坡度默认关闭，GPS 默认城市档案（保持旧行为）；<b>不是真机实测</b>，只是有依据的假设。</p>
+          <div class="form-grid network-grid">
+            <div class="field-line">
+              <label for="setObsKey">OBS key 模式</label>
+              <select id="setObsKey">
+                <option value="single">单 key（默认，与 7.4.0 一致）</option>
+                <option value="legacy">双 key（旧服务端 / 旧记录兼容）</option>
+              </select>
+            </div>
+            <div class="field-line">
+              <label for="setPause">暂停注入</label>
+              <select id="setPause">
+                <option value="none">关闭（默认，保持旧行为）</option>
+                <option value="auto">自动（每公里 1–2 次，20–90 秒）</option>
+                <option value="manual">按下方分段（暂未开放）</option>
+              </select>
+            </div>
+            <div class="field-line">
+              <label for="setGps">GPS 采样</label>
+              <select id="setGps">
+                <option value="urban" selected>城市（默认，旧行为）</option>
+                <option value="clean">固定（测试用）</option>
+                <option value="tunnel">隧道（1–2 段低质量）</option>
+              </select>
+            </div>
+            <div class="field-line">
+              <label for="setTerrain">坡度联动配速</label>
+              <select id="setTerrain">
+                <option value="0">关闭（默认）</option>
+                <option value="1">开启（每 1% 坡度约 ±2.5% 速度）</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn small primary" id="setRealismSave" disabled>保存并应用</button>
+            <button class="btn small ghost" id="setRealismReset">恢复默认</button>
+            <span class="hint" id="setRealismHint" style="margin:0">保存到本机设置，只影响新生成的预览与提交。</span>
+          </div>
+        </section>
+
         <section class="sec">
           <div class="sec-head"><h2>关于</h2></div>
           <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.7</span></div>
@@ -1158,6 +1280,7 @@
           <div class="form-actions" style="margin-top:8px">
             <button class="btn small ghost" id="updateCheckBtn">检查更新</button>
             <button class="btn small ghost" id="diagCopy">复制诊断包</button>
+            <button class="btn small ghost" id="diagZip">下载脱敏诊断包 ZIP</button>
             <button class="btn small ghost" id="onboardOpen">新手引导</button>
             <span class="hint" id="diagHint" style="margin:0">不含 token / 密码 / uid / 坐标 / IP。</span>
           </div>
@@ -1165,6 +1288,52 @@
       </div>
     </section>
   </div>
+</div>
+
+<div class="replay-modal" id="replayModal" role="dialog" aria-modal="true" aria-labelledby="replayTitle" hidden>
+  <div class="onboard-veil" id="replayVeil"></div>
+  <section class="replay-card">
+    <header class="replay-head">
+      <div>
+        <span class="tag" id="replayKicker">回放</span>
+        <h2 id="replayTitle">本次轨迹回放</h2>
+      </div>
+      <button type="button" class="onboard-x" id="replayClose" aria-label="关闭回放">×</button>
+    </header>
+    <div class="replay-main">
+      <div class="replay-canvas-wrap"><canvas id="replayCanvas" width="640" height="380" role="img" aria-label="轨迹动画"></canvas></div>
+      <div class="replay-readout" id="replayReadout">
+        <div><span>进度</span><b id="replayProgress">—</b></div>
+        <div><span>用时</span><b id="replayClock">—</b></div>
+        <div><span>配速</span><b id="replayPace">—</b></div>
+        <div><span>步频</span><b id="replayCadence">—</b></div>
+        <div><span>海拔</span><b id="replayAlt">—</b></div>
+        <div><span>打卡</span><b id="replayCp">—</b></div>
+      </div>
+    </div>
+    <div class="replay-curves">
+      <div class="dp-chart-head"><b>配速</b><span class="mini">分/公里 · 竖线为打卡点</span></div>
+      <canvas id="replayPaceCurve" width="640" height="96" role="img" aria-label="配速曲线"></canvas>
+      <div class="dp-chart-head"><b>步频</b><span class="mini">步/分钟</span></div>
+      <canvas id="replayCadCurve" width="640" height="96" role="img" aria-label="步频曲线"></canvas>
+      <div class="dp-chart-head"><b>海拔</b><span class="mini">米</span></div>
+      <canvas id="replayAltCurve" width="640" height="96" role="img" aria-label="海拔曲线"></canvas>
+    </div>
+    <footer class="replay-foot">
+      <span class="mini" id="replayNote">本地动画，不发任何请求。</span>
+      <div class="replay-actions">
+        <button type="button" class="btn small ghost" id="replayRestart">重播</button>
+        <button type="button" class="btn small primary" id="replayPlay">播放</button>
+        <input type="range" id="replayScrub" min="0" max="1000" value="0" aria-label="回放进度">
+        <select id="replaySpeed" aria-label="回放速度">
+          <option value="1">1×</option>
+          <option value="4" selected>4×</option>
+          <option value="10">10×</option>
+          <option value="30">30×</option>
+        </select>
+      </div>
+    </footer>
+  </section>
 </div>
 
 <div class="map-toast" id="toast" role="status"></div>

@@ -799,6 +799,67 @@ def _parse_fences(raw_fences) -> list[dict]:
     return parsed
 
 
+def match_fence(fences, anchor=None, route=None) -> dict:
+    """Pick one fence by the route start/current anchor.
+
+    A single fence is unambiguous.  With several fences we never pick the
+    first one: the anchor (manual campus/current point) or the first point of
+    the route must actually be inside a ring.  Otherwise the caller gets
+    ``FenceAmbiguous`` and must ask the operator.
+    """
+    from ..domain import routes as RT
+
+    parsed = []
+    if isinstance(fences, dict):
+        parsed = fences.get('fences') or []
+    elif isinstance(fences, list):
+        parsed = fences
+    parsed = [f for f in parsed if isinstance(f, dict)
+              and len(f.get('polygon') or []) >= 3]
+    if not parsed:
+        raise FenceNotConfigured('没有可用的跑步围栏')
+    if len(parsed) == 1:
+        chosen, source = parsed[0], 'unique'
+    else:
+        chosen, source = None, ''
+        if anchor and len(anchor) >= 2:
+            for f in parsed:
+                if RT.point_in_fences(float(anchor[0]), float(anchor[1]),
+                                      [f['polygon']]):
+                    chosen, source = f, 'anchor'
+                    break
+        if chosen is None and route:
+            for p in route:
+                if not isinstance(p, (list, tuple)) or len(p) < 2:
+                    continue
+                for f in parsed:
+                    if RT.point_in_fences(float(p[0]), float(p[1]),
+                                          [f['polygon']]):
+                        chosen, source = f, 'route'
+                        break
+                if chosen is not None:
+                    break
+        if chosen is None:
+            raise FenceAmbiguous(
+                '检测到 %d 个跑步围栏，但锚点/路线首点不在任何一个围栏内'
+                % len(parsed))
+    poly = chosen.get('polygon') or []
+    center = chosen.get('center') or (
+        (sum(p[0] for p in poly) / len(poly),
+         sum(p[1] for p in poly) / len(poly)) if poly else None)
+    return {
+        'id': chosen.get('id') or '',
+        'name': chosen.get('name') or '',
+        'polygon': poly,
+        'polygons': [poly],
+        'center': center,
+        'fence': chosen,
+        'fences': [chosen],
+        'source': source,
+        'ambiguous': False,
+    }
+
+
 def filter_fences_by_area(fences: list[dict],
                           run_area: dict | None) -> list[dict]:
     """Keep only the fences the selected ``RunAreaModels`` owns.

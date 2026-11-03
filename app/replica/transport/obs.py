@@ -347,24 +347,27 @@ def rrid_key(rrid) -> str:
     """Legacy/third-party OBS key for one record.
 
     Some old objects only exist at ``run_data/{rrid // 1000000}/{rrid}.json``;
-    the detail reader tries this after the official hour/uuid key.  Our upload
-    does not write it (the 7.4.0 capture has a single PUT).
+    the detail reader tries this after the official hour/uuid key.  The default
+    upload does not write it (the 7.4.0 capture has a single PUT); only
+    ``key_mode='legacy'`` adds it back for old servers.
     """
     n = int(rrid)
     return 'run_data/%d/%d.json' % (n // 1000000, n)
 
 
-def obs_keys(run, rrid, uuid) -> list[str]:
-    """The single key the official 7.4.0 client PUTs.
+def obs_keys(run, rrid, uuid, mode: str = 'single') -> list[str]:
+    """The key(s) to PUT.
 
     The 2026-10-26 capture has exactly one COS PUT: the UTC+8 hour bucket.
-    ``rrid_key`` is kept for reading old/third-party objects that only wrote
-    the rrid-shaped key; writing it ourselves was an extra fingerprint.
+    ``legacy`` appends the old rrid-shaped key for servers/records that still
+    expect it; it is not the default because the extra PUT is a fingerprint.
     """
-    del rrid
     start_ms = run['allLocJson'][0]['ts']
     t0 = safety.to_beijing(start_ms).strftime('%Y%m%d%H')
-    return ['run_data/%s/%s.json' % (t0, uuid)]
+    keys = ['run_data/%s/%s.json' % (t0, uuid)]
+    if str(mode or 'single').lower() == 'legacy':
+        keys.append(rrid_key(rrid))
+    return keys
 
 
 # --------------------------------------------------------------------------
@@ -467,7 +470,7 @@ def platform_user_agent(acct) -> str:
 
 
 def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
-               verify: bool = True) -> dict:
+               verify: bool = True, key_mode: str = 'single') -> dict:
     """Upload the trail to the official hour/uuid key. Returns a summary dict.
 
     `verify` re-reads each object with a signed GET and compares the byte
@@ -481,7 +484,7 @@ def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
     payload = json.dumps(obj, ensure_ascii=False,
                          separators=(',', ':')).encode()
     payload_sha = hashlib.sha256(payload).hexdigest()
-    keys = obs_keys(run, rrid, uuid)
+    keys = obs_keys(run, rrid, uuid, mode=key_mode)
 
     ok = 0
     verified = 0

@@ -57,7 +57,7 @@ python -m replica.selfcheck
 **离线回归**
 
 ```
-23/23 模块自测     PASS
+28/28 模块自测     PASS
 pytest（tests/）   326 passed
 私有 corpus tests   3 passed
 legacy_bridge_suite  38 checks passed

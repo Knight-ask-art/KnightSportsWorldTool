@@ -38,7 +38,7 @@ adapters  ──▶ application ──▶ domain
 |---|---|
 | `transport/` | `netsec` `nskpure` `nskcodec` `crypto`* `realclient` `sidecar` `amap` `gt4` `obs` |
 | `domain/` | `clock` `coords` `crypto`* `health` `safety` `rundata` `routes` `stadium` |
-| `application/` | `login_flow` `tokenkeeper` `points` `policy` `riskcheck` `qualification` `identity` `variation` `limits` `guard` `readonly` |
+| `application/` | `login_flow` `tokenkeeper` `points` `policy` `riskcheck` `qualification` `identity` `variation` `limits` `guard` `readonly` `audit` `errors` `verification` `presets` `stats` `export_fit` `diagnostics_bundle` `inspection` `preferences` |
 | `adapters/` | `bridge_api` `http_server` `cli` |
 | `compat/mocks/` | `mock_iydsj` `mock_65530` |
 | `diagnostics/` | `collector` `selfcheck` |
@@ -105,8 +105,8 @@ adapters  ──▶ application ──▶ domain
 
 ```powershell
 cd 好想跑/app
-python -m pytest tests -q                 # 87 passed
-python -m replica.selfcheck               # 22/22 modules
+python -m pytest tests -q                 # 654 passed (v0.1.8 feature pack)
+python -m replica.selfcheck               # 28/28 modules
 python tests\legacy\legacy_bridge_suite.py  # 38 checks
 python tests\legacy\legacy_http_suite.py    # 23 checks
 python tools\validate_sim.py              # 1/2/3/5 km + validator

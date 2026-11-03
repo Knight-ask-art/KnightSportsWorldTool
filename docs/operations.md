@@ -260,7 +260,7 @@ python -m replica.points
 期望输出（2026-10-25）：
 
 ```
-23/23 模块通过（含 tokenkeeper）
+28/28 模块通过（含 tokenkeeper）
 236 passed（pytest tests/）
 3 passed（private/research/tests）
 38 passed（legacy_bridge_suite）

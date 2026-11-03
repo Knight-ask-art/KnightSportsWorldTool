@@ -627,3 +627,17 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 `freedomShowFence` 保持 `false`；没有跑区时 `runAreaId` 保持 `-1`
 （有服务端跑区时仍沿用官方 `getRunAreaId()` 的值）。计分 `runModePolicy`
 的围栏/跑区仍要等 06:30–22:00 才能只读确认。
+
+## 20. v0.1.8 P0–P2：审计、核验、真实性与离线工具（2026-11-04）
+
+| 功能 | 决策 | 边界 |
+|---|---|---|
+| 形状审计 | `application.audit` 独立检查 27 字段、OBS 11 键、窗口/分段/圈守恒；生成数据离线，记录只读 | 只证明与已知证据一致，不证明服务端接受 |
+| 错误解释 | `application.errors` 纯函数映射 11016/10003/10603/404/超时/空 200 | 未归类的错误明确输出 `unclassified`，不猜 |
+| 只读核验 | `application.verification` 读详情并给 `ok/warn/issue/unknown` 时间线 | 绝不重发、绝不 PUT；只读失败也返回 `unknown` 而不是假成功 |
+| OBS key 模式 | 默认 `single`（官方 7.4.0 抓包 1 条 PUT）；`legacy` 才写日期+rrid 两条 | 旧服务端兼容用，默认不增加指纹 |
+| 暂停建模 | `pause_profile` 默认 `none`；`auto/manual` 只把暂停加到墙钟 `gainTime` 与 `stopTime`，`totalTime` 保持活跃秒 | 暂停期间窗口仍是活跃时钟；不是 7.4.0 真机逐点复现 |
+| GPS 档案 | 默认 `urban`；`clean` 固定 60/5；`tunnel` 低卫星+高精度半径，保留点数以保证守恒 | 不是实际隧道轨迹，只是可复现的传感器质量档 |
+| 坡度联动 | 只有提供海拔模板时才生效；按每 1% 坡度约 ±2.5% 速度重新分配每公里用时 | 没有模板不发明山丘；总时长保持不变 |
+| 多围栏 | `points.match_fence()` 用锚点/路线首点匹配；匹配不到抛 `FenceAmbiguous`，不取第一个 | CLI 与 UI 共用；没有锚点时要求人工确认 |
+| 预设/统计/FIT/诊断包/巡检 | 全部本地或只读；预设写 `store_dir`，统计只读，诊断包自动脱敏 | 巡检不提交，诊断包不含 token/密码/完整坐标/签名 URL |

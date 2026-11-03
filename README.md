@@ -92,7 +92,7 @@ python run.py --port 65520
 ```powershell
 cd 好想跑\app
 python -m pytest tests -q            # 主测试套件
-python -m replica.selfcheck          # 23 个模块离线自测
+python -m replica.selfcheck          # 28 个模块离线自测
 python tools\validate_sim.py         # 造数/校验器矩阵
 
 # 历史 main() 套件（不进入 pytest）

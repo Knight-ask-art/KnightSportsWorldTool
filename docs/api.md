@@ -362,8 +362,17 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 
 | 方法 | 新增参数 | 说明 |
 |---|---|---|
-| `real_preview_model` | `date`、`start_time`、`daily_runs`、`daily_source` | 用所选日期/时间造预览轨迹；`daily_runs` 是 UI 已知的服务器次数；返回 `param_warnings` |
-| `real_submit_run` | `date`、`start_time` | 用所选日期/时间造数并提交；每日次数在提交前重新查服务器；返回 `param_warnings` |
+| `real_preview_model` | `date`、`start_time`、`daily_runs`、`daily_source`、`pause_profile`、`gps_profile`、`terrain_coupling` | 用所选日期/时间造预览轨迹；`daily_runs` 是 UI 已知的服务器次数；返回 `param_warnings` |
+| `real_submit_run` | `date`、`start_time`、`pause_profile`、`gps_profile`、`terrain_coupling` | 用所选日期/时间造数并提交；每日次数在提交前重新查服务器；返回 `param_warnings` |
+| `real_audit_run` | `rrid`/`uuid` 或预览参数 | 对预览参数现场生成并审计、上一次生成数据、或一条既有记录做 7.4.0 形状审计；生成路径离线，记录路径只读 |
+| `real_explain_error` | `code`、`message`、`context` | 纯函数错误解释，返回 `title/cause/action/retryable` |
+| `real_verify_record` | `rrid`/`uuid` | 只读核验提交结果，返回 `verdict` 与逐项时间线；绝不重提 |
+| `real_obs_key_mode` | `mode`、`pause_profile`、`gps_profile`、`terrain_coupling`（均可选） | 读取/设置 OBS key 模式（`single` 默认 / `legacy` 双 key）与暂停/GPS/坡度档案；写 `data/settings.json` |
+| `real_presets` | `action`、`name`、`data` | 命名预设的 `list/save/delete/get`，存 `data/presets.json` |
+| `real_stats` | `weeks` | 本地回执 + 只读记录统计；读不到服务器时明确 `source=local` |
+| `real_export_fit` | `rrid`/`uuid` | 从一条记录生成 FIT，返回 `filename`/`mime`/`data_b64` |
+| `real_diagnostics_zip` | — | 生成脱敏 ZIP（诊断、审计、时钟、设置、回执） |
+| `real_inspection` | `freeze_seconds`（可选） | 只读巡检：token、冻结剩余、今日次数、最近记录、时钟、最近回执；不提交 |
 | `real_daily_count` | `date` | 查该北京日期已有几条记录；读不到返回 `source=unknown` |
 | `real_daily_counts` | `dates`（可选数组） | 一次返回最近 4 天的次数，供日期日历标注；读不到时 `runs=null` |
 | `real_preflight` | `start_ms`、`campus_name`、`school_name` | 显式网络诊断（仅提醒）；会查询公网 IP 与服务器时间，只在 UI 点击时调用 |

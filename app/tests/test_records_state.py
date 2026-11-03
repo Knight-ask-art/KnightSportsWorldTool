@@ -40,6 +40,26 @@ def test_is_cheat_one_is_issue_even_when_status_is_zero():
     assert _row(status=0, isCheat=0)['state'] == 'ok'
 
 
+def test_uuid_only_detail_is_not_rejected_locally(monkeypatch):
+    from types import SimpleNamespace
+    from replica.application import readonly
+    from replica.transport import obs
+
+    payload = {'rrid': 42, 'uuid': 'u-42', 'startTime': 1792584000000,
+               'totalDis': 1000, 'totalTime': 600, 'jsonFromObs': 1,
+               'allLocJson': None, 'complete': True, 'status': 0,
+               'reasonList': []}
+    fake = readonly._FakeClient(pages=[{'error': 10000, 'data': payload}])
+    monkeypatch.setattr(obs, 'get_object_bytes',
+                        lambda *a, **k: (200, __import__('json').dumps({
+                            'run_data': obs.gz_json({'allLocJson': '[]'}),
+                            'fixed_point_json': obs.gz_str('{}'),
+                            'segment_json': obs.gz_str('')}).encode()))
+    out = readonly.record_detail(fake, SimpleNamespace(), None, uuid='u-42')
+    assert out['ok'] is True
+    assert out['detail']['rrid'] == 42
+
+
 def test_suspicious_status_text_is_issue_even_without_code():
     assert _row(statusInfo='你的跑步成绩已被系统判为可疑')['state'] == 'issue'
 

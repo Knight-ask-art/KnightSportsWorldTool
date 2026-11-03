@@ -1441,6 +1441,1024 @@ dockBtn.addEventListener('click', () => {
   if(typeof liveDockClick === 'function') liveDockClick();
 });
 
+/* ============================================================
+   v0.1.8 P0–P2 feature pack: audit, error help, read-only verify,
+   realism settings, presets, stats, FIT / diagnostics export,
+   inspection and the local replay canvas.
+
+   Rules for every function below:
+   - one bridge call per click, never on page load and never on a timer;
+   - a missing bridge method disables the control with a visible reason;
+   - backend `message` is shown verbatim, never swallowed.
+   ============================================================ */
+const REALISM_DEFAULTS = {obs_key_mode: 'single', pause_profile: 'none',
+                          gps_profile: 'urban', terrain_coupling: false};
+const REALISM_LABEL = {obs_key_mode: {single: '单 key', legacy: '双 key'},
+                       pause_profile: {none: '关闭', auto: '自动',
+                                       manual: '手动'},
+                       gps_profile: {clean: '干净', urban: '城市',
+                                     tunnel: '隧道'}};
+function realismNow(){
+  return LIVE.realism
+    ? {obs_key_mode: LIVE.realism.obs_key_mode || 'single',
+       pause_profile: LIVE.realism.pause_profile || 'none',
+       gps_profile: LIVE.realism.gps_profile || 'urban',
+       terrain_coupling: !!LIVE.realism.terrain_coupling}
+    : Object.assign({}, REALISM_DEFAULTS);
+}
+function setHint(el, text, tone){
+  if(!el) return;
+  el.textContent = text || '';
+  el.className = (el.id === 'rulesStatus' || /^mini/.test(el.className))
+    ? ('mini' + (tone ? ' ' + tone : ''))
+    : ('hint' + (tone ? ' ' + tone : ''));
+}
+function jsonText(obj){
+  try{ return JSON.stringify(obj, null, 1); }catch(e){ return String(obj); }
+}
+
+/* ---------------- P0: OBS key + realism profile (settings page) ---------- */
+async function loadRealism(){
+  if(!$('#realismStatus') || LIVE.realismLoading) return;
+  LIVE.realismLoading = true;
+  try{ await loadRealismInner(); }
+  finally{ LIVE.realismLoading = false; }
+}
+async function loadRealismInner(){
+  const j = await liveMaybe('real_obs_key_mode', {}, 10000);
+  if(bridgeMissing(j)){
+    LIVE.realismError = bridgeMessage(j);
+    $('#realismStatus').textContent = '未接入';
+    $('#realismStatus').className = 'mini warn';
+    $('#setRealismSave').disabled = true;
+    $('#setRealismSave').title = LIVE.realismError;
+    $('#setRealismHint').textContent = LIVE.realismError + '。本机仍在按默认值（单 key / 关闭暂停 / 城市 GPS）显示。';
+    applyRealismForm(realismNow());
+    return;
+  }
+  if(!liveOk(j)){
+    LIVE.realismError = bridgeMessage(j);
+    $('#realismStatus').textContent = '读取失败';
+    $('#realismStatus').className = 'mini warn';
+    $('#setRealismHint').textContent = LIVE.realismError +
+      '；可稍后重试，或保存当前显示值覆盖设置';
+    if($('#setRealismSave')){
+      $('#setRealismSave').disabled = false;
+      $('#setRealismSave').title = '读取失败；保存会把当前显示值写入本机';
+    }
+    return;
+  }
+  const d = j.data || {};
+  LIVE.realism = {obs_key_mode: d.mode === 'legacy' ? 'legacy' : 'single',
+                  pause_profile: d.pause_profile || 'none',
+                  gps_profile: d.gps_profile || 'urban',
+                  terrain_coupling: !!d.terrain_coupling,
+                  saved: !!d.saved};
+  LIVE.realismRead = !!d.saved;      // false: bridge returned built-in defaults
+  LIVE.realismError = null;
+  $('#setRealismSave').disabled = false;
+  $('#setRealismSave').title = '';
+  const mode = REALISM_LABEL.obs_key_mode[LIVE.realism.obs_key_mode];
+  $('#realismStatus').textContent = mode + ' · ' +
+    REALISM_LABEL.pause_profile[LIVE.realism.pause_profile] + ' · ' +
+    REALISM_LABEL.gps_profile[LIVE.realism.gps_profile] +
+    (LIVE.realism.terrain_coupling ? ' · 坡度联动' : '');
+  $('#realismStatus').className = 'mini' + (LIVE.realism.obs_key_mode === 'single'
+    ? ' ok' : '');
+  $('#setRealismHint').textContent = (LIVE.realism.obs_key_mode === 'legacy'
+    ? '双 key：只用于旧服务端或旧记录兼容，新记录默认单 key。'
+    : '单 key：与 7.4.0 客户端一致。') +
+    (LIVE.realismRead ? '' : '（后端报告这是内置默认值，尚未保存过设置）');
+  applyRealismForm(LIVE.realism);
+}
+function applyRealismForm(r){
+  if($('#setObsKey')) $('#setObsKey').value = r.obs_key_mode || 'single';
+  if($('#setPause')) $('#setPause').value = r.pause_profile || 'none';
+  if($('#setPause')) $('#setPause').querySelector('option[value="manual"]').disabled = true;
+  if($('#setGps')) $('#setGps').value = r.gps_profile || 'urban';
+  if($('#setTerrain')) $('#setTerrain').value = r.terrain_coupling ? '1' : '0';
+}
+async function saveRealism(){
+  const btn = $('#setRealismSave');
+  if(btn && btn.disabled) return;
+  const want = {
+    obs_key_mode: ($('#setObsKey') || {}).value || 'single',
+    pause_profile: ($('#setPause') || {}).value || 'none',
+    gps_profile: ($('#setGps') || {}).value || 'urban',
+    terrain_coupling: ($('#setTerrain') || {}).value === '1'
+  };
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    const j = await liveMaybe('real_obs_key_mode', {
+      mode: want.obs_key_mode,
+      pause_profile: want.pause_profile,
+      gps_profile: want.gps_profile,
+      terrain_coupling: want.terrain_coupling
+    }, 15000);
+    if(bridgeMissing(j)){ LIVE.realismError = bridgeMessage(j); toast(LIVE.realismError); return; }
+    if(!liveOk(j)){ toast('保存失败：' + bridgeMessage(j)); return; }
+    LIVE.realism = want;
+    await loadRealism();
+    refreshModelPreview().catch(() => {});
+    toast('已保存：' + (REALISM_LABEL.obs_key_mode[want.obs_key_mode] || '') +
+      ' · 暂停 ' + (REALISM_LABEL.pause_profile[want.pause_profile] || '') +
+      ' · GPS ' + (REALISM_LABEL.gps_profile[want.gps_profile] || ''));
+    liveLog('真实性与兼容设置已保存', jsonText(want).replace(/\s+/g, ' '), 'ok');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '保存并应用'; }
+  }
+}
+function resetRealismForm(){
+  applyRealismForm(REALISM_DEFAULTS);
+  toast('已恢复默认值；点「保存并应用」才会写入');
+}
+
+/* ---------------- P0: error explanation ---------------- */
+async function explainError(code, message, context){
+  const j = await liveMaybe('real_explain_error',
+    {code: code == null ? null : code, message: message || '', context: context || null}, 10000);
+  if(!liveOk(j)){
+    return {title: '未识别', cause: message || String(code || ''),
+            action: bridgeMessage(j), retryable: false, ok: false};
+  }
+  const d = j.data || {};
+  return {title: d.title || '错误', cause: d.cause || '', action: d.action || '',
+          retryable: !!d.retryable, ok: true};
+}
+function renderExplainBox(title, cause, action){
+  if($('#ovErrorTitle')) $('#ovErrorTitle').textContent = title || '—';
+  if($('#ovErrorCause')) $('#ovErrorCause').textContent = cause ? ('原因：' + cause) : '';
+  if($('#ovErrorAction')) $('#ovErrorAction').textContent = action ? ('下一步：' + action) : '';
+  if($('#ovErrorNote')) $('#ovErrorNote').hidden = false;
+}
+function renderLogExplain(exp){
+  const box = $('#logExplainBox');
+  if(!box) return;
+  box.hidden = false;
+  if($('#logExplainTitle')) $('#logExplainTitle').textContent = exp.title || '—';
+  if($('#logExplainCause')) $('#logExplainCause').textContent = exp.cause || '—';
+  if($('#logExplainAction')) $('#logExplainAction').textContent = exp.action || '—';
+}
+function selectLogEntry(index){
+  LIVE.logSel = index;
+  document.querySelectorAll('#logEvents .log-event').forEach((li, i) =>
+    li.classList.toggle('selected', i === index));
+  if($('#logExplain')) $('#logExplain').disabled = !(index >= 0);
+}
+async function explainSelectedLog(){
+  const entry = LIVE.log[LIVE.logSel];
+  if(!entry){ toast('先在日志里点一条提醒或错误'); return; }
+  const btn = $('#logExplain');
+  if(btn){ btn.disabled = true; btn.textContent = '解析中…'; }
+  try{
+    const exp = await explainError(codeFromText(entry.detail) || codeFromText(entry.msg),
+                                  entry.msg + (entry.detail ? ('：' + entry.detail) : ''),
+                                  {source: 'log', level: entry.level});
+    renderLogExplain(exp);
+    renderExplainBox(exp.title, exp.cause, exp.action);
+    if(!exp.ok) liveLog('错误解释未接入', exp.action, 'warn');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '解释选中'; }
+  }
+}
+function codeFromText(text){
+  const m = /(?:^|[^\d])(1\d{4})(?!\d)/.exec(String(text || ''));
+  return m ? +m[1] : null;
+}
+function recordErrorForExplain(text, level){
+  LIVE.logSel = -1;
+  explainError(codeFromText(text), String(text || ''), {source: 'result'})
+    .then(exp => renderExplainBox(exp.title, exp.cause, exp.action))
+    .catch(() => {});
+}
+
+/* ---------------- P0: pre-submit audit ---------------- */
+function auditUsable(){
+  // The generation path is offline: `real_audit_run(**preview)` generates
+  // the run locally and audits it, so a token is not required for that part.
+  // (Record audits need a session; the bridge says so in its message.)
+  if(LIVE.submitting) return '提交进行中，完成后再审计';
+  return '';
+}
+function methodMissing(method){
+  return !!(liveMaybe.missing && liveMaybe.missing.has(method));
+}
+function refreshAuditButton(){
+  const btn = $('#auditBtn');
+  if(!btn) return;
+  const reason = auditUsable();
+  btn.disabled = !!reason || LIVE.auditBusy || methodMissing('real_audit_run');
+  btn.title = methodMissing('real_audit_run')
+    ? bridgeMessage({bridgeMissing: true}) : (reason || '按当前参数做离线审计');
+}
+function auditArgs(){
+  const params = readRunParams();
+  const ti = selectedTimeInfo();
+  if(!ti.ok) return {error: '开始时间无效：' + ti.note};
+  const invalid = validateRunParams(params);
+  if(invalid) return {error: invalid};
+  const args = Object.assign(previewArgs(params, ti), {seed: LIVE.previewSeed || null});
+  Object.assign(args, realismArgs());
+  return {args};
+}
+function realismArgs(){
+  const r = realismNow();
+  return {pause_profile: r.pause_profile, gps_profile: r.gps_profile,
+          terrain_coupling: r.terrain_coupling};
+}
+const AUDIT_LEVEL_LABEL = {error: '失败', warn: '警告', info: '信息'};
+function renderAudit(){
+  const box = $('#auditChecks');
+  if(!box) return;
+  const a = LIVE.audit;
+  if(!a){
+    box.innerHTML = '';
+    if($('#auditSummary')) $('#auditSummary').textContent = '未审计';
+    if($('#auditSummary')) $('#auditSummary').className = '';
+    if($('#auditCopy')) $('#auditCopy').disabled = true;
+    return;
+  }
+  if(a.error){
+    box.innerHTML = '<li class="audit-row error"><span class="audit-level">失败</span><span class="audit-label">审计没有完成</span><span class="audit-detail">' + esc(a.error) + '</span></li>';
+    if($('#auditSummary')){ $('#auditSummary').textContent = '审计失败'; $('#auditSummary').className = 'warn'; }
+    if($('#auditCopy')) $('#auditCopy').disabled = true;
+    return;
+  }
+  const s = a.summary || {};
+  const bad = (a.checks || []).filter(c => c.level === 'error' || !c.ok);
+  if($('#auditSummary')){
+    $('#auditSummary').textContent = (s.ok ? '通过' : '有问题') +
+      ' · ' + (s.passed || 0) + ' 通过 / ' + (s.warned || 0) + ' 警告 / ' +
+      (s.failed || 0) + ' 失败' + (a.at ? (' · ' + a.at) : '');
+    $('#auditSummary').className = s.ok ? 'ok' : 'warn';
+  }
+  if($('#auditCopy')) $('#auditCopy').disabled = false;
+  const checks = (a.checks || []).slice().sort((x, y) => {
+    const w = c => (c.level === 'error' || !c.ok) ? 0 : (c.level === 'warn' ? 1 : 2);
+    return w(x) - w(y);
+  });
+  box.innerHTML = checks.map(c => {
+    const level = (c.level === 'error' || !c.ok) ? 'error' : (c.level === 'warn' ? 'warn' : 'ok');
+    return '<li class="audit-row ' + level + '"><span class="audit-level">' +
+      esc(AUDIT_LEVEL_LABEL[c.level] || c.level || '信息') + '</span>' +
+      '<span class="audit-label">' + esc(c.label || c.id || '') + '</span>' +
+      '<span class="audit-detail">' + esc(c.detail || '') + '</span></li>';
+  }).join('') || '<li class="audit-row ok"><span class="audit-detail">没有检查项</span></li>';
+  if(bad.length) liveLog('提交前审计', bad.slice(0, 3).map(c => (c.label || c.id) + '：' + (c.detail || '')).join('；'),
+                         bad.some(c => c.level === 'error') ? 'err' : 'warn');
+}
+async function runAudit(){
+  if(LIVE.auditBusy) return;
+  const prepared = auditArgs();
+  if(prepared.error){ toast(prepared.error); return; }
+  LIVE.auditBusy = true;
+  refreshAuditButton();
+  if($('#auditBtn')) $('#auditBtn').textContent = '审计中…';
+  try{
+    const j = await liveMaybe('real_audit_run', prepared.args, 60000);
+    if(bridgeMissing(j)){
+      LIVE.audit = {error: bridgeMessage(j)};
+      if($('#auditBtn')){ $('#auditBtn').disabled = true; $('#auditBtn').title = LIVE.audit.error; }
+      renderAudit();
+      toast(LIVE.audit.error);
+      return;
+    }
+    if(!liveOk(j)){
+      LIVE.audit = {error: bridgeMessage(j)};
+      renderAudit();
+      refreshAuditButton();
+      toast('审计失败：' + bridgeMessage(j));
+      return;
+    }
+    LIVE.audit = j.data || {};
+    renderAudit();
+    if(LIVE.audit.summary && LIVE.audit.summary.ok === false){
+      switchRunTab('submit');
+    }
+  }finally{
+    LIVE.auditBusy = false;
+    if($('#auditBtn')) $('#auditBtn').textContent = '开始审计';
+    refreshAuditButton();
+  }
+}
+async function copyAuditJson(){
+  if(!LIVE.audit || LIVE.audit.error) return;
+  const ok = await copyPlainText(jsonText({summary: LIVE.audit.summary,
+    checks: LIVE.audit.checks, record: LIVE.audit.record, at: LIVE.audit.at}));
+  toast(ok ? '审计结果已复制' : '复制失败，请手动选择');
+}
+
+/* ---------------- P0: read-only verification ---------------- */
+const VERDICT_LABEL = {ok: '正常', warn: '需留意', issue: '有问题', unknown: '无法判定'};
+function renderVerify(box, v, errorText){
+  if(!box) return;
+  box.hidden = false;
+  if(errorText){
+    box.innerHTML = '<div class="verify-empty">核验失败：' + esc(errorText) + '</div>';
+    return;
+  }
+  const head = '<div class="verify-head"><span class="verify-verdict ' +
+    esc(v.verdict || 'unknown') + '">' + esc(VERDICT_LABEL[v.verdict] || v.verdict || '无法判定') +
+    '</span><span class="mini">' + esc((v.track && v.track.points ? v.track.points + ' 点' : '无轨迹') +
+    (v.track && v.track.source ? ' · ' + v.track.source : '') + (v.at ? ' · ' + v.at : '')) +
+    '</span></div>';
+  const rows = (v.timeline || []).map(t =>
+    '<li class="verify-step ' + (t.ok === false ? 'bad' : 'ok') + '">' +
+    '<span class="verify-at">' + esc(t.at || '') + '</span>' +
+    '<span class="verify-name">' + esc(t.step || '') + '</span>' +
+    '<span class="verify-text">' + esc(t.text || '') + '</span></li>').join('');
+  const next = v.next ? ('<div class="verify-next">' + esc(v.next) + '</div>') : '';
+  box.innerHTML = head + '<ul class="verify-list">' + rows + '</ul>' + next;
+}
+async function verifyRecord(target){
+  const r = target || {};
+  if(!r.rrid && !r.uuid){ toast('需要 rrid 或 uuid 才能核验'); return; }
+  if(LIVE.verifyBusy){ toast('核验进行中'); return; }
+  LIVE.verifyBusy = true;
+  const submitBox = $('#submitVerify'), detailBox = $('#rdVerifyBox');
+  const btn = r.via === 'submit' ? $('#submitResultVerify') : $('#rdVerify');
+  if(btn){ btn.disabled = true; btn.textContent = '核验中…'; }
+  try{
+    const j = await liveMaybe('real_verify_record',
+      {rrid: r.rrid || null, uuid: r.uuid || null}, 60000);
+    const box = r.via === 'submit' ? submitBox : detailBox;
+    if(bridgeMissing(j)){
+      renderVerify(box, null, bridgeMessage(j));
+      if(btn) btn.title = bridgeMessage(j);
+      toast(bridgeMessage(j));
+      return;
+    }
+    if(!liveOk(j)){
+      renderVerify(box, null, bridgeMessage(j));
+      toast('核验失败：' + bridgeMessage(j));
+      return;
+    }
+    const v = j.data || {};
+    LIVE.verify = v;
+    renderVerify(box, v, '');
+    liveLog('只读核验', (VERDICT_LABEL[v.verdict] || v.verdict || '?') +
+      (v.next ? (' · ' + v.next) : ''), v.verdict === 'issue' ? 'warn' : 'ok');
+  }finally{
+    LIVE.verifyBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = '只读核验'; }
+  }
+}
+
+/* ---------------- P1: presets ---------------- */
+let presetSeq = 0;
+function presetCanWrite(){
+  if(hasSession()) return '';
+  return '登录后可保存预设';
+}
+async function loadPresets(){
+  const seq = ++presetSeq;
+  const j = await liveMaybe('real_presets', {action: 'list'}, 10000);
+  if(seq !== presetSeq) return;
+  if(bridgeMissing(j)){
+    LIVE.presetsLoaded = false;
+    LIVE.presetsError = bridgeMessage(j);
+    renderPresets();
+    return;
+  }
+  if(!liveOk(j)){
+    LIVE.presetsLoaded = false;
+    LIVE.presetsError = bridgeMessage(j);
+    renderPresets();
+    return;
+  }
+  LIVE.presets = (j.data && j.data.presets) || [];
+  LIVE.presetsLoaded = true;
+  LIVE.presetsError = null;
+  renderPresets();
+}
+function renderPresets(){
+  const sel = $('#presetSel');
+  if(!sel) return;
+  const reason = LIVE.presetsLoaded ? '' : (LIVE.presetsError || '预设未读取');
+  if(!LIVE.presetsLoaded){
+    sel.innerHTML = '<option value="">' + esc(reason) + '</option>';
+    sel.disabled = true;
+  }else if(!LIVE.presets.length){
+    sel.innerHTML = '<option value="">还没有预设</option>';
+    sel.disabled = true;
+  }else{
+    const keep = sel.value;
+    sel.innerHTML = '<option value="">— 选择预设 —</option>' + LIVE.presets.map(r =>
+      '<option value="' + esc(r.name) + '">' + esc(r.name) +
+      (r.data && r.data.km ? ' · ' + (+r.data.km).toFixed(2) + ' km' : '') +
+      '</option>').join('');
+    sel.disabled = false;
+    if(LIVE.presets.some(r => r.name === keep)) sel.value = keep;
+  }
+  const has = LIVE.presetsLoaded && !!sel.value;
+  const writeBlock = presetCanWrite();
+  if($('#presetApply')) $('#presetApply').disabled = !has;
+  if($('#presetSave')){
+    $('#presetSave').disabled = !!writeBlock || methodMissing('real_presets');
+    $('#presetSave').title = writeBlock || (methodMissing('real_presets')
+      ? bridgeMessage({bridgeMissing: true}) : '保存当前参数为预设');
+  }
+  if($('#presetDelete')){
+    $('#presetDelete').disabled = !has;
+    $('#presetDelete').title = has ? '' : '先选择一个预设';
+  }
+  if($('#presetStatus')){
+    $('#presetStatus').textContent = LIVE.presetsLoaded
+      ? (LIVE.presets.length + ' 条') : (LIVE.presetsError ? '未接入' : '未读取');
+    $('#presetStatus').className = LIVE.presetsLoaded ? 'ok' : 'warn';
+  }
+  if($('#presetHint')) $('#presetHint').textContent = LIVE.presetsLoaded
+    ? '保存当前距离、配速、步频、海拔与路线；最多 30 条，只存本机，不保存任何账号信息。'
+    : (LIVE.presetsError || '');
+}
+function presetDataFromForm(){
+  const p = readRunParams();
+  const data = {
+    km: p.km, pace: p.pace, cadence: p.cadence, altitude: p.altitude,
+    closed: !!routeClosed, altitude_mode: p.altitudeMode,
+    altitude_range: p.altitudeRange || null,
+    sequential: !!LIVE.sequential,
+    free_run: freeRunOn(),
+    run_area_id: LIVE.runArea && LIVE.runArea.id != null ? LIVE.runArea.id : null,
+    km_times: splitsManual && splitRows ? splitRows.map(r => Math.round(+r.seconds || 0)) : null,
+    route: route && route.length >= 2 ? route.map(pt => [+pt[0], +pt[1]]) : null
+  };
+  if(Array.isArray(data.km_times) && data.km_times.length > 100) data.km_times = null;
+  if(p.altitudeProfile && p.altitudeProfile.length) data.altitude_profile = p.altitudeProfile;
+  if(data.altitude_mode !== 'template') delete data.altitude_profile;
+  return data;
+}
+async function savePreset(){
+  const name = ($('#presetName') && $('#presetName').value || '').trim();
+  if(!name){ toast('请先填写预设名称'); if($('#presetName')) $('#presetName').focus(); return; }
+  const invalid = validateRunParams(readRunParams());
+  if(invalid){ toast(invalid); return; }
+  const btn = $('#presetSave');
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    const j = await liveMaybe('real_presets', {action: 'save', name: name, data: presetDataFromForm()}, 15000);
+    if(!liveOk(j)){ toast('保存失败：' + bridgeMessage(j)); return; }
+    const d = j.data || {};
+    if(d.dropped && d.dropped.length) liveLog('预设已满', '已移除最早：' + d.dropped.join('、'), 'warn');
+    if($('#presetName')) $('#presetName').value = '';
+    await loadPresets();
+    if($('#presetSel')) $('#presetSel').value = d.name || name;
+    renderPresets();
+    toast((d.replaced ? '已更新预设：' : '已保存预设：') + (d.name || name));
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '保存'; }
+  }
+}
+async function deletePreset(){
+  const name = ($('#presetSel') && $('#presetSel').value) || '';
+  if(!name){ toast('先选择一个预设'); return; }
+  if(!confirm('删除预设「' + name + '」？只删除本机记录。')) return;
+  const j = await liveMaybe('real_presets', {action: 'delete', name: name}, 15000);
+  if(!liveOk(j)){ toast('删除失败：' + bridgeMessage(j)); return; }
+  await loadPresets();
+  toast('已删除预设：' + name);
+}
+function applyPreset(){
+  const name = ($('#presetSel') && $('#presetSel').value) || '';
+  const row = (LIVE.presets || []).find(r => r.name === name);
+  if(!row){ toast('先选择一个预设'); return; }
+  const d = row.data || {};
+  if(isFinite(+d.km) && +d.km > 0 && $('#inKm')) $('#inKm').value = (+d.km).toFixed(2);
+  if(isFinite(+d.pace) && $('#inPace')) $('#inPace').value = (+d.pace).toFixed(2);
+  if(isFinite(+d.cadence) && $('#inCad')) $('#inCad').value = Math.round(+d.cadence);
+  if(isFinite(+d.altitude) && $('#inAlt')) $('#inAlt').value = Math.round(+d.altitude);
+  if(typeof d.altitude_mode === 'string' && $('#altMode')){
+    $('#altMode').value = d.altitude_mode;
+    altAdjustOpen = false;
+    altModeChanged();
+  }
+  if(Array.isArray(d.altitude_range)){
+    if($('#altMin')) $('#altMin').value = d.altitude_range[0] == null ? '' : d.altitude_range[0];
+    if($('#altMax')) $('#altMax').value = d.altitude_range[1] == null ? '' : d.altitude_range[1];
+  }
+  // Geometry is round-tripped explicitly; no other switch may redraw it.
+  if(Array.isArray(d.route) && d.route.length >= 2){
+    route = d.route.map(pt => [+pt[0], +pt[1]]);
+    lastRouteLength = 0;
+    redraw();
+  }
+  if(d.closed != null) setCloseUI(!!d.closed);
+  if(Array.isArray(d.km_times) && d.km_times.length){
+    if(typeof splitsManual !== 'undefined' && splitsManual){
+      splitRows = d.km_times.map((s, i) => ({km: splitRows && splitRows[i] ? +splitRows[i].km : (i + 1 <= (+d.km || 0) ? 1 : 0),
+                                             seconds: +s}));
+      renderSplits();
+    }else{
+      toast('预设含手动分段；如需保留请到参数页点「手动微调」');
+    }
+  }
+  refreshParams();
+  updateRunDateLabel();
+  scheduleModelPreview();
+  toast('已应用预设：' + name + '（可再调整参数）');
+  liveLog('应用预设', name, 'ok');
+}
+
+/* ---------------- P2: local statistics ---------------- */
+function fmtPaceText(p){ return p == null ? '—' : paceText(p); }
+async function loadStats(){
+  if(LIVE.statsBusy) return;
+  const weeks = +($('#statsWeeks') && $('#statsWeeks').value || 12);
+  LIVE.statsBusy = true;
+  const btn = $('#statsRun');
+  if(btn){ btn.disabled = true; btn.textContent = '读取中…'; }
+  try{
+    const j = await liveMaybe('real_stats', {weeks: weeks}, 60000);
+    if(bridgeMissing(j)){
+      LIVE.stats = {error: bridgeMessage(j)};
+    }else if(!liveOk(j)){
+      LIVE.stats = {error: bridgeMessage(j)};
+    }else{
+      LIVE.stats = j.data || {};
+    }
+    renderStats();
+  }finally{
+    LIVE.statsBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = '读取'; }
+  }
+}
+function renderStats(){
+  const box = $('#statsBody');
+  if(!box) return;
+  const s = LIVE.stats;
+  if(!s || !Object.keys(s).length){
+    box.innerHTML = '<div class="receipt-empty">点「读取」按本机回执与服务器记录统计；只读。</div>';
+    return;
+  }
+  if(s.error){
+    box.innerHTML = '<div class="receipt-empty">统计失败：' + esc(s.error) + '</div>';
+    return;
+  }
+  const t = s.totals || {};
+  const sub = s.submission || {};
+  const weeks = (t.by_week || []);
+  const maxKm = Math.max(0.1, ...weeks.map(w => +w.distance_km || 0));
+  const src = s.source === 'server+local' ? '服务器记录 + 本机回执'
+    : '仅本机回执（服务器记录未读取' + (s.record_error ? '：' + s.record_error : '') + '）';
+  const tiles = [
+    ['跑量', (+t.distance_km || 0).toFixed(1), 'km'],
+    ['次数', t.runs || 0, ''],
+    ['平均配速', fmtPaceText(t.avg_pace_min_per_km), '/km'],
+    ['平均步频', t.avg_cadence == null ? '—' : Math.round(t.avg_cadence), 'spm'],
+    ['本月', (+((s.month || {}).distance_km) || 0).toFixed(1), 'km'],
+    ['提交成功率', sub.success_rate == null ? '—' : sub.success_rate, '%']
+  ];
+  const bars = weeks.map(w => {
+    const km = +w.distance_km || 0;
+    const h = km ? Math.max(6, Math.round(70 * km / maxKm)) : 2;
+    return '<div class="bar" title="' + esc(w.week_start + ' – ' + w.week_end) + '"><b>' +
+      (km ? km.toFixed(1) : '–') + '</b><i style="height:' + h + '%"></i><span>' +
+      esc((w.week_start || '').slice(5)) + '</span></div>';
+  }).join('');
+  const fails = (sub.top_failures || []).map(f =>
+    '<li><b>' + esc(f.reason) + '</b><span>× ' + esc(f.count) + '</span></li>').join('') ||
+    '<li class="mini">没有失败记录</li>';
+  const wd = (s.weekday_km || []).map((km, i) =>
+    '<span title="' + esc(['周一', '周二', '周三', '周四', '周五', '周六', '周日'][i]) + '">' +
+    esc(+km ? km.toFixed(1) : '–') + '</span>').join('');
+  box.innerHTML =
+    '<div class="stats-source">' + esc(src) + (s.window ? (' · ' + esc(s.window.start) + ' 至 ' + esc(s.window.end)) : '') + '</div>' +
+    '<div class="stat-strip stats-strip">' + tiles.map(([k, v, u]) =>
+      '<div class="stat"><b>' + esc(v) + (u ? '<small>' + esc(u) + '</small>' : '') + '</b><span>' + esc(k) + '</span></div>').join('') + '</div>' +
+    '<div class="bars stats-bars">' + (bars || '<div class="mini">窗口内没有记录</div>') + '</div>' +
+    '<div class="stats-split"><div><div class="detail-subhead">提交结果</div>' +
+    '<div class="mini">尝试 ' + (sub.attempts || 0) + ' · 成功 ' + (sub.accepted || 0) +
+    ' · 失败 ' + (sub.rejected || 0) + ' · 未决 ' + (sub.open || 0) + '</div>' +
+    '<div class="detail-subhead" style="margin-top:6px">失败原因 Top ' + (sub.top_failures || []).length + '</div>' +
+    '<ul class="stats-fails">' + fails + '</ul></div>' +
+    '<div><div class="detail-subhead">星期分布（km）</div><div class="weekday-grid">' + wd + '</div></div></div>';
+}
+
+/* ---------------- P2: FIT / diagnostics download ---------------- */
+function saveB64(b64, filename, mime){
+  const bin = atob(b64 || '');
+  const bytes = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  saveBlob(new Blob([bytes], {type: mime || 'application/octet-stream'}), filename || 'download');
+}
+async function exportFit(target, btn){
+  const r = target || {};
+  if(!r.rrid && !r.uuid){ toast('需要 rrid 或 uuid 才能导出 FIT'); return; }
+  if(btn){ btn.disabled = true; btn.textContent = '生成中…'; }
+  try{
+    const j = await liveMaybe('real_export_fit', {rrid: r.rrid || null, uuid: r.uuid || null}, 60000);
+    if(!liveOk(j)){ toast('FIT 导出失败：' + bridgeMessage(j)); return; }
+    const d = j.data || {};
+    if(!d.data_b64){ toast('FIT 导出失败：后端没有返回文件内容'); return; }
+    saveB64(d.data_b64, d.filename || 'run.fit', d.mime || 'application/vnd.garmin.fit');
+    if(!d.points) liveLog('导出 FIT', '记录没有轨迹点时后端会报错；本次返回 ' + (d.bytes || 0) + ' 字节', 'warn');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '导出 FIT'; }
+  }
+}
+async function downloadDiagZip(btn){
+  if(btn){ btn.disabled = true; btn.textContent = '生成中…'; }
+  try{
+    const j = await liveMaybe('real_diagnostics_zip', {}, 60000);
+    if(!liveOk(j)){ toast('诊断包生成失败：' + bridgeMessage(j)); return; }
+    const d = j.data || {};
+    if(!d.data_b64){ toast('诊断包生成失败：后端没有返回文件内容'); return; }
+    saveB64(d.data_b64, d.filename || 'haoxiangpao-diagnostics.zip', d.mime || 'application/zip');
+    toast('诊断包已下载（已脱敏）');
+    liveLog('诊断包 ZIP', (d.files || []).join(', ') + ' · ' + (d.bytes || 0) + ' 字节', 'ok');
+  }finally{
+    if(btn){
+      btn.disabled = !hasSession();
+      btn.textContent = btn.id === 'diagZip' ? '下载脱敏诊断包 ZIP' : '诊断包';
+    }
+  }
+}
+
+/* ---------------- P2: read-only inspection ---------------- */
+const INSPECT_LEVEL = {ok: '正常', warn: '注意', error: '阻止', info: '信息'};
+function renderInspect(){
+  const list = $('#inspectList');
+  if(!list) return;
+  const s = LIVE.inspect;
+  if(!s){
+    list.innerHTML = '<div class="inspect-empty">登录后可手动巡检。</div>';
+    if($('#inspectAt')) $('#inspectAt').textContent = hasSession() ? '待巡检' : '未登录';
+    return;
+  }
+  if(s.error){
+    list.innerHTML = '<div class="inspect-empty">巡检失败：' + esc(s.error) + '</div>';
+    return;
+  }
+  if($('#inspectAt')) $('#inspectAt').textContent = (s.ok ? '全部正常' : '有关注项') +
+    (s.at ? ' · ' + s.at : '');
+  list.innerHTML = (s.items || []).map(it =>
+    '<div class="inspect-row ' + esc(it.level || 'info') + '">' +
+    '<b>' + esc(it.label || it.id || '') + '</b>' +
+    '<span>' + esc(it.text || '') + '</span>' +
+    '<i>' + esc(INSPECT_LEVEL[it.level] || it.level || '') + '</i></div>').join('') ||
+    '<div class="inspect-empty">没有检查项</div>';
+  if($('#inspectHint')) $('#inspectHint').className = 'hint';
+  refreshAuditButton();
+}
+async function runInspection(){
+  if(LIVE.inspectBusy || !hasSession()) return;
+  LIVE.inspectBusy = true;
+  const btn = $('#inspectRefresh');
+  if(btn){ btn.disabled = true; btn.textContent = '巡检中…'; }
+  try{
+    const j = await liveMaybe('real_inspection',
+      {freeze_seconds: +LIVE.freezeSeconds || 0}, 60000);
+    if(bridgeMissing(j)) LIVE.inspect = {error: bridgeMessage(j)};
+    else if(!liveOk(j)) LIVE.inspect = {error: bridgeMessage(j)};
+    else LIVE.inspect = j.data || {};
+    renderInspect();
+    if(LIVE.inspect.error){
+      toast(LIVE.inspect.error);
+      if(btn) btn.title = LIVE.inspect.error;
+    }
+  }finally{
+    LIVE.inspectBusy = false;
+    if(btn){
+      btn.disabled = !hasSession() || methodMissing('real_inspection');
+      btn.textContent = '巡检';
+    }
+  }
+}
+
+/* ---------------- local replay canvas ---------------- */
+const REPLAY = {raf: 0, playing: false, t: 0, total: 1, speed: 4, last: 0};
+function replayClose(){
+  REPLAY.playing = false;
+  if(REPLAY.raf) cancelAnimationFrame(REPLAY.raf);
+  REPLAY.raf = 0;
+  if($('#replayModal')) $('#replayModal').hidden = true;
+}
+/* Build the animation model from whatever the app already has.  Track
+   points come from record detail (`lat/lng` + `duration_s` + `distance_m`)
+   or a generated preview (`allLocJson` rows); the 10 s series supplies the
+   curves; fixed points supply the checkpoints. */
+function replayModelFromDetail(detail){
+  const d = detail || {};
+  const meta = d.detail || {};
+  const track = (d.track || []).filter(p => isFinite(+p.lat) && isFinite(+p.lng));
+  if(track.length < 2) return null;
+  const pts = track.map((p, i) => ({
+    lat: +p.lat, lng: +p.lng, alt: p.altitude == null ? null : +p.altitude,
+    t: p.duration_s == null ? null : +p.duration_s,
+    d: p.distance_m == null ? null : +p.distance_m
+  }));
+  return finishReplayModel(pts, (d.analysis || {}).series || [],
+    d.five_point || [], meta.start_ms || 0, '记录 ' + (meta.rrid || ''));
+}
+function replayModelFromRun(run, fivePoints, cps){
+  const locs = ((run && run.allLocJson) || []).filter(p => isFinite(+p.gLat) && isFinite(+p.gLng));
+  if(locs.length < 2) return null;
+  const pts = locs.map(p => ({
+    lat: +p.gLat, lng: +p.gLng, alt: p.bdA == null ? null : +p.bdA,
+    // totalTime is the active clock (seconds); gainTime is a wall-clock
+    // string, so `+gainTime` would be NaN and freeze the animation.
+    t: p.totalTime == null ? null : +p.totalTime,
+    d: p.totalDis == null ? null : +p.totalDis
+  }));
+  return finishReplayModel(pts, previewSeriesFromRun(run || {}),
+    fivePoints || [], (run && run.start_ms) || 0, '本次轨迹', cps);
+}
+function previewSeriesFromRun(run){
+  // The preview path already returns `preview.series`; this fallback keeps
+  // the curves for a raw run dict handed in without it.
+  const speeds = (run.speed_json || []).filter(s => s && s.beginTime != null);
+  const steps = {};
+  (run.step_freq_json || []).forEach(s => { if(s) steps[s.beginTime] = s; });
+  const first = speeds.length ? +speeds[0].beginTime : 0;
+  const out = [];
+  speeds.forEach(s => {
+    const dt = Math.max(0.001, (+s.endTime - +s.beginTime) / 1000);
+    const dist = +s.distance || 0;
+    const st = steps[s.beginTime] || {};
+    const n = +st.stepsNum || 0;
+    out.push({t: (+s.beginTime - first) / 1000,
+              pace: dist > 0 && dt >= 6 ? (dt / 60) / (dist / 1000) : null,
+              cadence: n > 0 && dt >= 6 ? n / (dt / 60) : null,
+              alt: null});
+  });
+  return out;
+}
+function finishReplayModel(pts, series, five, startMs, label, cps){
+  pts = pts.slice().sort((a, b) => (a.t == null ? 0 : a.t) - (b.t == null ? 0 : b.t));
+  // A point without a time sits on the previous one's clock: the animation
+  // holds still there instead of inventing an interval.
+  let t = 0;
+  pts.forEach(p => { if(p.t == null) p.t = t; else t = p.t; });
+  const duration = Math.max(1, +((pts[pts.length - 1] || {}).t || 0));
+  // Distance: the record's own value where present, otherwise path length.
+  const PX_PER_M_LAT = 110540, PX_PER_M_LNG = 111320;
+  const midLat = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+  let acc = 0, prev = null;
+  pts.forEach(p => {
+    if(prev) acc += Math.hypot((p.lat - prev.lat) * PX_PER_M_LAT,
+                               (p.lng - prev.lng) * PX_PER_M_LNG * Math.cos(midLat * Math.PI / 180));
+    if(p.d == null) p.d = acc; prev = p;
+  });
+  const dist = pts[pts.length - 1].d || acc;
+  const seriesClean = (series || []).filter(s => s && isFinite(+s.t));
+  const cpRaw = (five && five.length ? five : (cps || []));
+  const checkpoints = cpRaw.map((p, i) => {
+    const lat = +(p.glat ?? p.gLat ?? p.lat), lng = +(p.glon ?? p.gLng ?? p.lng ?? p.lon);
+    if(!isFinite(lat) || !isFinite(lng)) return null;
+    let best = 0, bd = Infinity;
+    pts.forEach((q, j) => {
+      const dm = Math.hypot((q.lat - lat) * PX_PER_M_LAT, (q.lng - lng) * PX_PER_M_LNG);
+      if(dm < bd){ bd = dm; best = j; }
+    });
+    const pass = !!(p.isPass ?? p.is_pass ?? p.pass);
+    return {lat, lng, index: best, t: pts[best].t, pass, name: p.pointName || p.name || ('点位 ' + (i + 1))};
+  }).filter(Boolean);
+  return {pts, series: seriesClean, checkpoints, duration, distance: dist,
+          startMs, label: label || '回放',
+          hasAlt: pts.some(p => p.alt != null) || seriesClean.some(s => s.alt != null)};
+}
+function replayAt(model, t){
+  const pts = model.pts;
+  let i = 0;
+  while(i + 1 < pts.length && pts[i + 1].t <= t) i++;
+  const a = pts[i], b = pts[Math.min(i + 1, pts.length - 1)];
+  const span = (b.t - a.t) || 1;
+  const k = a === b ? 1 : Math.max(0, Math.min(1, (t - a.t) / span));
+  const lat = a.lat + (b.lat - a.lat) * k, lng = a.lng + (b.lng - a.lng) * k;
+  const alt = a.alt == null || b.alt == null ? (a.alt ?? b.alt) : a.alt + (b.alt - a.alt) * k;
+  const dist = (a.d || 0) + ((b.d || 0) - (a.d || 0)) * k;
+  let series = null;
+  const s = model.series || [];
+  if(s.length){
+    let j = 0;
+    while(j + 1 < s.length && +s[j + 1].t <= t) j++;
+    series = s[j];
+  }
+  return {lat, lng, alt, dist, index: i, series};
+}
+function replayResize(canvas){
+  if(!canvas) return;
+  const ratio = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || canvas.width;
+  const cssH = canvas.clientHeight || canvas.height;
+  if(canvas.width !== Math.round(cssW * ratio) || canvas.height !== Math.round(cssH * ratio)){
+    canvas.width = Math.round(cssW * ratio);
+    canvas.height = Math.round(cssH * ratio);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return {ctx, w: cssW, h: cssH};
+}
+const REPLAY_COLORS = {track: '#2E4A7D', done: '#B6483C', ink: '#24231F',
+                       faint: '#938B79', rule: '#D8D1BF', hi: '#F2D25C',
+                       green: '#4E7657', paper: '#FBF8F0'};
+function drawReplayTrack(model, t){
+  const c = replayResize($('#replayCanvas'));
+  if(!c) return;
+  const {ctx, w, h} = c;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = REPLAY_COLORS.paper;
+  ctx.fillRect(0, 0, w, h);
+  // Fit: mirror longitude so a run heading east goes right.
+  const lats = model.pts.map(p => p.lat), lngs = model.pts.map(p => p.lng);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const midLat = (minLat + maxLat) / 2;
+  const kx = Math.cos(midLat * Math.PI / 180);
+  const spanX = Math.max(1e-7, (maxLng - minLng) * kx), spanY = Math.max(1e-7, maxLat - minLat);
+  const pad = 22;
+  const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+  const ox = (w - spanX * scale) / 2, oy = (h - spanY * scale) / 2;
+  const X = lng => ox + (lng - minLng) * kx * scale;
+  const Y = lat => h - oy - (lat - minLat) * scale;
+  ctx.lineJoin = ctx.lineCap = 'round';
+  ctx.strokeStyle = REPLAY_COLORS.track;
+  ctx.globalAlpha = 0.28;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  model.pts.forEach((p, i) => { i ? ctx.lineTo(X(p.lng), Y(p.lat)) : ctx.moveTo(X(p.lng), Y(p.lat)); });
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  const head = replayAt(model, t);
+  ctx.strokeStyle = REPLAY_COLORS.done;
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  model.pts.forEach((p, i) => { if(p.t > t) return; i ? ctx.lineTo(X(p.lng), Y(p.lat)) : ctx.moveTo(X(p.lng), Y(p.lat)); });
+  if(head.index >= 0) ctx.lineTo(X(head.lng), Y(head.lat));
+  ctx.stroke();
+  // checkpoints
+  model.checkpoints.forEach(cp => {
+    const reached = cp.t <= t;
+    ctx.beginPath();
+    ctx.arc(X(cp.lng), Y(cp.lat), reached ? 6 : 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = cp.pass === false ? REPLAY_COLORS.done : (reached ? REPLAY_COLORS.green : REPLAY_COLORS.faint);
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = REPLAY_COLORS.paper;
+    ctx.stroke();
+    if(reached){
+      ctx.fillStyle = REPLAY_COLORS.ink;
+      ctx.font = '10px ' + (getComputedStyle(document.documentElement)
+        .getPropertyValue('--sans') || 'sans-serif');
+      ctx.fillText(cp.name.slice(0, 12), X(cp.lng) + 8, Y(cp.lat) - 6);
+    }
+  });
+  // start / head
+  const s0 = model.pts[0];
+  ctx.fillStyle = REPLAY_COLORS.track;
+  ctx.beginPath(); ctx.arc(X(s0.lng), Y(s0.lat), 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = REPLAY_COLORS.hi;
+  ctx.strokeStyle = REPLAY_COLORS.ink;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(X(head.lng), Y(head.lat), 6.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+}
+function drawReplayCurve(canvas, model, key, opts){
+  const c = replayResize(canvas);
+  if(!c) return;
+  const {ctx, w, h} = c;
+  ctx.clearRect(0, 0, w, h);
+  const pad = {l: 36, r: 8, t: 6, b: 12};
+  const W = w - pad.l - pad.r, H = h - pad.t - pad.b;
+  const series = model.series.filter(s => s[key] != null && isFinite(+s[key]));
+  ctx.strokeStyle = REPLAY_COLORS.rule;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(pad.l, pad.t, W, H);
+  const X = t => pad.l + (t / model.duration) * W;
+  model.checkpoints.forEach(cp => {
+    ctx.strokeStyle = REPLAY_COLORS.green;
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.moveTo(X(cp.t), pad.t); ctx.lineTo(X(cp.t), pad.t + H); ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+  if(!series.length){
+    ctx.fillStyle = REPLAY_COLORS.faint;
+    ctx.font = '11px sans-serif';
+    ctx.fillText('没有' + opts.empty, pad.l + 6, pad.t + 18);
+    return;
+  }
+  const vals = series.map(s => +s[key]);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if(opts.clamp){ lo = Math.max(lo, opts.clamp[0]); hi = Math.min(hi, opts.clamp[1]); }
+  if(hi - lo < 1e-6){ hi += 1; lo -= 1; }
+  const Y = v => opts.invert
+    ? pad.t + ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * H
+    : pad.t + H - ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * H;
+  ctx.fillStyle = REPLAY_COLORS.faint;
+  ctx.font = '9px monospace';
+  ctx.fillText(opts.fmt(hi), 2, pad.t + 8);
+  ctx.fillText(opts.fmt(lo), 2, pad.t + H);
+  ctx.strokeStyle = opts.color || REPLAY_COLORS.track;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  series.forEach((s, i) => {
+    const x = X(+s.t), y = Y(+s[key]);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+  // play head
+  const playhead = X(REPLAY.t);
+  ctx.strokeStyle = REPLAY_COLORS.done;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(playhead, pad.t); ctx.lineTo(playhead, pad.t + H); ctx.stroke();
+  ctx.setLineDash([]);
+}
+function replayCurves(){
+  const m = LIVE.replay;
+  if(!m) return;
+  drawReplayCurve($('#replayPaceCurve'), m, 'pace', {
+    invert: true, fmt: v => HXPCharts.fmtPace(v), color: REPLAY_COLORS.done, empty: '配速曲线'});
+  drawReplayCurve($('#replayCadCurve'), m, 'cadence', {
+    fmt: v => Math.round(v), color: REPLAY_COLORS.green, empty: '步频曲线'});
+  drawReplayCurve($('#replayAltCurve'), m, 'alt', {
+    fmt: v => Math.round(v), color: REPLAY_COLORS.track, empty: '海拔曲线'});
+}
+function replayReadout(){
+  const m = LIVE.replay;
+  if(!m) return;
+  const head = replayAt(m, REPLAY.t);
+  const pct = Math.round(REPLAY.t / m.duration * 100);
+  if($('#replayProgress')) $('#replayProgress').textContent = pct + '% · ' +
+    (head.dist / 1000).toFixed(2) + ' km';
+  if($('#replayClock')) $('#replayClock').textContent = hms(Math.round(REPLAY.t)) +
+    ' / ' + hms(Math.round(m.duration));
+  const series = head.series || {};
+  if($('#replayPace')) $('#replayPace').textContent = series.pace != null
+    ? HXPCharts.fmtPace(series.pace) : '—';
+  if($('#replayCadence')) $('#replayCadence').textContent = series.cadence != null
+    ? Math.round(series.cadence) : '—';
+  if($('#replayAlt')) $('#replayAlt').textContent = head.alt != null
+    ? Math.round(head.alt) + ' m' : '—';
+  const hit = m.checkpoints.filter(cp => cp.t <= REPLAY.t).length;
+  if($('#replayCp')) $('#replayCp').textContent = m.checkpoints.length
+    ? (hit + ' / ' + m.checkpoints.length) : '无';
+  if($('#replayScrub')) $('#replayScrub').value = String(Math.round(REPLAY.t / m.duration * 1000));
+}
+function replayDraw(){
+  const m = LIVE.replay;
+  if(!m) return;
+  drawReplayTrack(m, REPLAY.t);
+  replayCurves();
+  replayReadout();
+}
+function replayTick(ts){
+  const m = LIVE.replay;
+  if(!m || !REPLAY.playing) return;
+  if(!REPLAY.last) REPLAY.last = ts;
+  const dt = Math.min(0.25, (ts - REPLAY.last) / 1000);
+  REPLAY.last = ts;
+  REPLAY.t = Math.min(m.duration, REPLAY.t + dt * REPLAY.speed);
+  replayDraw();
+  if(REPLAY.t >= m.duration){
+    REPLAY.playing = false;
+    if($('#replayPlay')) $('#replayPlay').textContent = '重播';
+    return;
+  }
+  REPLAY.raf = requestAnimationFrame(replayTick);
+}
+function replayToggle(){
+  const m = LIVE.replay;
+  if(!m) return;
+  if(REPLAY.playing){
+    REPLAY.playing = false;
+    if(REPLAY.raf) cancelAnimationFrame(REPLAY.raf);
+    REPLAY.raf = 0;
+    if($('#replayPlay')) $('#replayPlay').textContent = '继续';
+    return;
+  }
+  if(REPLAY.t >= m.duration) REPLAY.t = 0;
+  REPLAY.playing = true;
+  REPLAY.last = 0;
+  if($('#replayPlay')) $('#replayPlay').textContent = '暂停';
+  REPLAY.raf = requestAnimationFrame(replayTick);
+}
+function openReplay(model){
+  if(!model){ toast('没有可回放的轨迹点'); return; }
+  LIVE.replay = model;
+  REPLAY.playing = false;
+  REPLAY.t = 0;
+  if($('#replayTitle')) $('#replayTitle').textContent = model.label || '轨迹回放';
+  if($('#replayKicker')) $('#replayKicker').textContent = model.checkpoints.length
+    ? (model.checkpoints.length + ' 个打卡点') : '无打卡点';
+  if($('#replayNote')) $('#replayNote').textContent =
+    '本地动画，不发任何请求 · ' + model.pts.length + ' 点 · ' +
+    (model.distance / 1000).toFixed(2) + ' km';
+  if($('#replayPlay')) $('#replayPlay').textContent = '播放';
+  if($('#replaySpeed')) REPLAY.speed = +$('#replaySpeed').value || 4;
+  if($('#replayModal')) $('#replayModal').hidden = false;
+  // Canvas needs a laid-out box before it can size itself.
+  setTimeout(() => {
+    replayDraw();
+    const close = $('#replayClose');
+    if(close) close.focus();
+    replayToggle();
+  }, 40);
+}
+function openRecordReplay(){
+  const d = LIVE.lastDetail;
+  const model = d ? replayModelFromDetail(d) : null;
+  openReplay(model);
+}
+
 /* ---------- page routing ---------- */
 const PAGES = ['overview', 'accounts', 'run', 'routes', 'records', 'profile', 'settings'];
 let runMapFitted = false;
@@ -1464,6 +2482,10 @@ function go(page){
         _pointsAutoAt = Date.now();
         loadPoints(false, {quiet: true});
       }
+      // Presets are a local list; one read when the page is first opened.
+      // No polling: a save/delete refreshes explicitly.
+      if(!LIVE.presetsLoaded && !methodMissing('real_presets')) loadPresets();
+      refreshAuditButton();
     }, 80);
   }
   if(page === 'routes'){
@@ -1485,6 +2507,24 @@ function go(page){
      !(LIVE.rules && (LIVE.rules.configured ||
         (LIVE.rules.rules && LIVE.rules.rules.auto_fetch === false)))){
     fetchSchoolRules({silent: true});
+  }
+  if(page === 'settings' && !LIVE.realism && !LIVE.realismLoading){
+    loadRealism();
+  }
+  if(page === 'records'){
+    if($('#recDiagZip')) $('#recDiagZip').disabled = !hasSession();
+    if($('#recFit')) $('#recFit').disabled = true;   // needs a selected record
+  }
+  if(page === 'overview'){
+    if($('#inspectRefresh')){
+      $('#inspectRefresh').disabled = !hasSession() ||
+        methodMissing('real_inspection');
+      $('#inspectRefresh').title = hasSession()
+        ? (methodMissing('real_inspection') ? bridgeMessage({bridgeMissing: true})
+                                            : '手动巡检一次')
+        : '登录后才能巡检';
+    }
+    renderInspect();
   }
 }
 document.querySelectorAll('.nav-item').forEach(btn => {
@@ -1595,8 +2635,54 @@ const LIVE = {
   preflight: null, lastDetail: null,
   tokenUpdatedAt: null,
   log: [], submitting: false, lastSubmit: null, submitResult: null,
-  loginCover: '', coverBusy: false
+  loginCover: '', coverBusy: false,
+  // v0.1.8 feature pack (P0–P2).  All of it is opt-in: nothing here is
+  // fetched or sent until the operator clicks.
+  loginUserId: '',
+  presets: [], presetsLoaded: false, presetsError: null,
+  realism: null, realismError: null, realismSaved: false,
+  audit: null, auditBusy: false,
+  explain: null,
+  stats: null, statsBusy: false,
+  inspect: null, inspectBusy: false,
+  verify: null, verifyBusy: false,
+  replay: null,
+  logSel: -1
 };
+
+/* The bridge answers an unknown method with HTTP 404 + this message.  A
+   missing method must show up as "未接入" on the card, never as a page error:
+   this frontend ships ahead of the backend wiring on purpose. */
+function bridgeMissing(j){
+  if(!j) return true;
+  if(j.bridgeMissing) return true;
+  return j.code === 404 && /unknown api/i.test(String(j.message || ''));
+}
+function bridgeMessage(j){
+  if(bridgeMissing(j)) return '该功能还没有接入本地 bridge（后端未就绪），升级或等待主程序更新';
+  // The HTTP layer turns binding errors and exceptions into code 400/500.
+  // Before v0.1.8 the native bridge surfaced the same thing as `error: 404`.
+  if(j && j.error !== undefined && j.error !== null){
+    return 'bridge ' + j.error + (j.message ? ('：' + j.message) : '');
+  }
+  return String((j && j.message) || '未知错误');
+}
+/* One request per explicit click.  Cards remember "not wired" so a second
+   click does not repeat a request that cannot succeed. */
+async function liveMaybe(method, args, timeoutMs){
+  if(liveMaybe.missing && liveMaybe.missing.has(method)){
+    return {code: 404, bridgeMissing: true, data: null,
+            message: 'unknown api ' + method};
+  }
+  const j = await liveApi(method, args, timeoutMs);
+  if(bridgeMissing(j)){
+    liveMaybe.missing = liveMaybe.missing || new Set();
+    liveMaybe.missing.add(method);
+    return {code: 404, bridgeMissing: true, data: null,
+            message: 'unknown api ' + method};
+  }
+  return j;
+}
 
 async function liveApi(method, args, timeoutMs){
   const ctl = new AbortController();
@@ -2471,11 +3557,11 @@ function renderLog(){
   const list = $('#logEvents');
   if(!list) return;
   const filter = (document.querySelector('.log-filter.active') || {}).dataset?.logFilter || 'all';
-  list.innerHTML = LIVE.log.map(e => {
+  list.innerHTML = LIVE.log.map((e, idx) => {
     const show = filter === 'all' ||
       (filter === 'warn' && (e.level === 'warn' || e.level === 'wait')) ||
       (filter === 'err' && e.level === 'err');
-    return `<li class="log-event ${esc(e.level)}" data-level="${esc(e.level)}" ${show ? '' : 'hidden'}>
+    return `<li class="log-event ${esc(e.level)}" data-level="${esc(e.level)}" data-log-index="${idx}" ${show ? '' : 'hidden'}>
       <span class="log-time">${esc(e.time)}</span><span class="log-dot"></span>
       <div><div class="log-msg">${esc(e.msg)}</div><div class="log-detail">${esc(e.detail)}</div></div>
     </li>`;
@@ -2530,6 +3616,31 @@ function clearAccountActivity(){
   LIVE.receipts = []; LIVE.receiptsLoaded = false; LIVE.receiptsError = null;
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   LIVE.lastDetail = null;
+  // v0.1.8 per-account panels: audit results, verification timelines, stats,
+  // inspection and the error note all describe the old account.
+  LIVE.logSel = -1;
+  LIVE.audit = null;
+  LIVE.verify = null;
+  LIVE.stats = null;
+  LIVE.inspect = null;
+  LIVE.explain = null;
+  REPLAY.playing = false;
+  if(REPLAY.raf) cancelAnimationFrame(REPLAY.raf);
+  REPLAY.raf = 0;
+  if($('#replayModal')) $('#replayModal').hidden = true;
+  if($('#logExplainBox')) $('#logExplainBox').hidden = true;
+  if($('#logExplain')) $('#logExplain').disabled = true;
+  if($('#ovErrorNote')) $('#ovErrorNote').hidden = true;
+  if($('#submitVerify')){ $('#submitVerify').hidden = true; $('#submitVerify').innerHTML = ''; }
+  if($('#rdVerifyBox')){ $('#rdVerifyBox').hidden = true; $('#rdVerifyBox').innerHTML = ''; }
+  if($('#statsPanel')) $('#statsPanel').hidden = true;
+  if(typeof renderAudit === 'function') renderAudit();
+  if(typeof renderStats === 'function'){ LIVE.stats = null; renderStats(); }
+  if(typeof renderInspect === 'function'){ renderInspect(); }
+  if(typeof renderPresets === 'function') renderPresets();
+  if($('#inspectRefresh')) $('#inspectRefresh').disabled = true;
+  if($('#recDiagZip')) $('#recDiagZip').disabled = true;
+  if($('#recFit')) $('#recFit').disabled = true;
   renderLog();
   renderRecords();
   renderProfileEmpty();
@@ -4374,6 +5485,11 @@ function clearRecordMap(){
   if($('#rdGpx')) $('#rdGpx').disabled = true;
   if($('#rdSaveRoute')) $('#rdSaveRoute').disabled = true;
   if($('#rdCharts')) $('#rdCharts').disabled = true;
+  if($('#rdFit')) $('#rdFit').disabled = true;
+  if($('#rdReplay')) $('#rdReplay').disabled = true;
+  if($('#rdVerify')) $('#rdVerify').disabled = true;
+  if($('#rdVerifyBox')) $('#rdVerifyBox').hidden = true;
+  if($('#recFit')) $('#recFit').disabled = true;
 }
 function renderRecordMap(detail){
   const track = Array.isArray(detail && detail.track) ? detail.track : [];
@@ -4423,6 +5539,10 @@ function renderRecordMap(detail){
   if($('#rdGpx')) $('#rdGpx').disabled = false;
   if($('#rdSaveRoute')) $('#rdSaveRoute').disabled = false;
   if($('#rdCharts')) $('#rdCharts').disabled = false;
+  if($('#rdFit')) $('#rdFit').disabled = false;
+  if($('#rdReplay')) $('#rdReplay').disabled = false;
+  if($('#rdVerify')) $('#rdVerify').disabled = false;
+  if($('#recFit')) $('#recFit').disabled = false;
 }
 function clearRecordDetail(){
   ['rdPace','rdTime','rdCadence','rdSteps','rdTrack','rdSource','rdCheat','rdPolicy','rdRrid'].forEach(id => {
@@ -4479,6 +5599,14 @@ function renderRecords(){
     const rr = r.rrid ? (String(r.rrid).slice(0, 4) + '…' + String(r.rrid).slice(-4)) : '—';
     return `<div class="trow" data-rec-index="${idx}" role="button" tabindex="0"><span class="mono">${esc((r.date || '').slice(5).replace('-', '/'))}</span><span>${(+r.distance_km || 0).toFixed(2)} km</span><span class="mono">${paceText(r.pace_min_per_km)}</span><span>${recordTag(r)}</span><span class="mono">${esc(rr)}</span></div>`;
   }).join('');
+  // FIT export acts on the selected record only; show why when there is none.
+  if($('#recFit')){
+    // A stale detail from another account/page must not be exportable.
+    const sel = LIVE.lastDetail && LIVE.lastDetail.detail;
+    const inList = !!(sel && LIVE.records.some(r => r.rrid && r.rrid === sel.rrid));
+    $('#recFit').disabled = !inList;
+    $('#recFit').title = inList ? '导出选中记录的 FIT' : '先在右侧选一条有轨迹的记录';
+  }
   if(!list.length){
     $('#recHint').textContent = LIVE.recordsError
       ? ('记录加载失败：' + LIVE.recordsError)
@@ -4610,6 +5738,7 @@ async function selectRecord(i){
     $('#rdTag').textContent = '失败'; $('#rdTag').className = 'tag warn';
     $('#rdReasons').innerHTML = `<li class="miss">${esc(j.message || '')}</li>`;
     liveLog('记录详情失败', j.message || '', 'err');
+    recordErrorForExplain(j.message || '记录详情读取失败', 'err');
     return;
   }
   const d = j.data || {}, x = d.detail || {}, s = d.stats || {};
@@ -5618,7 +6747,10 @@ function previewArgs(params, ti){
       ? splitRows.map(r => Math.round(+r.seconds || 0)) : null,
     daily_runs: di.loaded ? di.count : null,
     daily_source: di.loaded ? di.source : null,
-    ...altitudeArgs(params)
+    ...altitudeArgs(params),
+    // v0.1.8 realism switches.  Defaults ("none"/"urban"/false) reproduce the
+    // v0.1.7 output exactly, so an untouched install submits the same track.
+    ...realismArgs()
   };
 }
 async function refreshModelPreview(){
@@ -5898,6 +7030,13 @@ function renderSubmitResult(){
     ? '已核对' : (labels[r.state] || '—');
   if(title) title.textContent = r.title || '';
   if(text) text.textContent = r.detail || '';
+  if(r.state !== 'ok' && (r.detail || r.title)) recordErrorForExplain(r.detail || r.title, r.state);
+  if($('#submitResultVerify')){
+    const v = r.rrid || r.uuid;
+    $('#submitResultVerify').disabled = !v;
+    $('#submitResultVerify').title = v ? '只读核验这条记录（不重发、不 PUT）' : '提交结果里没有 rrid，去记录页核验';
+    if(!v && $('#submitVerify')) $('#submitVerify').hidden = true;
+  }
   if(time) time.textContent = r.at
     ? new Date(r.at).toLocaleTimeString('zh-CN',
         {hour12: false, hour: '2-digit', minute: '2-digit'})
@@ -6363,7 +7502,8 @@ async function doSubmitRun(pending){
       // current line length.
       points_distance_m: LIVE.pointsDistance || null,
       points: (!freeRunOn() && livePoints.length) ? livePointsPayload() : null,
-      ...altitudeArgs(params)
+      ...altitudeArgs(params),
+      ...realismArgs()
     }, 180000);
   }finally{
     LIVE.submitting = false;
@@ -7540,13 +8680,132 @@ function liveWire(){
   $('#logClear').addEventListener('click', () => {
     if(!LIVE.log.length) return;
     if(!confirm('清空本次运行日志？')) return;
-    LIVE.log = []; renderLog();
+    LIVE.log = []; LIVE.logSel = -1;
+    if($('#logExplainBox')) $('#logExplainBox').hidden = true;
+    if($('#logExplain')) $('#logExplain').disabled = true;
+    renderLog();
   });
+}
+
+/* v0.1.8: every new control is bound here, next to liveWire's own handlers.
+   Each one only acts on a click; nothing below runs on page load or a timer. */
+function featureWire(){
+  // settings: OBS key + realism
+  if($('#setRealismSave')) $('#setRealismSave').addEventListener('click', saveRealism);
+  if($('#setRealismReset')) $('#setRealismReset').addEventListener('click', resetRealismForm);
+  if($('#diagZip')) $('#diagZip').addEventListener('click', ev => downloadDiagZip(ev.currentTarget));
+  if($('#recDiagZip')) $('#recDiagZip').addEventListener('click', ev => downloadDiagZip(ev.currentTarget));
+
+  // overview: inspection + error note
+  if($('#inspectRefresh')) $('#inspectRefresh').addEventListener('click', runInspection);
+  if($('#ovErrorNote')){
+    $('#ovErrorNote').addEventListener('click', () => { $('#ovErrorNote').hidden = true; });
+  }
+
+  // run page: presets
+  if($('#presetSel')) $('#presetSel').addEventListener('change', renderPresets);
+  if($('#presetApply')) $('#presetApply').addEventListener('click', applyPreset);
+  if($('#presetSave')) $('#presetSave').addEventListener('click', savePreset);
+  if($('#presetDelete')) $('#presetDelete').addEventListener('click', deletePreset);
+  if($('#presetName')) $('#presetName').addEventListener('keydown', ev => {
+    if(ev.key === 'Enter'){ ev.preventDefault(); savePreset(); }
+  });
+
+  // submit page: audit + verify
+  if($('#auditBtn')) $('#auditBtn').addEventListener('click', runAudit);
+  if($('#auditCopy')) $('#auditCopy').addEventListener('click', copyAuditJson);
+  if($('#submitResultVerify')) $('#submitResultVerify').addEventListener('click', () => {
+    const r = LIVE.submitResult;
+    if(!r) return;
+    verifyRecord({rrid: r.rrid || null, uuid: r.uuid || null, via: 'submit'});
+  });
+
+  // log: explain the selected entry
+  if($('#logEvents')){
+    $('#logEvents').addEventListener('click', ev => {
+      const li = ev.target.closest('[data-log-index]');
+      selectLogEntry(li ? +li.dataset.logIndex : -1);
+    });
+  }
+  if($('#logExplain')) $('#logExplain').addEventListener('click', explainSelectedLog);
+
+  // records: stats, FIT, verify
+  if($('#recStats')) $('#recStats').addEventListener('click', () => {
+    const panel = $('#statsPanel');
+    const open = panel && panel.hidden;
+    if(panel) panel.hidden = !open;
+    if(open) loadStats();
+  });
+  if($('#statsClose')) $('#statsClose').addEventListener('click', () => {
+    if($('#statsPanel')) $('#statsPanel').hidden = true;
+  });
+  if($('#statsRun')) $('#statsRun').addEventListener('click', loadStats);
+  if($('#statsWeeks')) $('#statsWeeks').addEventListener('change', () => {
+    if($('#statsPanel') && !$('#statsPanel').hidden) loadStats();
+  });
+  if($('#recFit')) $('#recFit').addEventListener('click', ev => {
+    const d = LIVE.lastDetail;
+    if(!d || !d.detail){ toast('先在右侧选一条记录'); return; }
+    exportFit(d.detail, ev.currentTarget);
+  });
+  if($('#rdFit')) $('#rdFit').addEventListener('click', ev => {
+    const d = LIVE.lastDetail;
+    if(!d || !d.detail){ toast('先选一条记录'); return; }
+    exportFit(d.detail, ev.currentTarget);
+  });
+  if($('#rdVerify')) $('#rdVerify').addEventListener('click', () => {
+    const x = (LIVE.lastDetail && LIVE.lastDetail.detail) || {};
+    if(!x.rrid && !x.uuid){ toast('这条记录没有 rrid，无法核验'); return; }
+    verifyRecord({rrid: x.rrid || null, uuid: x.uuid || null, via: 'detail'});
+  });
+  if($('#rdReplay')) $('#rdReplay').addEventListener('click', openRecordReplay);
+
+  // replay modal
+  if($('#replayClose')) $('#replayClose').addEventListener('click', replayClose);
+  if($('#replayVeil')) $('#replayVeil').addEventListener('click', replayClose);
+  if($('#replayPlay')) $('#replayPlay').addEventListener('click', replayToggle);
+  if($('#replayRestart')) $('#replayRestart').addEventListener('click', () => {
+    REPLAY.playing = false;
+    if(REPLAY.raf) cancelAnimationFrame(REPLAY.raf);
+    REPLAY.raf = 0;
+    REPLAY.t = 0;
+    if($('#replayPlay')) $('#replayPlay').textContent = '播放';
+    replayDraw();
+  });
+  if($('#replayScrub')) $('#replayScrub').addEventListener('input', ev => {
+    if(!LIVE.replay) return;
+    // Scrubbing pauses: a drag fighting the animation jumps backwards.
+    REPLAY.playing = false;
+    if(REPLAY.raf) cancelAnimationFrame(REPLAY.raf);
+    REPLAY.raf = 0;
+    if($('#replayPlay')) $('#replayPlay').textContent = '继续';
+    REPLAY.t = LIVE.replay.duration * (+ev.target.value || 0) / 1000;
+    replayDraw();
+  });
+  if($('#replaySpeed')) $('#replaySpeed').addEventListener('change', ev => {
+    REPLAY.speed = +ev.target.value || 4;
+  });
+  window.addEventListener('resize', () => {
+    if(LIVE.replay && $('#replayModal') && !$('#replayModal').hidden) replayDraw();
+  });
+  document.addEventListener('keydown', ev => {
+    if(!$('#replayModal') || $('#replayModal').hidden) return;
+    if(ev.key === 'Escape'){ ev.preventDefault(); replayClose(); }
+    else if(ev.key === ' ' && !(eventTargetEl(ev) && eventTargetEl(ev).closest('input,select'))){
+      ev.preventDefault(); replayToggle();
+    }
+  });
+  renderAudit();
+  renderPresets();
 }
 
 /* Boot: login gate -> local data -> real session. */
 initRunDate();
 liveWire();
+featureWire();
+// Realism is local state, not per-page: load it before the first preview so a
+// saved pause/GPS/terrain profile is actually used after a restart.
+loadRealism();
 loadAppVersion();
 loadLoginCover();
 setTimeout(() => checkUpdate({silent: true}), 1500);
@@ -7576,6 +8835,7 @@ document.addEventListener('keydown', ev => {
   for(const [dlgSel, cardSel] of [
     ['#dataPreview', '.data-preview-card'],
     ['#postSubmit', '.post-card'],
+    ['#replayModal', '.replay-card'],
     ['#updateDlg', '.onboard-card']
   ]){
     const dlg = $(dlgSel);

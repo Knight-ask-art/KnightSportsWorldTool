@@ -958,6 +958,100 @@ def _km_pace_factors(n_km: int, rng) -> list[float]:
     return [f / mean for f in out]
 
 
+def _pause_windows(total_seconds: int, profile: str,
+                   manual: list | None, rng: random.Random) -> list[dict]:
+    """Wall-clock pauses, kept separate from the active ``totalTime`` clock.
+
+    A pause advances ``gainTime`` but not ``totalTime``; it is the same split
+    the 7.4.0 capture shows (427 s active vs 505 s wall).  Window distance and
+    steps stay on the active clock, so the sums remain exact.
+    """
+    profile = str(profile or 'none').lower()
+    if profile == 'none' or total_seconds < 60:
+        return []
+    out = []
+    if profile == 'manual':
+        for item in (manual or []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                at = float(item.get('after_s'))
+                sec = float(item.get('seconds'))
+            except (TypeError, ValueError):
+                continue
+            if at <= 0 or sec <= 0:
+                continue
+            out.append({'at_s': min(total_seconds - 1, int(at)),
+                        'seconds': max(1, int(sec))})
+    elif profile == 'auto':
+        count = 2 if total_seconds >= 600 else 1
+        for k in range(count):
+            at = int(total_seconds * rng.uniform(0.18, 0.82))
+            at = max(30, min(total_seconds - 20, at))
+            out.append({'at_s': at, 'seconds': int(rng.uniform(20.0, 90.0))})
+    else:
+        return []
+    out.sort(key=lambda x: x['at_s'])
+    return out
+
+
+def _pause_offset_ms(windows: list[dict], tsec: int) -> int:
+    return sum(int(w['seconds']) * 1000 for w in windows
+               if int(w['at_s']) <= tsec)
+
+
+def _terrain_factors(altitude_profile, seg_m: list[float]) -> list[float] | None:
+    """Per-kilometre time factors from a real elevation template."""
+    if not isinstance(altitude_profile, list):
+        return None
+    vals = []
+    for v in altitude_profile:
+        try:
+            vals.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    n_km = len(seg_m)
+    if len(vals) < 2 or n_km <= 0:
+        return None
+    idx = [int(round(i * (len(vals) - 1) / n_km)) for i in range(n_km + 1)]
+    out = []
+    for i in range(n_km):
+        gain = vals[idx[i + 1]] - vals[idx[i]]
+        slope_pct = max(-10.0, min(10.0,
+                                   gain / max(1.0, seg_m[i]) * 100.0))
+        factor = (1.0 + 0.025 * slope_pct if slope_pct >= 0
+                  else 1.0 + 0.012 * slope_pct)
+        out.append(max(0.75, min(1.35, factor)))
+    return out
+
+
+def estimate_pause_seconds(profile: str, manual: list | None = None,
+                           total_seconds: int = 0) -> int:
+    """Upper bound for start-slot reservation before generation.
+
+    ``auto`` uses at most two 90 s pauses; manual sums only valid entries.
+    Reserving the bound keeps ``stopTime`` inside 09:00–22:00/now even though
+    the exact RNG pause is not known until the run is generated.
+    """
+    profile = str(profile or 'none').lower()
+    if profile == 'auto':
+        return 180 if (not total_seconds or total_seconds >= 600) else 90
+    if profile == 'manual':
+        total = 0
+        for item in (manual or []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                sec = float(item.get('seconds'))
+                at = float(item.get('after_s'))
+            except (TypeError, ValueError):
+                continue
+            if sec > 0 and at > 0:
+                total += max(1, int(sec))
+        return total
+    return 0
+
+
 def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       cadence: int = 150, center_lat: float | None = None,
                       center_lng: float | None = None,
@@ -977,7 +1071,11 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       km_times: list[float] | None = None,
                       run_area_id: int | None = None,
                       geo_fences: list | None = None,
-                      sequential: bool = False) -> dict:
+                      sequential: bool = False,
+                      pause_profile: str = 'none',
+                      pauses: list | None = None,
+                      gps_profile: str = 'urban',
+                      terrain_coupling: bool = False) -> dict:
     """Full forged record. 2.5km default mirrors the verified mock sample.
 
     waypoints=[(lat,lng),...] routes through those checkpoints; ``closed``
@@ -1072,10 +1170,24 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         seg_t = [max(1, int(round(t * scale))) for t in raw_t]
         seg_t[-1] = max(1, seg_t[-1] + target - sum(seg_t))
         seg_t = _distinct_paces(seg_m, seg_t, target)
+    # Terrain adjusts the split shape after either source (manual km_times or
+    # generated splits), but keeps the operator's total duration unchanged.
+    if terrain_coupling:
+        factors = _terrain_factors(altitude_profile, seg_m)
+        if factors:
+            base_total = sum(seg_t)
+            adjusted = [max(1, int(round(seg_t[i] * factors[i])))
+                        for i in range(n_km)]
+            scale = base_total / max(1, sum(adjusted))
+            seg_t = [max(1, int(round(v * scale))) for v in adjusted]
+            seg_t[-1] = max(1, seg_t[-1] + base_total - sum(seg_t))
+            seg_t = _distinct_paces(seg_m, seg_t, base_total)
     total_seconds = sum(seg_t)
     pace_min_per_km = total_seconds / 60.0 / max(1e-9, distance_km)
     speed = round(float(total_meters) / total_seconds, 2)
     total_steps = int(total_seconds / 60 * cadence)
+    pause_windows = _pause_windows(total_seconds, pause_profile, pauses, rng)
+    pause_total_s = sum(int(w['seconds']) for w in pause_windows)
 
     if n_points is None:
         n_points = max(N_POINTS, int(round(total_seconds / max(0.5, sample_seconds))))
@@ -1257,12 +1369,18 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     # identical to the request timestamp is a fingerprint in itself.
     total_ms_run = total_seconds * 1000
     if start_ms is None:
-        t0 = safety.now_ms() - total_ms_run - rng.randint(1000, 5000)
+        t0 = (safety.now_ms() - total_ms_run
+              - pause_total_s * 1000 - rng.randint(1000, 5000))
     else:
         t0 = int(start_ms)
         if t0 <= 0:
             raise ValueError('start_ms must be a positive epoch (got %r)'
                              % (start_ms,))
+        wall_stop = t0 + total_ms_run + pause_total_s * 1000
+        if wall_stop > safety.now_ms() + 5000:
+            raise ValueError(
+                'pause makes stopTime in the future; choose an earlier start '
+                'or a shorter pause')
     for i, p in enumerate(locs):
         p['ts'] = t0 + int(round(point_times[i] * 1000))
     for i in range(1, n_locs):
@@ -1595,6 +1713,11 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     count_span = rng.uniform(5.0, 8.0)
     count_phase = rng.uniform(0.0, math.tau)
     count_wave = rng.uniform(180.0, 420.0)
+    tunnel_windows = []
+    if str(gps_profile).lower() == 'tunnel':
+        for _ in range(2 if total_meters > 800 else 1):
+            start = rng.uniform(0.15, 0.75) * total_meters
+            tunnel_windows.append((start, start + rng.uniform(30.0, 120.0)))
 
     loc_points = []
     for i, p in enumerate(locs):
@@ -1639,6 +1762,19 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                      + count_span * math.sin(
                          2.0 * math.pi * dis / count_wave + count_phase)
                      + rng.gauss(0.0, 1.5))
+        profile = str(gps_profile or 'urban').lower()
+        if profile == 'clean':
+            count_value, radius_value = 60, 5.0
+        elif profile == 'tunnel' and any(
+                a <= dis <= b for a, b in tunnel_windows):
+            # A short underpass: the provider still emits samples, but the
+            # fix quality collapses.  Points are kept so every window/lap sum
+            # stays exact.
+            count_value = rng.randint(4, 8)
+            radius_value = round(rng.uniform(20.0, 40.0), 1)
+        else:
+            count_value = int(round(min(79.0, max(53.0, count_now))))
+            radius_value = round(radius_now, 1)
         loc_points.append({
             'avgSpeed': round(mps, 4),
             'bdA': round(float(p.get('alt', 0.0)), 2),
@@ -1646,12 +1782,13 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             'bdG': 1,
             'bdS': round(mps, 4),
             'coorType': 'gcj02',
-            'count': int(round(min(79.0, max(53.0, count_now)))),
+            'count': count_value,
             'dtr': 0.0,
             'flag': locs[0]['ts'],
             'gLat': round(p['lat'], 7),
             'gLng': round(p['lng'], 7),
-            'gainTime': safety.fmt_beijing(p['ts']),
+            'gainTime': safety.fmt_beijing(
+                p['ts'] + _pause_offset_ms(pause_windows, tsec)),
             'id': i + 1,
             # 7.4.0 `MyLocation(double gLat, double gLng, ...)` writes -1/-1;
             # the real GCJ pair lives in gLat/gLng.  The old BD pair was a
@@ -1664,7 +1801,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             # sample: a point exactly on the boundary still belongs to the
             # window that just closed (30 s -> 0, 31 s -> 1).
             'queueNum': max(0, (tsec - 1) // TIME_INTERVAL_SECONDS),
-            'radius': round(radius_now, 1),
+            'radius': radius_value,
             'speed': round(pace, 2),
             'state': 1,
             'stepDistance': 0.0,
@@ -1685,7 +1822,8 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         last['bdS'] = round(stop_mps * rng.uniform(0.6, 0.95), 3)
         last['type'] = 6
         last['locType'] = 0
-        last['radius'] = round(min(15.0, max(3.0, last['radius'])), 1)
+        last['radius'] = (5.0 if str(gps_profile).lower() == 'clean'
+                          else round(min(15.0, max(3.0, last['radius'])), 1))
 
         # start sentinel: index 0 is the all-zero "setStartPoint" marker.  The
         # 7.2/7.3 records put type=5 on the very first point (id=1) with every
@@ -1695,7 +1833,8 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         sp['type'] = 5
         sp['state'] = 1
         sp['locType'] = 0
-        sp['radius'] = round(rng.uniform(8.0, 15.0), 1)
+        sp['radius'] = (5.0 if str(gps_profile).lower() == 'clean'
+                        else round(rng.uniform(8.0, 15.0), 1))
         sp['speed'] = 0.0
         sp['avgSpeed'] = 0.0
         sp['bdS'] = round(rng.uniform(0.8, 2.2), 3)
@@ -1763,6 +1902,11 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         'km': distance_km,
         'sportTime': total_seconds,
         'sporttime': total_seconds,
+        'pause_total_s': pause_total_s,
+        'wall_stop_ms': t0 + total_seconds * 1000 + pause_total_s * 1000,
+        'pause_windows': pause_windows,
+        'gps_profile': str(gps_profile or 'urban').lower(),
+        'terrain_coupling': bool(terrain_coupling),
         'sportunid': run_uuid or new_run_uuid(),
         'total_steps': total_steps,
         # official formulas instead of distance * 0.06 and hard zeros
@@ -2178,7 +2322,7 @@ def build_upload_entity(run: dict, ctx: dict) -> dict:
     import json as _json
     locs = run['allLocJson']
     t0 = locs[0]['ts']
-    t1 = locs[-1]['ts']
+    t1 = int(run.get('wall_stop_ms') or locs[-1]['ts'])
     # UploadFormatEntity.speed is the AVERAGE PACE in minutes/km, stored as
     # round(pace, 2) * 1000  -- see UploadFormatEntity.setSpeed(double) and
     # Utils.formatSpeed(double) which renders it back as i'rr".

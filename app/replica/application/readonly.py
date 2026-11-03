@@ -674,7 +674,10 @@ def _fetch_obs_detail(client, acct, rrid, uuid=None, start_ms=0) -> dict:
         # Same key format as obs.obs_keys(): Beijing hour + record uuid.
         keys.append('run_data/%s/%s.json' % (
             safety.to_beijing(start_ms).strftime('%Y%m%d%H'), uuid))
-    keys.append(OBS.rrid_key(rrid))
+    if rrid:
+        keys.append(OBS.rrid_key(rrid))
+    if not keys:
+        raise QueryFailed('缺少 rrid/uuid，无法定位 OBS 对象')
 
     ua = OBS.platform_user_agent(acct)
     for key in keys:
@@ -703,9 +706,10 @@ def _fetch_obs_detail(client, acct, rrid, uuid=None, start_ms=0) -> dict:
 
 def record_detail(client, acct, rrid, uuid=None) -> dict:
     """Everything the detail endpoint exposes for one run."""
-    if not rrid:
-        return {'ok': False, 'error': '缺少 rrid', 'detail': {}, 'track': [],
-                'five_point': [], 'segments': [], 'stats': {}, 'fields': []}
+    if not rrid and not uuid:
+        return {'ok': False, 'error': '缺少 rrid/uuid', 'detail': {},
+                'track': [], 'five_point': [], 'segments': [], 'stats': {},
+                'fields': []}
 
     payload = {'rrid': rrid, 'uuid': uuid, 'calculateBadge': False}
     data, errors = None, []
@@ -860,8 +864,8 @@ def raw_record_detail(client, acct, rrid, uuid=None, include_obs=False) -> dict:
     the full OBS object when it exists.  ``path`` says which endpoint answered
     (v61200 vs v70260), which is what separates a stub row from a full one.
     """
-    if not rrid:
-        raise QueryFailed('缺少 rrid')
+    if not rrid and not uuid:
+        raise QueryFailed('缺少 rrid/uuid')
 
     payload = {'rrid': rrid, 'uuid': uuid, 'calculateBadge': False}
     raw, path, errors = None, None, []

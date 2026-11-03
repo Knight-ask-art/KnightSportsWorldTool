@@ -594,6 +594,10 @@ class ReplicaApi:
         self._students: dict[str, dict] = {}
         self._sport: dict[str, dict] = {}
         self._tasks: dict[str, dict] = {}
+        # Last locally generated record, for the offline shape audit.  It is
+        # never persisted and never sent; it only lets the UI inspect what it
+        # just previewed/submitted.
+        self._last_run = None
         self._geetokens: list[dict] = []
         self._gt4_manual: dict[str, dict] = {}
         self._gt4_manual_lock = threading.Lock()
@@ -2645,6 +2649,237 @@ class ReplicaApi:
             return _fail(r.get('error') or '详情查询失败')
         return _ok(r)
 
+    def real_audit_run(self, rrid=None, uuid=None, **preview):
+        """Audit the last generated run or one existing server record.
+
+        Offline for generated data; read-only for a record.  When the UI passes
+        preview parameters, generate with them first (this updates
+        ``_last_run``), then audit that exact object.  It never submits.
+        """
+        from ..application import audit as A
+        if preview:
+            got = self.real_preview_model(**preview)
+            if got.get('code') != 200:
+                return got
+        if rrid or uuid:
+            acct = self._real_account()
+            if acct is None:
+                return _fail('未配置 token（先在"账号"面板保存）')
+            from ..transport import realclient as R
+            from ..application import readonly as RO
+            try:
+                detail = RO.record_detail(R.RealClient(), acct, rrid, uuid=uuid)
+            except Exception as e:  # noqa: BLE001
+                return _fail('审计详情读取失败: %s' % e)
+            if not detail.get('ok'):
+                return _fail(detail.get('error') or '审计详情读取失败')
+            return _ok(A.audit_detail(detail))
+        run = self._last_run
+        if not isinstance(run, dict):
+            return _fail('还没有生成数据：先预览一次路线，再跑审计')
+        from ..application import preferences as P
+        try:
+            return _ok(A.audit_generated(
+                run, key_mode=P.get(self.store_dir, 'obs_key_mode', 'single')))
+        except Exception as e:  # noqa: BLE001
+            return _fail('形状审计失败: %s' % e)
+
+    def real_explain_error(self, code=None, message='', context=None):
+        """Explain a server/transport error without network access."""
+        from ..application import errors as E
+        try:
+            return _ok(E.explain(code, message, context))
+        except Exception as e:  # noqa: BLE001
+            return _fail('错误解释失败: %s' % e)
+
+    def real_verify_record(self, rrid=None, uuid=None):
+        """Read-only post-submit verification; never resubmits."""
+        acct = self._real_account()
+        if acct is None:
+            return _fail('未配置 token（先在"账号"面板保存）')
+        from ..transport import realclient as R
+        from ..application import verification as V
+        try:
+            out = V.verify_record(R.RealClient(), acct, rrid, uuid=uuid)
+        except Exception as e:  # noqa: BLE001
+            return _fail('只读核验失败: %s' % e)
+        return _ok(out)
+
+    def real_obs_key_mode(self, mode=None, pause_profile=None,
+                          gps_profile=None, terrain_coupling=None):
+        """Read or set OBS key mode and the local realism profile."""
+        from ..application import preferences as P
+        doc = P.load(self.store_dir)
+        current_mode = str(doc.get('obs_key_mode') or 'single').lower()
+        pause = str(doc.get('pause_profile') or 'none').lower()
+        gps = str(doc.get('gps_profile') or 'urban').lower()
+        terrain = bool(doc.get('terrain_coupling'))
+        if mode is None and pause_profile is None and gps_profile is None \
+                and terrain_coupling is None:
+            saved = (os.path.isfile(P.path(self.store_dir))
+                     and bool(P.load(self.store_dir)))
+            return _ok({'mode': current_mode, 'pause_profile': pause,
+                        'gps_profile': gps, 'terrain_coupling': terrain,
+                        'saved': bool(saved)})
+        mode = current_mode if mode is None else str(mode).lower()
+        if mode not in ('single', 'legacy'):
+            return _fail('OBS key 模式只能是 single 或 legacy')
+        if pause_profile is not None:
+            pause = str(pause_profile).lower()
+            if pause not in ('none', 'auto', 'manual'):
+                return _fail('暂停模式只能是 none/auto/manual')
+        if gps_profile is not None:
+            gps = str(gps_profile).lower()
+            if gps not in ('clean', 'urban', 'tunnel'):
+                return _fail('GPS 档案只能是 clean/urban/tunnel')
+        if terrain_coupling is not None:
+            if isinstance(terrain_coupling, str):
+                terrain = terrain.strip().lower() in ('1', 'true', 'yes', 'on')
+            else:
+                terrain = bool(terrain_coupling)
+        doc.update({'obs_key_mode': mode, 'pause_profile': pause,
+                    'gps_profile': gps, 'terrain_coupling': terrain})
+        if not P.save(self.store_dir, doc):
+            return _fail('设置写入失败：数据目录不可写')
+        return _ok({'mode': mode, 'pause_profile': pause,
+                    'gps_profile': gps, 'terrain_coupling': terrain,
+                    'saved': True})
+
+    def real_presets(self, action='list', name=None, data=None):
+        """Named run presets stored under the data directory."""
+        from ..application import presets as P
+        try:
+            return _ok(P.handle(self.store_dir, action, name=name, data=data))
+        except Exception as e:  # noqa: BLE001
+            return _fail('预设操作失败: %s' % e)
+
+    def real_stats(self, weeks=12):
+        """Local receipts + read-only server records; never writes/submits."""
+        acct = self._real_account()
+        from ..application import stats as ST
+        records, error = [], ''
+        if acct is not None:
+            try:
+                from ..transport import realclient as R
+                from ..application import readonly as RO
+                got = RO.recent_records(R.RealClient(), acct, limit=200)
+                records = got.get('records') or []
+                error = got.get('error') or ''
+            except Exception as e:  # noqa: BLE001
+                error = str(e)
+        try:
+            out = ST.load_for_account(
+                os.path.join(self.store_dir, 'submission_receipts'),
+                getattr(acct, 'uid', '') if acct is not None else '',
+                getattr(acct, 'unid', '') if acct is not None else '',
+                weeks=weeks, records=records, record_error=error)
+        except Exception as e:  # noqa: BLE001
+            return _fail('统计失败: %s' % e)
+        return _ok(out)
+
+    def real_export_fit(self, rrid=None, uuid=None):
+        """Build a FIT file from one server record; read-only."""
+        acct = self._real_account()
+        if acct is None:
+            return _fail('未配置 token（先在"账号"面板保存）')
+        from ..transport import realclient as R
+        from ..application import readonly as RO
+        from ..application import export_fit as FIT
+        try:
+            d = RO.record_detail(R.RealClient(), acct, rrid, uuid=uuid)
+            if not d.get('ok'):
+                return _fail(d.get('error') or '详情读取失败')
+            track = d.get('track') or []
+            detail = d.get('detail') or {}
+            out = FIT.export(
+                track, start_ms=int(detail.get('start_ms') or 0),
+                filename='run-%s.fit' % (detail.get('rrid') or rrid or 'record'),
+                calories=int(detail.get('calorie') or 0),
+                ascent=detail.get('total_ascent'))
+        except Exception as e:  # noqa: BLE001
+            return _fail('FIT 导出失败: %s' % e)
+        return _ok(out)
+
+    def real_diagnostics_zip(self):
+        """Redacted support archive; no credentials, coordinates or URLs."""
+        from ..application import diagnostics_bundle as B
+        from ..application import preferences as P
+        from ..application import audit as A
+        from ..domain import clock as C
+        from ..diagnostics import collector as D
+        from .. import build_info as BI
+        try:
+            audit = (A.audit_generated(
+                self._last_run,
+                key_mode=P.get(self.store_dir, 'obs_key_mode', 'single'))
+                if self._last_run else None)
+            receipts = []
+            acct = self._real_account()
+            if acct is not None:
+                try:
+                    receipts = self._receipt_store().list(
+                        str(acct.uid), str(acct.unid))
+                except Exception:  # noqa: BLE001
+                    receipts = []
+            out = B.build(
+                self.store_dir,
+                diagnostics_text=D.render(D.collect(
+                    app_version=BI.version_string(False)), 'text'),
+                audit=audit, settings=P.load(self.store_dir),
+                receipts=receipts, clock_state=C.state(),
+                app_version=BI.version_string(False))
+        except Exception as e:  # noqa: BLE001
+            return _fail('诊断包生成失败: %s' % e)
+        return _ok(out)
+
+    def real_inspection(self, freeze_seconds=0):
+        """Read-only account/record/clock inspection; never submits."""
+        from ..application import inspection as I
+        from ..application import readonly as RO
+        from ..application import audit as A
+        from ..application import preferences as P
+        from ..domain import clock as C
+        from ..domain import safety as S
+        acct = self._real_account()
+        session = self._read_session() if acct is not None else None
+        records, records_error = [], ''
+        daily = None
+        receipts = []
+        if acct is not None:
+            try:
+                from ..transport import realclient as R
+                rc = R.RealClient()
+                got = RO.recent_records(rc, acct, limit=20)
+                records = got.get('records') or []
+                records_error = got.get('error') or ''
+                day = S.to_beijing(S.now_ms()).strftime('%Y-%m-%d')
+                runs, source = RO.daily_count(rc, acct, day)
+                daily = {'runs': runs, 'source': source, 'date': day}
+            except Exception as e:  # noqa: BLE001
+                records_error = str(e)
+            try:
+                receipts = self._receipt_store().list(
+                    str(acct.uid), str(acct.unid))
+            except Exception:  # noqa: BLE001
+                receipts = []
+        try:
+            try:
+                freeze = max(0, int(freeze_seconds or 0))
+            except (TypeError, ValueError):
+                freeze = 0
+            out = I.run(session=session, freeze_seconds=freeze,
+                        daily=daily, records=records,
+                        records_error=records_error, clock_state=C.state(),
+                        receipts=receipts,
+                        audit=A.audit_generated(
+                            self._last_run,
+                            key_mode=P.get(self.store_dir, 'obs_key_mode',
+                                           'single'))
+                        if self._last_run else None)
+        except Exception as e:  # noqa: BLE001
+            return _fail('只读巡检失败: %s' % e)
+        return _ok(out)
+
     def real_weekly_summary(self, weeks=4):
         """Per-week totals for the last N weeks (derived from the record list)."""
         acct = self._real_account()
@@ -3263,7 +3498,8 @@ class ReplicaApi:
                            closed=True, altitude_mode='auto',
                            altitude_range=None, altitude_profile=None,
                            km_times=None, with_series=False, seed=None,
-                           sequential=False):
+                           sequential=False, pause_profile='none',
+                           gps_profile='urban', terrain_coupling=False):
         """Evaluate the user-entered rules against a local preview run.
 
         This is offline (no server call).  It lets the UI show a real score
@@ -3305,7 +3541,10 @@ class ReplicaApi:
                 if not wps:
                     return _fail('尚未解析校区坐标，请先加载围栏/点位')
                 lat, lng = wps[0]
+            from ..domain.rundata import estimate_pause_seconds
             duration_s = float(km) * float(pace) * 60.0
+            duration_s += estimate_pause_seconds(
+                pause_profile, None, int(duration_s))
             try:
                 start_ms = S.resolve_start_ms(days_ago, start_time, duration_s,
                                               date=date)
@@ -3329,8 +3568,12 @@ class ReplicaApi:
                 closed=bool(closed),
                 km_times=km_times,
                 sequential=bool(sequential),
+                pause_profile=pause_profile or 'none',
+                gps_profile=gps_profile or 'urban',
+                terrain_coupling=bool(terrain_coupling),
                 run_uuid=new_run_uuid(
                     self._effective_device(d).get('platform')))
+            self._last_run = run
             if daily_runs is None:
                 # The caller explicitly says it does not know the server count.
                 # Do not silently substitute this tool's local lower bound:
@@ -3359,7 +3602,10 @@ class ReplicaApi:
                 'run': {'km': run.get('km'), 'sportTime': run.get('sportTime'),
                         'juli': run.get('juli'),
                         'splits': run.get('km_splits') or [],
-                        'points': len(run.get('allLocJson') or [])},
+                        'points': len(run.get('allLocJson') or []),
+                        'pause_s': run.get('pause_total_s', 0),
+                        'gps_profile': run.get('gps_profile', 'urban'),
+                        'terrain_coupling': bool(run.get('terrain_coupling'))},
             })
         except Exception as e:  # noqa: BLE001
             return _fail('模型预览失败: %s' % e)
@@ -3394,7 +3640,9 @@ class ReplicaApi:
                         closed=True, altitude_mode='auto',
                         altitude_range=None, altitude_profile=None,
                         km_times=None, seed=None, run_area_id=None,
-                        points_distance_m=None, points=None):
+                        points_distance_m=None, points=None,
+                        pause_profile='none', gps_profile='urban',
+                        terrain_coupling=False):
         """Forge a run, sign it with the official scheme, submit it for real,
         then read the record back so the caller sees the completion checklist.
 
@@ -3650,7 +3898,10 @@ class ReplicaApi:
         # The operator may backfill today .. 3 days ago, 09:00-22:00.  Resolve
         # the slot before forging so every timestamp in the record agrees.
         from ..domain import safety as S
+        from ..domain.rundata import estimate_pause_seconds
         duration_s = float(km) * float(pace) * 60.0
+        duration_s += estimate_pause_seconds(
+            pause_profile, None, int(duration_s))
         try:
             start_ms = S.resolve_start_ms(days_ago, start_time, duration_s,
                                           date=date)
@@ -3695,10 +3946,14 @@ class ReplicaApi:
                                     run_area_id=area['id'] if area else None,
                                     geo_fences=fence.get('fences') or None,
                                     sequential=sequential,
+                                    pause_profile=pause_profile or 'none',
+                                    gps_profile=gps_profile or 'urban',
+                                    terrain_coupling=bool(terrain_coupling),
                                     run_uuid=new_run_uuid(
                                         getattr(acct, 'platform', None)))
         except Exception as e:  # noqa: BLE001
             return _fail(f'路线生成失败: {e}')
+        self._last_run = run
 
         # Same pre-submit gate as the CLI: geometry vs claimed distance,
         # BD/GCJ pairs, isPass, bucket sums, lap coverage.
@@ -3901,10 +4156,13 @@ class ReplicaApi:
         # checkpoints (upstream issue #85).
         try:
             from ..transport import obs as OBS
+            from ..application import preferences as PREF
             time.sleep(1.0)          # reference: flow.rs sleeps 1 s here
             fpj = json.dumps(run['fixed_point_json'], separators=(',', ':'))
-            obs_res = OBS.upload_obs(rc, acct, run, res['rrid'], res['uuid'],
-                                     fpj, log=lambda *_: None)
+            obs_res = OBS.upload_obs(
+                rc, acct, run, res['rrid'], res['uuid'], fpj,
+                log=lambda *_: None,
+                key_mode=PREF.get(self.store_dir, 'obs_key_mode', 'single'))
             res['obs'] = obs_res
             time.sleep(2.0)          # reference: flow.rs sleeps 2 s before verify
         except Exception as e:  # noqa: BLE001
