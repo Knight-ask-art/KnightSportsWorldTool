@@ -37,7 +37,7 @@ adapters  ──▶ application ──▶ domain
 | 目录 | 模块 |
 |---|---|
 | `transport/` | `netsec` `nskpure` `nskcodec` `crypto`* `realclient` `sidecar` `amap` `gt4` `obs` |
-| `domain/` | `coords` `crypto`* `health` `safety` `rundata` `routes` `stadium` |
+| `domain/` | `clock` `coords` `crypto`* `health` `safety` `rundata` `routes` `stadium` |
 | `application/` | `login_flow` `tokenkeeper` `points` `policy` `riskcheck` `qualification` `identity` `variation` `limits` `guard` `readonly` |
 | `adapters/` | `bridge_api` `http_server` `cli` |
 | `compat/mocks/` | `mock_iydsj` `mock_65530` |

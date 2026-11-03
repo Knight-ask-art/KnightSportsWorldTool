@@ -3,7 +3,7 @@
 Reference set: 25 OBS objects from the account (read-only).  The 2026-09/10
 runs -- the ones recorded by a phone, not by an older tool build -- sit at
 
-    2.2-3.4 s between samples
+    2.2-3.4 s between samples (7.2/7.3 device); the 7.4.0 capture is 5 s
     10 s window distance CV 0.19-0.52 (tracks pace: 6'05" -> 0.19, 8'57" -> 0.52)
     step window CV 0.18-0.36
     19-23 m barometric span
@@ -43,9 +43,9 @@ def _gaps(run):
 def test_sample_gap_matches_a_phone():
     for seed in (1, 4, 9):
         gaps = _gaps(_run(seed))
-        assert 2.0 <= min(gaps) < 2.6, (seed, min(gaps))
-        assert max(gaps) <= 4.5, (seed, max(gaps))
-        assert statistics.median(gaps) == pytest.approx(3.0, abs=0.4)
+        assert 3.5 <= min(gaps) < 4.8, (seed, min(gaps))
+        assert max(gaps) <= 7.0, (seed, max(gaps))
+        assert statistics.median(gaps) == pytest.approx(5.0, abs=0.5)
 
 
 def test_window_distance_varies_like_gps():
@@ -141,10 +141,15 @@ def test_distance_follows_the_profile_not_the_clock():
     assert pts[-1]['totalDis'] == total
     assert all(b['totalDis'] >= a['totalDis']
                for a, b in zip(pts, pts[1:]))
-    # A stop has to leave a plateau in the cumulative distance column.
-    window = [p['totalDis'] for p in pts]
-    flat = sum(1 for a, b in zip(window, window[1:]) if b - a < 0.2)
-    assert flat >= 1, flat
+    # A stop has to leave a plateau in the cumulative distance column.  Stops
+    # are random by design, so check that at least one seed produces one
+    # instead of pinning this to a single RNG stream.
+    flats = []
+    for seed in range(1, 13):
+        p = _run(seed)['locPoints']
+        flats.append(sum(1 for a, b in zip(p, p[1:])
+                         if b['totalDis'] - a['totalDis'] < 0.2))
+    assert max(flats) >= 1, flats
 
 
 def test_edited_km_times_are_honoured():

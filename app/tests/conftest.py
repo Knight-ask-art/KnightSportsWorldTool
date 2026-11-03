@@ -53,11 +53,14 @@ def pytest_sessionfinish(session, exitstatus):
 def _isolate_runtime_files(tmp_path, monkeypatch):
     """Keep points cache / cooldown / store out of the repository."""
     from replica.application import points as P
+    from replica.domain import clock as CLOCK
 
     monkeypatch.setenv('JHP_DATA_DIR', str(tmp_path))
     monkeypatch.setenv('JHP_POINTS_CACHE', str(tmp_path / 'points_cache.json'))
     monkeypatch.setenv('JHP_POINTS_RATELIMIT',
                        str(tmp_path / 'points_ratelimit.json'))
     P.clear_rate_limit()
+    CLOCK.reset()
     yield
     P.clear_rate_limit()
+    CLOCK.reset()

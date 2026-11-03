@@ -86,7 +86,7 @@ def payload_text(key: bytes, envelope: str) -> str:
 def encrypt_d(key: bytes, payload: bytes, key_data=None, platform=2,
               timestamp=None) -> str:
     """Inverse of decrypt_d — build the JSON and CBC-encrypt it."""
-    import time
+    from ..domain import clock
     if isinstance(key, str):
         key = bytes.fromhex(key)
     if key_data is None:
@@ -99,7 +99,8 @@ def encrypt_d(key: bytes, payload: bytes, key_data=None, platform=2,
         "keyDataThree": key_data.get("three", hashlib.sha256(key).hexdigest()[:12]),
         "keyDataTwo": key_data.get("two", hashlib.md5(key[::-1]).hexdigest()[:10]),
         "platform": platform,
-        "timeStamp": timestamp if timestamp is not None else int(time.time()),
+        "timeStamp": (timestamp if timestamp is not None
+                      else clock.now_ms() // 1000),
     }
     raw = json.dumps(meta, separators=(",", ":")).encode()
     pad = 16 - len(raw) % 16

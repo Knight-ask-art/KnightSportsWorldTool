@@ -90,7 +90,9 @@ class NskError(RuntimeError):
 # --------------------------------------------------------------------------
 
 def now_ms() -> int:
-    return int(time.time() * 1000)
+    """Legacy native backend clock: same server-aligned source as netsec."""
+    from ..domain import clock
+    return clock.now_ms()
 
 
 def md5_hex(data: bytes) -> str:

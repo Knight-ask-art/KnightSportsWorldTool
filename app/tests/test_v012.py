@@ -91,7 +91,7 @@ def _fake_obs(monkeypatch, corrupt=False, platform=None):
 
 def test_obs_upload_verifies_sha256(monkeypatch):
     res, seen = _fake_obs(monkeypatch)
-    assert res['uploaded'] == 2 and res['verified'] == 2
+    assert res['uploaded'] == 1 and res['verified'] == 1
     assert res['sha256'] == hashlib.sha256(seen['payload']).hexdigest()
 
 
@@ -111,9 +111,9 @@ def test_obs_follows_an_ios_profile(monkeypatch):
 
 def test_obs_same_length_corruption_is_rejected(monkeypatch):
     res, _ = _fake_obs(monkeypatch, corrupt=True)
-    assert res['uploaded'] == 2
+    assert res['uploaded'] == 1
     assert res['verified'] == 0, 'length-only verification would have passed'
-    assert len(res['errors']) == 2
+    assert len(res['errors']) == 1
     assert all('sha256' in e or '回读不一致' in e for e in res['errors'])
 
 

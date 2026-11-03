@@ -19,6 +19,7 @@ tracker, not from the app binary:
 from __future__ import annotations
 
 import json
+import math
 import re
 import urllib.request
 
@@ -98,7 +99,7 @@ def _norm_city(name: str) -> str:
 
 
 def device_city(campus_name: str = '', school_name: str = '') -> str:
-    """Value for the submit body's `address` field.
+    """Fallback value for the submit body's `address` field.
 
     Upstream fills `address` from the device identity's `city`
     (`src/api/flow.rs` L274: `address: client.identity.city.clone()`), and that
@@ -113,6 +114,37 @@ def device_city(campus_name: str = '', school_name: str = '') -> str:
     return city if city.endswith('市') else city + '市'
 
 
+def address_for_start(lat, lng, campus_name: str = '', school_name: str = '',
+                      key: str | None = None, timeout: float = 6.0) -> str:
+    """Reproduce the official ``saveStartPointToDb`` address resolution.
+
+    The official client calls ``MapLogKt.getCity(gLat, gLng)`` with the run's
+    start point, then stores the result in ``SportRecord.address`` (null ->
+    ``""``).  That is a reverse-geocode of the *track*, not a parse of the
+    campus name.
+
+    AMap is the primary source.  If the user has no key or the request fails,
+    fall back to the city embedded in the campus/school name (the old
+    behaviour), and finally to ``""`` — never to the school name, because the
+    server field is a city.
+    """
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        lat = lng = None
+    if (lat is not None and math.isfinite(lat) and math.isfinite(lng)
+            and abs(lat) <= 90 and abs(lng) <= 180 and (lat or lng)):
+        try:
+            from ..transport import amap
+            city = amap.regeo_city(lat, lng, key=key, timeout=timeout)
+        except Exception:  # noqa: BLE001 - no key/offline must not block submit
+            city = ''
+        if city:
+            return city
+    return device_city(campus_name, school_name) or ''
+
+
 # --------------------------------------------------------------------------
 # preflight
 # --------------------------------------------------------------------------
@@ -121,13 +153,20 @@ def preflight(campus_name: str = '', school_name: str = '',
               start_ms: int | None = None,
               expect_city: str | None = None,
               ip_info: dict | None = None,
-              explicit_start: bool = False) -> dict:
+              explicit_start: bool = False,
+              clock_offset_ms: int | None = None,
+              clock_error: str | None = None) -> dict:
     """Run every cheap check and return {'ok', 'warnings', 'info'}.
 
     ``explicit_start`` means the operator picked the start time deliberately
     (09:00-22:00 backfill).  In that case the 07:00-20:00 sampling-window
     warning would be noise: that window describes where the reference *samples*
     a random start, not a server rule.
+
+    ``clock_offset_ms`` is the measured skew (positive = local clock slow).
+    The caller has already applied it inside :mod:`replica.domain.clock`; this
+    only produces the explanatory note.  ``clock_error`` means no measurement
+    was available, so the note says the local clock is being used.
     """
     warnings: list[str] = []
     info: dict = {}
@@ -139,14 +178,42 @@ def preflight(campus_name: str = '', school_name: str = '',
         ip_city = _norm_city(ip.get('city'))
         want = expect_city or campus_city(campus_name, school_name)
         info['expected_city'] = want
-        if want and ip_city and want not in ip_city and ip_city not in want:
-            warnings.append(
-                'IP 城市「%s」与校区城市「%s」不一致 —— 跑步详情页显示的是 IP 归属地，'
-                '这会直接暴露。建议改用手机流量热点。' % (ip_city, want))
-        elif want and ip_city:
-            info['ip_city_matches'] = True
+        if want and ip_city:
+            info['ip_city_matches'] = (want in ip_city or ip_city in want)
+            if not info['ip_city_matches']:
+                warnings.append(
+                    'IP 城市「%s」与校区城市「%s」不一致；运营商省级出口很常见，'
+                    '仅提醒，不影响提交。' % (ip_city, want))
+        else:
+            info['ip_city_matches'] = None
     else:
+        info['ip_city_matches'] = None
         warnings.append('无法获取公网 IP 归属地（离线或被拦截），请自行确认与校区同城。')
+
+    # --- 1b. clock offset (GET api/v3/getserver/gmttime) -----------------
+    # We do NOT ask the operator to change a system setting.  The measured
+    # offset is applied inside the app (replica.domain.clock), so generated
+    # and signed timestamps already use the server's timeline.
+    if clock_offset_ms is not None:
+        try:
+            offset = int(clock_offset_ms)
+        except (TypeError, ValueError):
+            offset = 0
+        from ..domain import clock as _clock
+        info['clock_offset_ms'] = offset
+        info['clock_applied'] = True
+        if abs(offset) > 60_000:
+            warnings.append(
+                '本机系统时钟比服务器%s %s，已自动改用服务器时间；'
+                '生成、提交和页面显示都按校正后的时间进行，'
+                '不需要修改系统设置。'
+                % ('慢' if offset > 0 else '快', _clock.fmt_skew(offset)))
+    elif clock_error:
+        info['clock_applied'] = False
+        info['clock_error'] = str(clock_error)[:160]
+        warnings.append(
+            '未能读取服务器时间（%s）；本次按本机时钟显示，'
+            '登录或提交前会自动重试，不会修改系统设置。' % info['clock_error'])
 
     # --- 2. valid running window ---------------------------------------
     start_ms = start_ms if start_ms is not None else safety.now_ms()

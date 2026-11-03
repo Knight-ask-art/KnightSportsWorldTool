@@ -185,13 +185,17 @@ def test_track_series_from_generated_loc_points():
     track = readonly.parse_track(run['locPoints'])
     assert len(track) >= 2
 
-    out = track_series(track)
+    out = track_series(track, step_windows=run['step_freq_json'],
+                       start_ms=run['locPoints'][0]['flag'])
     assert out is not None
     assert out['duration_s'] == run['sportTime']
     assert out['distance_m'] == pytest.approx(run['juli'], abs=0.1)
     assert out['series']
     for point in out['series']:
         assert {'t', 'pace', 'cadence', 'stride', 'alt'} <= set(point)
+    # 7.4.0 points have no `steps`; cadence must come from step_freq_json.
+    assert out['avg_cadence'] is not None, out
+    assert 120.0 <= out['avg_cadence'] <= 180.0, out
 
     assert out['splits']
     assert sum(s['seconds'] for s in out['splits']) <= out['duration_s']

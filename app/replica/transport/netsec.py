@@ -181,7 +181,13 @@ def md5_hex(data: bytes) -> str:
 
 
 def now_ms() -> int:
-    return int(time.time() * 1000)
+    """Envelope timestamp: server-aligned when ``gmttime`` was read.
+
+    The server treats a stale ``timeStamp`` as a soft reject, so signing with
+    the raw system clock was fragile on machines whose clock drifts.
+    """
+    from ..domain import clock
+    return clock.now_ms()
 
 
 # --------------------------------------------------------------------------

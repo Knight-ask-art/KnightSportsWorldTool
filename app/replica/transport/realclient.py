@@ -18,7 +18,10 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, asdict
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 
+from ..domain import clock as _clock
 from .routes import request_user_info
 from .sidecar import get_sidecar
 
@@ -80,6 +83,21 @@ class Account:
 def token_sign(ts: str, token: str, uid: str) -> str:
     link = f'timeStamp={ts}&token={token}&uid={uid}'
     return hashlib.md5((link + SALT5).encode()).hexdigest()
+
+
+def _http_date_ms(text) -> int | None:
+    """Parse an HTTP ``Date`` header (GMT) into epoch milliseconds."""
+    if not text:
+        return None
+    try:
+        dt = parsedate_to_datetime(str(text))
+    except (TypeError, ValueError):
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
 
 
 def _java_str_hash(s: str) -> int:
@@ -359,6 +377,69 @@ class RealClient:
     #: Backoff base in seconds (tests set this to 0).
     RETRY_BASE = 0.6
 
+    def server_time(self, acct: Account, timeout: float | None = None,
+                    apply: bool = True) -> dict:
+        """GET ``api/v3/getserver/gmttime`` and measure the clock offset.
+
+        Read-only.  The official client calls this at cold start and again
+        before settlement.  We apply the result to :mod:`replica.domain.clock`
+        so every generated/signed timestamp uses the server's timeline; the
+        operator's system clock is never modified.
+
+        Passing ``apply=False`` only measures (tests / diagnostics).
+        """
+        from ..domain import clock as C
+        t0 = C.local_now_ms()
+        res = self.request(acct, 'api/v3/getserver/gmttime', method='GET',
+                           timeout=timeout or min(self.timeout, 10.0),
+                           retries=1)
+        t1 = C.local_now_ms()
+        biz = res.get('json') or {}
+        data = biz.get('data')
+        if isinstance(data, dict):
+            data = (data.get('timestamp') or data.get('time')
+                    or data.get('serverTime') or data.get('gmtTime'))
+        source = 'gmttime'
+        try:
+            server_ms = int(data)
+        except (TypeError, ValueError):
+            # The body may be empty (soft reject / gateway), but the HTTP
+            # ``Date`` header is still a server clock.  One-second precision
+            # is plenty for a timestamp tolerance measured in minutes.
+            server_ms = _http_date_ms(res.get('date_header'))
+            if server_ms is None:
+                raise ValueError('gmttime 返回无法解析: %r' % (data,))
+            source = 'http-date'
+        else:
+            if server_ms < 10 ** 12:
+                server_ms *= 1000
+        out = {
+            'server_ms': server_ms,
+            'local_ms': t1,
+            'offset_ms': server_ms - (t0 + t1) // 2,
+            'rtt_ms': t1 - t0,
+            'source': source,
+            'path': 'api/v3/getserver/gmttime',
+        }
+        if apply:
+            measured = C.apply_server_time(server_ms, t0, t1,
+                                           rtt_ms=out['rtt_ms'],
+                                           source=source)
+            out['applied'] = bool(measured.get('applied'))
+            out['rejected'] = bool(measured.get('rejected'))
+            out['reason'] = measured.get('reason', '')
+            out['clock'] = measured
+            if out['applied']:
+                out['source'] = measured.get('source', source)
+                out['offset_ms'] = measured.get('offset_ms',
+                                                out['offset_ms'])
+                # Display the corrected current time, not the raw reply: the
+                # reply describes a moment ~rtt/2 ago.
+                out['server_time'] = C.now_ms()
+            else:
+                out['server_time'] = None
+        return out
+
     def request(self, acct: Account, path: str, payload: dict | None = None,
                 method: str = 'POST', timeout: float | None = None,
                 extra_headers: dict | None = None, retries: int = 0) -> dict:
@@ -392,7 +473,7 @@ class RealClient:
         Returns {'status', 'raw_len', 'plain', 'json', 'error'} and never raises
         for server-side errors — only transport failures propagate.
         """
-        ts = str(int(time.time() * 1000))
+        ts = str(_clock.now_ms())
         nonce = str(uuid.uuid4())
         platform = str(getattr(acct, 'platform', 'android') or 'android').lower()
         headers = build_headers(acct, ts, nonce)
@@ -417,13 +498,17 @@ class RealClient:
                 json.dumps(payload or {}, separators=(',', ':')))
             req = urllib.request.Request(url, data=body.encode(),
                                          headers=wire, method='POST')
+        headers = None
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 status, data = r.status, r.read()
+                headers = r.headers
         except urllib.error.HTTPError as e:
             status, data = e.code, e.read()
+            headers = e.headers
         out = {'status': status, 'raw_len': len(data), 'plain': None,
-               'json': None, 'error': None}
+               'json': None, 'error': None,
+               'date_header': (headers.get('Date') if headers else None)}
         try:
             plain = self.decode_envelope(data)
         except Exception as e:  # noqa: BLE001
@@ -449,7 +534,7 @@ class RealClient:
         build_upload_entity / sign_upload_entity).
         """
         extra = {
-            'runes': '%s%s' % (policy_ts or int(time.time() * 1000), acct.uid),
+            'runes': '%s%s' % (policy_ts or _clock.now_ms(), acct.uid),
             'runef': '%s%s' % (signed.get('uuid', ''), signed.get('startTime', '')),
         }
         res = self.request(acct, 'api/v70260/runnings/save/record', signed,
@@ -489,7 +574,7 @@ class RealClient:
         """Real login POST. NOTE: response body is NetSecKit-encrypted and
         cannot be parsed yet — the returned token cannot be extracted until
         response decryption is solved. Provided for completeness/testing."""
-        ts = str(int(time.time() * 1000))
+        ts = str(_clock.now_ms())
         nonce = str(uuid.uuid4())
         platform = str(getattr(acct, 'platform', 'android') or 'android').lower()
         headers = build_headers(acct, ts, nonce)
@@ -532,7 +617,7 @@ class RealClient:
 
     def logout(self, acct: Account, token: str) -> dict:
         """Release the session on the server so we don't leave a live login."""
-        ts = str(int(time.time() * 1000))
+        ts = str(_clock.now_ms())
         nonce = str(uuid.uuid4())
         platform = str(getattr(acct, 'platform', 'android') or 'android').lower()
         headers = build_headers(acct, ts, nonce)

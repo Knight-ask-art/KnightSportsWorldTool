@@ -7,17 +7,17 @@ Flow
     POST /api/obs/temporary/url   {bucketName, objectKey, method, contentType}
       -> data.signedUrl
     PUT  <signedUrl>              (the JSON body below, raw)
-    ... twice, with two object keys:
+    ... once, with the hour/uuid key the official 7.4.0 capture writes:
         run_data/{YYYYMMDDHH}/{uuid}.json
-        run_data/{rrid//1000000}/{rrid}.json
 
-Object (10 keys, every value base64(gzip(...)))
+Object (11 keys, every value base64(gzip(...)))
 ------------------------------------------------
-    rrid, uuid, uid, run_data, fixed_point_json,
+    rrid, uuid, uid, run_data, extension_json(""), fixed_point_json,
     segment_json(""), speed_json, step_freq_json, laps_json, runFaceCheck("")
 
 `run_data` is itself JSON: {"allLocJson": "<json array string>", "useZip": false}
-where the array holds 28-key points (gLat/gLng, cumulative totalDis/totalTime/steps).
+where the array holds 27-key points (gLat/gLng, cumulative totalDis/totalTime;
+`speed` is pace in min/km, `avgSpeed`/`bdS` are m/s).
 
 Without this upload the record exists but the detail page / replay has no trail
 and no checkpoints — see upstream issue #85.
@@ -41,7 +41,7 @@ BUCKET = 'iydsj-hbase-hot'
 
 #: Our internal frame is already GCJ-02 (the campus fence only returns
 #: glat/glon), so OBS points are emitted as-is.  Set JHP_OBS_CONVERT_BD=1 only
-#: if you feed the generator真 BD-09 coordinates.
+#: if the generator is fed real BD-09 coordinates.
 CONVERT_BD = os.environ.get('JHP_OBS_CONVERT_BD', '0') == '1'
 
 
@@ -78,7 +78,7 @@ def _dist_m(a, b) -> float:
 def _cumulative(run: dict):
     """cumulative distance (m), time (s) and steps for every track point.
 
-    Distance comes from the generated 28-key points when they are present:
+    Distance comes from the generated 27-key points when they are present:
     ``totalDis`` already carries the per-kilometre pace profile and the stop
     windows.  Deriving it from time instead (the old behaviour) forced every
     lap to the same split and threw the whole profile away, which is exactly
@@ -151,7 +151,7 @@ def _cumulative(run: dict):
 
 
 def conv_point(loc, start_ms, cum_d, cum_t, cum_s, prev) -> dict:
-    """One 28-key OBS point."""
+    """One 27-key 7.4.0 OBS point (no `steps`; `speed` is pace)."""
     if CONVERT_BD:
         glat, glng = bd09_to_gcj02(loc['lat'], loc['lng'])
     else:
@@ -159,30 +159,30 @@ def conv_point(loc, start_ms, cum_d, cum_t, cum_s, prev) -> dict:
 
     dt = max(1e-6, cum_t - prev[1])
     dd = max(0.0, cum_d - prev[0])
-    speed = dd / dt
+    mps = dd / dt
+    pace = min(999.99, 16.6667 / mps) if mps >= 0.05 else 0.0
     return {
-        'avgSpeed': round(speed, 4),
+        'avgSpeed': round(mps, 4),
         'bdA': round(float(loc.get('alt', 0.0)), 2),
         'bdD': 0.0,
-        'bdG': 0,
-        'bdS': round(speed, 4),
+        'bdG': 1,
+        'bdS': round(mps, 4),
         'coorType': 'gcj02',
-        'count': 1,
+        'count': 60,
         'dtr': 0.0,
         'flag': start_ms,
         'gLat': round(glat, 7),
         'gLng': round(glng, 7),
-        'gainTime': int(loc['ts']),
-        'id': int(loc.get('index', 0)),
+        'gainTime': safety.fmt_beijing(int(loc['ts'])),
+        'id': int(loc.get('index', 0)) + 1,
         'lat': -1.0,
         'lng': -1.0,
-        'locType': 1,
+        'locType': 0,
         'locationId': '',
-        'queueNum': int(loc.get('index', 0)),
+        'queueNum': max(0, int(cum_t) - 1) // 30,
         'radius': 5.0,
-        'speed': round(speed, 4),
-        'state': 0,
-        'steps': int(cum_s),
+        'speed': round(pace, 2),
+        'state': 1,
         'stepDistance': 0.0,
         'totalDis': round(cum_d, 4),
         'totalTime': int(round(cum_t)),
@@ -265,9 +265,10 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
     source-derived version we used to emit:
 
     * ``id`` is a per-run sequence derived from the start time, not rrid;
-    * ``queueNum`` is the 0-based window index, not always 0;
-    * the final window may be shorter than 10 s, so its distance/steps must be
-      scaled by the actual duration or the replay shows 300+ spm.
+    * ``queueNum`` advances every 30 s (three 10 s windows), not every point;
+    * the final window may be shorter than 10 s.  Its values are already for
+      ``[beginTime, endTime]`` (``rundata`` builds them from the actual end
+      second), so they must NOT be scaled by ``window_s / 10`` again.
 
     ``rrid`` is kept in the signature for callers/tests; it is intentionally
     not used for ids anymore.
@@ -280,15 +281,18 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
         b = int(d.get('beginTime', start_ms))
         e = int(d.get('endTime', start_ms))
         window_s = max(0.001, (e - b) / 1000.0)
-        frac = max(0.01, min(1.0, window_s / 10.0))
         if d.get('distance') is not None:
-            d['distance'] = round(float(d['distance']) * frac, 2)
+            d['distance'] = round(float(d['distance']), 2)
         if d.get('stepsNum') is not None:
+            # Guard against an impossible cadence, but keep the total steps:
+            # the source already allocated only what fits in this window.
             max_steps = int(math.ceil(220.0 * window_s / 60.0))
             d['stepsNum'] = max(0, min(
-                max_steps, int(round(float(d['stepsNum']) * frac))))
+                max_steps, int(round(float(d['stepsNum'])))))
         d['id'] = id_base + i
-        d['queueNum'] = i
+        # A real 7.2/7.3 record advances the batch every three 10 s windows
+        # (0,0,0,1,1,1,...), matching the point column's 30 s queue.
+        d['queueNum'] = i // 3
         d['flag'] = start_ms
         out.append(d)
     return out
@@ -297,7 +301,7 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
 def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
     start_ms = run['allLocJson'][0]['ts']
 
-    # Prefer the 28-key points built alongside the record column: they already
+    # Prefer the 27-key points built alongside the record column: they already
     # carry the sentinel `type`/`state`/`radius` values and seconds-based
     # totalTime, and using the same objects guarantees the replay and the
     # record agree.
@@ -324,6 +328,10 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
         'uuid': gz_str(uuid),
         'uid': gz_str(str(uid)),
         'run_data': gz_json(run_wrap),
+        # The 7.4.0 capture has 11 keys; `extension_json` decodes to an empty
+        # string (same as `segment_json`).  Omitting it is a schema mismatch
+        # even though the value carries no data.
+        'extension_json': gz_str(''),
         'fixed_point_json': gz_str(five_point_json or ''),
         'segment_json': gz_str(''),
         'speed_json': gz_json(_obs_windows(run.get('speed_json') or [],
@@ -336,23 +344,27 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
 
 
 def rrid_key(rrid) -> str:
-    """The object key the official detail page reads for one record.
+    """Legacy/third-party OBS key for one record.
 
-    `ObsClient.downloadJsonSync` uses
-    ``run_data/{rrid // 1000000}/{rrid}.json``; the same key is written by
-    :func:`obs_keys` as its second entry.
+    Some old objects only exist at ``run_data/{rrid // 1000000}/{rrid}.json``;
+    the detail reader tries this after the official hour/uuid key.  Our upload
+    does not write it (the 7.4.0 capture has a single PUT).
     """
     n = int(rrid)
     return 'run_data/%d/%d.json' % (n // 1000000, n)
 
 
 def obs_keys(run, rrid, uuid) -> list[str]:
+    """The single key the official 7.4.0 client PUTs.
+
+    The 2026-10-26 capture has exactly one COS PUT: the UTC+8 hour bucket.
+    ``rrid_key`` is kept for reading old/third-party objects that only wrote
+    the rrid-shaped key; writing it ourselves was an extra fingerprint.
+    """
+    del rrid
     start_ms = run['allLocJson'][0]['ts']
     t0 = safety.to_beijing(start_ms).strftime('%Y%m%d%H')
-    return [
-        'run_data/%s/%s.json' % (t0, uuid),
-        rrid_key(rrid),
-    ]
+    return ['run_data/%s/%s.json' % (t0, uuid)]
 
 
 # --------------------------------------------------------------------------
@@ -456,7 +468,7 @@ def platform_user_agent(acct) -> str:
 
 def upload_obs(client, acct, run, rrid, uuid, five_point_json='', log=None,
                verify: bool = True) -> dict:
-    """Upload the trail to both object keys. Returns a summary dict.
+    """Upload the trail to the official hour/uuid key. Returns a summary dict.
 
     `verify` re-reads each object with a signed GET and compares the byte
     length.  The reference client does not do this, but a silently failed PUT
@@ -528,7 +540,7 @@ def self_test() -> list[tuple[str, bool, str]]:
                             center_lat=test_lat, center_lng=test_lng)
     obj = build_obs_object(run, 1333336472, 'UUID-TEST', 99999999, '{"a":1}')
 
-    out.append(('10 keys', len(obj) == 10, str(sorted(obj.keys()))[:80]))
+    out.append(('11 keys', len(obj) == 11, str(sorted(obj.keys()))[:80]))
 
     decoded = json.loads(gzip.decompress(base64.b64decode(obj['run_data'])))
     out.append(('run_data unwraps',
@@ -536,7 +548,7 @@ def self_test() -> list[tuple[str, bool, str]]:
                 str(list(decoded.keys()))))
 
     pts = json.loads(decoded['allLocJson'])
-    out.append(('28-key points', len(pts) > 0 and len(pts[0]) == 28,
+    out.append(('27-key points', len(pts) > 0 and len(pts[0]) == 27,
                 '%d points, %d keys' % (len(pts), len(pts[0]))))
     out.append(('lat/lng zeroed, gLat set',
                 pts[0]['lat'] == -1.0 and pts[0]['gLat'] != 0,
@@ -557,7 +569,9 @@ def self_test() -> list[tuple[str, bool, str]]:
                 str(laps[0]['avgPace'])))
 
     keys = obs_keys(run, 1333336472, 'UUID-TEST')
-    out.append(('two object keys', len(keys) == 2 and keys[0].startswith('run_data/'),
+    out.append(('one hour/uuid key', len(keys) == 1
+                and keys[0].startswith('run_data/')
+                and keys[0].endswith('/UUID-TEST.json'),
                 ' | '.join(keys)))
 
     sp = json.loads(gzip.decompress(base64.b64decode(obj['speed_json'])))
@@ -566,9 +580,9 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(('speed window ids are sequential',
                 all(sp[i]['id'] == sp[0]['id'] + i for i in range(len(sp))),
                 '%s..%s' % (sp[0]['id'], sp[-1]['id'])))
-    out.append(('speed window queueNum is the index',
-                all(w['queueNum'] == i for i, w in enumerate(sp)),
-                '0..%d' % (len(sp) - 1)))
+    out.append(('speed window queueNum advances every 30s',
+                all(w['queueNum'] == i // 3 for i, w in enumerate(sp)),
+                '0..%d' % (len(sp) // 3)))
     out.append(('step window sentinels',
                 all(w['maxDiff'] == 0.0 and w['minDiff'] == 1000.0
                     for w in json.loads(
@@ -576,8 +590,10 @@ def self_test() -> list[tuple[str, bool, str]]:
                 '0.0 / 1000.0'))
 
     # A duration that is not a multiple of 10 s leaves a short final window.
-    # The old code kept a full 10 s distance/steps there, so the replay showed
-    # 300+ spm.  Use 2.54 km @ 6'00" = 914 s (last window 4 s).
+    # The generator already allocated only the distance/steps that fit in it;
+    # scaling by window_s/10 here would shrink it a second time and make the
+    # window totals disagree with juli/totalSteps.  Use 2.54 km @ 6'00" =
+    # 914 s (last window 4 s).
     run2 = generate_run_data(distance_km=2.54, pace_min_per_km=6.0,
                              center_lat=test_lat, center_lng=test_lng)
     obj2 = build_obs_object(run2, 1333336473, 'UUID-TEST-2', 99999999, '')
@@ -593,6 +609,14 @@ def self_test() -> list[tuple[str, bool, str]]:
                 last_cad <= 225.0, '%.0f spm / %.1fs' % (last_cad, last_s)))
     out.append(('last partial window speed sane',
                 last_v < 12.0, '%.1f m/s' % last_v))
+    out.append(('window distance sum matches juli',
+                abs(sum(w['distance'] for w in sp2) - run2['juli']) < 1.0,
+                '%.2f vs %.2f' % (sum(w['distance'] for w in sp2),
+                                  run2['juli'])))
+    out.append(('window steps sum matches totalSteps',
+                sum(w['stepsNum'] for w in st2) == run2['total_steps'],
+                '%d vs %d' % (sum(w['stepsNum'] for w in st2),
+                              run2['total_steps'])))
 
     out.append(('object parses as JSON',
                 isinstance(json.loads(json.dumps(obj)), dict), 'ok'))

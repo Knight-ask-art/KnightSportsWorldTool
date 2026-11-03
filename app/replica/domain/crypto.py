@@ -17,7 +17,6 @@ import hashlib
 import json
 import os
 import random
-import time
 
 from Crypto.Cipher import AES
 from Crypto.Cipher import PKCS1_v1_5 as PKCS1_v15
@@ -107,7 +106,8 @@ def jbool(v) -> str:
 
 
 def make_geeid() -> str:
-    ms = int(time.time() * 1000)
+    from . import clock
+    ms = clock.now_ms()
     return f'G01-{ms}-{os.urandom(8).hex()}'
 
 

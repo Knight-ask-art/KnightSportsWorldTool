@@ -1,13 +1,13 @@
 """Clean-room run-data generator, following the binary-evidence format.
 
-Evidence (mock_db实测 + 反汇编局部变量表, see 逆向分析完整报告 §10):
-- allLocJson: 25 track points {lat/lng/ts/alt/index}  (report: glat/glon/ts/alt/index)
-- speed_json: 90 segments {startSecond/endSecond/speed/state} (10s each)
-- step_freq_json: 90 segments (steps per 10s; display stepsNum*6 = cadence/min)
-- segmentJson: 5 segments {180s/500m, speedColor=#4CAF50}
-- fivePoint: 5 calibration points, every 6th track point
+Evidence (7.4.0 dex + real records + capture, see docs/decisions.md §19):
+- allLocJson: 27-field MyLocation points (`lat/lng=-1`, real coords in gLat/gLng)
+- speed_json: 10 s SpeedPerTenSec windows, 7 keys
+- step_freq_json: 10 s StepsPerTenSec windows, 10 keys
+- segmentJson: 30 s AnalysisStateDB segments, 11 keys, `avgSpeed` is pace
+- fivePoint: campus checkpoints (BD lat/lon + GCJ glat/glon)
 - juli/km, sportTime, sportunid
-- sample: 2.5km/900s, speed ~2.7-2.9 m/s, steps ~150/min
+- sample: 5 s grid with jitter (7.4.0 capture)
 - route: circular random route, drift +-0.0004deg, altitude 20-50m
 """
 import bisect
@@ -15,7 +15,6 @@ import json
 import math
 import random
 import re
-import time
 import uuid
 from .crypto import jbool, official_presign, official_sign
 from . import health
@@ -25,6 +24,10 @@ from . import safety
 N_POINTS = 25
 N_SEGMENTS = 90
 SEG_SECONDS = 10
+#: `runRuleModel.timeInterval` (live policy, 2026-11: 30).  The official 7.4.0
+#: analysis entity (`AnalysisStateDB`) is one row per interval, and its
+#: `avgSpeed` is a PACE in min/km.
+TIME_INTERVAL_SECONDS = 30
 
 #: A loop shorter than this cannot be repeated into a believable run: the
 #: samples end up zig-zagging on the spot and the measured geometry collapses.
@@ -713,7 +716,7 @@ def generate_route(center_lat: float, center_lng: float, radius_deg: float = 0.0
     rng = rng or random
     n_points = int(n_points or N_POINTS)
     for _ in range(25):
-        now_ms = int(time.time() * 1000)
+        now_ms = safety.now_ms()
         pts = []
         if waypoints and len(waypoints) >= 2:
             poly = (build_loop(waypoints, target_m or 0) if closed
@@ -961,7 +964,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       rng: random.Random | None = None,
                       waypoints: list | None = None,
                       n_points: int | None = None,
-                      sample_seconds: float = 3.0,
+                      sample_seconds: float = 5.0,
                       checkpoints: list | None = None,
                       weight_kg: float = health.DEFAULT_WEIGHT_KG,
                       altitude_base: float = 25.0,
@@ -973,6 +976,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       run_uuid: str | None = None,
                       km_times: list[float] | None = None,
                       run_area_id: int | None = None,
+                      geo_fences: list | None = None,
                       sequential: bool = False) -> dict:
     """Full forged record. 2.5km default mirrors the verified mock sample.
 
@@ -992,6 +996,10 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
       * ``range`` – synthetic profile mapped into ``altitude_range``;
       * ``template`` – ``altitude_profile`` (parsed from local GPX/JSON),
         optionally mapped into ``altitude_range``.
+
+    ``geo_fences`` is the live campus fence list (``points.py::fetch_fence``
+    ``fences``).  The official 7.4.0 client stores the same polygons in
+    ``PointJsonEntity.geoFencesJson``; an absent list serialises to ``null``.
 
     ``km_times`` is the edited split table: seconds per kilometre, one entry
     per full kilometre plus the remainder (``ceil(distance_km)`` entries).
@@ -1172,10 +1180,11 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     def frac_at(sec):
         return dist_at(sec) / max(0.001, cum_before[-1])
 
-    # ---- sample times: 2-4 s apart, normalised to the run duration --------
-    # Real device samples land every 2.2-3.4 s; the old fixed 5 s grid left
-    # roughly half the points a phone would have recorded.
-    intervals = [rng.uniform(2.2, 3.8) for _ in range(max(0, n_points - 1))]
+    # ---- sample times: ~5 s apart, normalised to the run duration ---------
+    # The only 7.4.0 capture has 97/103 callbacks on a 5 s grid; the 2.2-3.8 s
+    # grid belonged to the account's 7.2/7.3 records.  4.2-6.0 s keeps the
+    # median at 5 s while leaving the jitter a phone actually shows.
+    intervals = [rng.uniform(4.2, 6.0) for _ in range(max(0, n_points - 1))]
     if intervals:
         k = total_seconds / max(1e-6, sum(intervals))
         times = [0.0]
@@ -1232,7 +1241,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         # The sample clock is the truth.  Re-deriving it from the jittered
         # geometry collapsed every stop (all the points share one position, so
         # they all mapped to the same instant) and left 1 s / 23 s gaps around
-        # a traffic light.  ``times`` already carries the 2-4 s device grid.
+        # a traffic light.  ``times`` already carries the 5 s device grid.
         point_times = list(times)
     else:
         # A checkpoint snap inserted a point: fall back to the geometric
@@ -1248,7 +1257,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     # identical to the request timestamp is a fingerprint in itself.
     total_ms_run = total_seconds * 1000
     if start_ms is None:
-        t0 = int(time.time() * 1000) - total_ms_run - rng.randint(1000, 5000)
+        t0 = safety.now_ms() - total_ms_run - rng.randint(1000, 5000)
     else:
         t0 = int(start_ms)
         if t0 <= 0:
@@ -1305,6 +1314,7 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         raw_s.append(max(0.0, step))
     s_scale = total_steps / max(1e-6, sum(raw_s))
     stop_ms = t0 + total_seconds * 1000
+    windows_per_batch = max(1, TIME_INTERVAL_SECONDS // SEG_SECONDS)
     for i in range(n_buckets):
         b = t0 + i * SEG_SECONDS * 1000
         # upstream clamps the last window to totalTime (wire.rs build_windows)
@@ -1314,8 +1324,8 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             'endTime': e,
             'distance': round(bucket_m[i], 4),
             'flag': t0,
-            'id': 0,
-            'queueNum': 0,
+            'id': i + 1,
+            'queueNum': i // windows_per_batch,
             'state': 0,
         })
         step_freq_json.append({
@@ -1323,13 +1333,13 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             'beginTime': b,
             'endTime': e,
             'flag': t0,
-            'id': 0,
+            'id': i + 1,
             # these are the reference's sentinels for "not computed"
             'maxDiff': 0.0,
             'minDiff': 1000.0,
             'avgDiff': 0.0,
             'state': 0,
-            'queueNum': 0,
+            'queueNum': i // windows_per_batch,
         })
     # absorb rounding drift so sum(stepsNum) == totalSteps exactly
     if step_freq_json:
@@ -1379,21 +1389,42 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                     i = order[n % len(order)]
                     if step_freq_json[i]['stepsNum'] > 0:
                         step_freq_json[i]['stepsNum'] -= 1
-    #                   intervalStepModel,originAvgStep,speedStandard,startTime,state}
-    seg_s = max(1, total_seconds // 5)
-    segment_json = [{
-        'avgSpeed': round(speed, 3),
-        'avgStep': cadence,
-        'distance': round(total_meters / 5.0, 3),
-        'startTime': t0 + i * seg_s * 1000,
-        'endTime': t0 + (i + 1) * seg_s * 1000,
-        'flag': 0,
-        'id': 0,
-        'intervalStepModel': 0,
-        'originAvgStep': cadence,
-        'speedStandard': 0,
-        'state': 0,
-    } for i in range(5)]
+    # AnalysisStateDB: {avgSpeed,avgStep,distance,endTime,flag,id,
+    #                   intervalStepModel,originAvgStep,speedStandard,
+    #                   startTime,state}
+    #
+    # The official 7.4.0 entity is 30 s (`runRuleModel.timeInterval=30`), and
+    # its `avgSpeed` is PACE in min/km, not m/s.  Verified against a real
+    # 48-segment record: distance / (endTime-startTime) converted to min/km
+    # matches every `avgSpeed` to 3 decimals.  A 5-segment placeholder with
+    # m/s and speedStandard=0 was the old shape and no longer exists upstream.
+    segment_json = []
+    seg_len = max(1, int(TIME_INTERVAL_SECONDS))
+    for i in range(max(1, int(math.ceil(total_seconds / float(seg_len))))):
+        a = i * seg_len
+        b = min(a + seg_len, total_seconds)
+        first_win = i * (seg_len // SEG_SECONDS)
+        last_win = min(n_buckets,
+                       int(math.ceil(b / float(SEG_SECONDS))))
+        seg_dist = sum(bucket_m[first_win:last_win])
+        seg_steps = sum(x['stepsNum'] for x in step_freq_json[first_win:last_win])
+        seg_sec = max(1, b - a)
+        # avgSpeed is min/km: seconds per kilometre / 60.
+        pace_seg = (seg_sec * 1000.0) / (60.0 * seg_dist) if seg_dist > 0 else 0.0
+        avg_step = int(round(seg_steps / seg_sec * 60.0))
+        segment_json.append({
+            'avgSpeed': round(pace_seg, 4),
+            'avgStep': avg_step,
+            'distance': round(seg_dist, 4),
+            'endTime': t0 + b * 1000,
+            'flag': t0,
+            'id': i + 1,
+            'intervalStepModel': 0,
+            'originAvgStep': avg_step,
+            'speedStandard': 900,
+            'startTime': t0 + a * 1000,
+            'state': 0,
+        })
 
     # FivePoint: {flag,id,isFixed,isPass,lat,lon,pointName,state,glat,glon,position}
     #
@@ -1418,10 +1449,12 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         five_point = []
         for k, c in enumerate(chosen):
             gcj = (float(c['lat']), float(c['lon']))
-            bd = (float(c.get('bd_lat') if c.get('bd_lat') is not None
-                        else coords.gcj02_to_bd09(*gcj)[0]),
-                  float(c.get('bd_lon') if c.get('bd_lon') is not None
-                        else coords.gcj02_to_bd09(*gcj)[1]))
+            bd_lat, bd_lng = c.get('bd_lat'), c.get('bd_lon')
+            if bd_lat is None or bd_lng is None:
+                # A partial BD pair cannot be mixed with a converted half:
+                # that puts the checkpoint up to ~500 m off the map.
+                bd_lat, bd_lng = coords.gcj02_to_bd09(*gcj)
+            bd = (float(bd_lat), float(bd_lng))
             raw_fixed = c.get('isFixed')
             if isinstance(raw_fixed, str):
                 fixed = 1 if raw_fixed.strip().lower() in (
@@ -1490,33 +1523,78 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         if not fp.get('isPass'):
             continue
         idx = _nearest_index(locs, fp['glat'], fp['glon'])
-        if idx <= 1 or idx >= len(locs) - 1:     # start/end sentinels win
+        if idx <= 0 or idx >= len(locs) - 1:     # start/end sentinels win
             continue
         checkpoint_marks[idx] = 2 if fp.get('isFixed') else 1
 
     # PointJsonEntity: {fivePointJson,freedomShowFence,geoFencesJson,runAreaId,useZip}
+    #
+    # geoFencesJson is the same fence list the policy endpoint returned, kept
+    # as `GeoFencesBean{id,name,points}` with `GeoFencesPointBean{lat,lng,
+    # glat,glng}`.  A real record stores the GCJ ring in `glat/glng` and leaves
+    # `lat/lng` at 0.  Keeping it `None` while a fence exists is itself a
+    # mismatch: the detail page uses this column to draw the green boundary.
+    geo_fence_json = None
+    parsed_fences = []
+    for f in (geo_fences or []):
+        if not isinstance(f, dict):
+            continue
+        poly = f.get('polygon') or []
+        if len(poly) < 3:
+            continue
+        try:
+            fid = int(f.get('id'))
+        except (TypeError, ValueError):
+            fid = 0
+        parsed_fences.append({
+            'id': fid,
+            'name': str(f.get('name') or ''),
+            'points': [{
+                'lat': 0.0,
+                'lng': 0.0,
+                'glat': round(float(a), 7),
+                'glng': round(float(b), 7),
+            } for a, b in poly],
+        })
+    if parsed_fences:
+        geo_fence_json = json.dumps(parsed_fences, separators=(',', ':'))
+    try:
+        area_id = int(run_area_id) if run_area_id is not None else -1
+    except (TypeError, ValueError):
+        area_id = -1
     point_json_entity = {
         'useZip': False,
         'fivePointJson': json.dumps(five_point, separators=(',', ':')),
-        'runAreaId': int(run_area_id) if run_area_id is not None else -1,
-        'geoFencesJson': None,
+        'runAreaId': area_id,
+        'geoFencesJson': geo_fence_json,
         'freedomShowFence': False,
     }
 
-    # MyLocation track points — the full 28-key shape of wire.rs::conv_point.
-    # Two things that used to be wrong here:
+    # MyLocation track points — the 27 serialised fields of the 7.4.0 dex
+    # (`im/mp/ra` are DB-only and never reach `allLocJson`).  Things that
+    # used to be wrong here:
     #   * totalTime / validTime are SECONDS (GenPoint.totalTime = t_acc), not ms
-    #   * lat/lng are BD-09 while gLat/gLng are GCJ-02 (they differ by ~950 m)
+    #   * lat/lng are -1.0; gLat/gLng are GCJ-02 and carry the real position
+    #   * `speed` is PACE in min/km, `avgSpeed`/`bdS` are m/s.  A real record
+    #     satisfies avgSpeed = 16.6667 / speed on 667/667 points (median error
+    #     0.0025), while the old code wrote speed = mps*3.6 (km/h).
     deltas_m, deltas_s = [], []
     for i in range(1, len(locs)):
         deltas_m.append(max(0.0, geo[i] - geo[i - 1]))
         deltas_s.append(max(0.5, (locs[i]['ts'] - locs[i - 1]['ts']) / 1000.0))
-    raw_steps = [max(0.0, cadence / 60.0 * dt + rng.gauss(0.0, 0.35))
-                 for dt in deltas_s]
-    st_scale = total_steps / max(1e-6, sum(raw_steps))
-    cum_steps = [0.0]
-    for x in raw_steps:
-        cum_steps.append(cum_steps[-1] + x * st_scale)
+
+    # The 7.4.0 capture reports 53-79 satellites (mean 67.6, sd 5.3, adjacent
+    # difference ~2) and a slowly wandering accuracy.  Independent per-point
+    # randoms make both columns look synthetic: real values are spatially
+    # correlated because the same buildings block the sky.  Three official
+    # records sit at radius 2.7-18.2 m with a within-run sd of 1.1-2.2 m, so
+    # the walk needs more amplitude than a +/-0.5 m band.
+    radius_mean = rng.uniform(4.5, 6.5)
+    radius_now = radius_mean
+    count_mean = rng.uniform(63.0, 71.0)
+    count_span = rng.uniform(5.0, 8.0)
+    count_phase = rng.uniform(0.0, math.tau)
+    count_wave = rng.uniform(180.0, 420.0)
 
     loc_points = []
     for i, p in enumerate(locs):
@@ -1528,9 +1606,8 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         # timestamp: after the 2 s floor is pulled back, point_times is no
         # longer the value the server will read from allLocJson.
         tsec = max(0, int(round((p['ts'] - t0) / 1000.0)))
-        steps = int(round(cum_steps[i]))
         if i == len(locs) - 1:
-            dis, tsec, steps = total_meters, total_seconds, total_steps
+            dis, tsec = total_meters, total_seconds
         if i > 0:
             mps = deltas_m[i - 1] / deltas_s[i - 1]
         elif deltas_m:
@@ -1543,7 +1620,10 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         # flattening it to 60% of the average is what made every record look
         # like it was run by a metronome.
         mps = min(mps, avg_mps * 1.6)
-        bd_lat, bd_lng = coords.gcj02_to_bd09(p['lat'], p['lng'])
+        # PACE, not speed.  16.6667 / 0.06 = 277.8 is how the official record
+        # encodes a near-stop (the displayed value can read 259.99 when the
+        # stored avgSpeed is 0.0641 and only two decimals are shown).
+        pace = min(999.99, 16.6667 / mps) if mps >= 0.05 else 0.0
         # Bearing of travel, the way the client gets it from AMap.  The last
         # sample has no successor, so it keeps the heading it arrived with.
         if i + 1 < len(locs):
@@ -1552,29 +1632,41 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             heading = _bearing_deg(locs[i - 1], p)
         else:
             heading = 0.0
+        radius_now = ((radius_now - radius_mean) * 0.90 + radius_mean
+                      + rng.gauss(0.0, 0.55))
+        radius_now = min(15.0, max(2.5, radius_now))
+        count_now = (count_mean
+                     + count_span * math.sin(
+                         2.0 * math.pi * dis / count_wave + count_phase)
+                     + rng.gauss(0.0, 1.5))
         loc_points.append({
             'avgSpeed': round(mps, 4),
             'bdA': round(float(p.get('alt', 0.0)), 2),
-            'bdD': heading,
-            'bdG': 0,
+            'bdD': round(heading, 2),
+            'bdG': 1,
             'bdS': round(mps, 4),
             'coorType': 'gcj02',
-            'count': rng.randint(20, 88),
+            'count': int(round(min(79.0, max(53.0, count_now)))),
             'dtr': 0.0,
             'flag': locs[0]['ts'],
             'gLat': round(p['lat'], 7),
             'gLng': round(p['lng'], 7),
             'gainTime': safety.fmt_beijing(p['ts']),
-            'id': 0,
-            'lat': round(bd_lat, 7),
-            'lng': round(bd_lng, 7),
+            'id': i + 1,
+            # 7.4.0 `MyLocation(double gLat, double gLng, ...)` writes -1/-1;
+            # the real GCJ pair lives in gLat/gLng.  The old BD pair was a
+            # 7.2/7.3 shape and made the upload column differ from OBS.
+            'lat': -1.0,
+            'lng': -1.0,
             'locType': 0,
             'locationId': '',
-            'queueNum': i,
-            'radius': round(rng.uniform(1.4, 2.4), 2),
-            'speed': round(mps * 3.6, 4),
-            'state': rng.choices([1, 2, 3], weights=[145, 45, 164])[0],
-            'steps': steps,
+            # Official 7.4.0 points advance the batch every 30 s, not every
+            # sample: a point exactly on the boundary still belongs to the
+            # window that just closed (30 s -> 0, 31 s -> 1).
+            'queueNum': max(0, (tsec - 1) // TIME_INTERVAL_SECONDS),
+            'radius': round(radius_now, 1),
+            'speed': round(pace, 2),
+            'state': 1,
             'stepDistance': 0.0,
             'totalDis': dis,
             'totalTime': tsec,
@@ -1586,43 +1678,48 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
     # ---- sentinels + tail deceleration (track/postfix.rs) ------------------
     if len(loc_points) > 2:
         # tail: still moving but slowing to a stop, inside the valid pace band
-        stop_ms = rng.uniform(2.0, 2.6)
+        stop_mps = rng.uniform(2.0, 2.6)
         last = loc_points[-1]
-        last['avgSpeed'] = round(stop_ms, 4)
-        last['speed'] = round(stop_ms * 3.6, 4)
-        last['bdS'] = round(rng.uniform(0.05, 0.15), 3)
+        last['avgSpeed'] = round(stop_mps, 4)
+        last['speed'] = round(16.6667 / stop_mps, 2)
+        last['bdS'] = round(stop_mps * rng.uniform(0.6, 0.95), 3)
         last['type'] = 6
-        last['locType'] = 1
-        last['radius'] = round(rng.uniform(1.5, 3.0), 2)
+        last['locType'] = 0
+        last['radius'] = round(min(15.0, max(3.0, last['radius'])), 1)
 
-        # start sentinel: index 1 is the all-zero "setStartPoint" marker
-        sp = loc_points[1]
+        # start sentinel: index 0 is the all-zero "setStartPoint" marker.  The
+        # 7.2/7.3 records put type=5 on the very first point (id=1) with every
+        # cumulative column at 0; `speed`/`avgSpeed` are 0 but `bdS` keeps the
+        # GPS speed the provider reported (a real start point shows 1.75 m/s).
+        sp = loc_points[0]
         sp['type'] = 5
         sp['state'] = 1
-        sp['locType'] = 1
-        sp['radius'] = round(rng.uniform(2.0, 3.5), 2)
+        sp['locType'] = 0
+        sp['radius'] = round(rng.uniform(8.0, 15.0), 1)
         sp['speed'] = 0.0
         sp['avgSpeed'] = 0.0
-        sp['bdS'] = 0.0
+        sp['bdS'] = round(rng.uniform(0.8, 2.2), 3)
         sp['bdD'] = 0.0        # the all-zero setStartPoint marker has no heading
         sp['totalDis'] = 0.0
         sp['validDis'] = 0.0
         sp['totalTime'] = 0
         sp['validTime'] = 0
+        sp['queueNum'] = 0
 
-        # index 2 is the first real point; keep its own speed, only bound it.
+        # index 1 is the first real point; keep its own speed, only bound it.
         # (The old `totalDis / 1.0` treated metres as km/s => every record
         # reported 21.6 km/h on this one point.)
-        if len(loc_points) > 3:
-            p2 = loc_points[2]
+        if len(loc_points) > 2:
+            p2 = loc_points[1]
             p2['avgSpeed'] = round(min(6.0, max(1.8, p2['avgSpeed'])), 4)
-            p2['speed'] = round(p2['avgSpeed'] * 3.6, 4)
+            p2['speed'] = round(16.6667 / p2['avgSpeed'], 2)
+            p2['bdS'] = round(p2['avgSpeed'] * rng.uniform(0.85, 1.05), 3)
 
     # Keep the domain closed.  The history page hands `type` straight to the
     # map SDK, and a value the client never emits (3, 7, 8, ...) falls through
     # to its fallback colour -- that is the grey segment.  Failing here is
     # cheaper than shipping a record nobody can explain later.
-    legal_types = {0, 1, 2, 5, 6}
+    legal_types = {-1, 0, 1, 2, 5, 6}
     bad_types = sorted({p['type'] for p in loc_points} - legal_types)
     if bad_types:
         raise ValueError('track point type outside the client domain: %s'
@@ -1630,9 +1727,9 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
 
     # The record's allLocJson column is itself Gson(LocJsonEntity):
     #   {"useZip":false,"allLocJson":"<List<MyLocation> as a string>"}
-    # OBS uses the same points with the BD pair zeroed (wire.rs sets -1/-1),
-    # so the replay and the record column can never drift apart.
-    wire_points = [dict(q, lat=-1.0, lng=-1.0) for q in loc_points]
+    # 7.4.0 writes lat/lng=-1 in both the record column and OBS, so OBS can
+    # reuse the same points; the replay and the record column cannot drift.
+    wire_points = [dict(q) for q in loc_points]
     loc_json_entity = {
         'useZip': False,
         'allLocJson': json.dumps(loc_points, separators=(',', ':')),
@@ -1793,13 +1890,58 @@ def preview_series(run: dict, limit: int = 240) -> dict:
     }
 
 
-def track_series(track: list[dict], limit: int = 240) -> dict | None:
+def _apply_step_windows(pts: list[dict], windows: list,
+                        start_ms: int = 0) -> None:
+    """Fill ``pts[*]['s']`` from ``step_freq_json`` when points carry no steps.
+
+    7.4.0 track points dropped the cumulative ``steps`` column, but the record
+    (and OBS) still has 10 s ``stepsPerTenSec`` windows.  Without this the
+    detail page's cadence line would be empty for every new record even though
+    the server has the data.
+    """
+    bounds = []
+    for w in (windows or []):
+        if not isinstance(w, dict):
+            continue
+        try:
+            b = int(w.get('beginTime') or 0)
+            e = int(w.get('endTime') or 0)
+            n = float(w.get('stepsNum') or 0)
+        except (TypeError, ValueError):
+            continue
+        if e > b:
+            bounds.append((b, e, n))
+    if not bounds or not pts:
+        return
+    bounds.sort()
+    base = int(start_ms) if start_ms else bounds[0][0]
+    done = 0.0
+    j = 0
+    for p in pts:
+        t_abs = base + p['t'] * 1000.0
+        while j < len(bounds) and t_abs >= bounds[j][1]:
+            done += bounds[j][2]
+            j += 1
+        extra = 0.0
+        if j < len(bounds) and t_abs > bounds[j][0]:
+            b, e, n = bounds[j]
+            extra = n * (t_abs - b) / max(1.0, e - b)
+        p['s'] = max(0.0, done + extra)
+
+
+def track_series(track: list[dict], limit: int = 240,
+                 step_windows: list | None = None,
+                 start_ms: int = 0) -> dict | None:
     """Derive the same chart series from a server record's parsed track.
 
     ``parse_track`` already normalises ``totalTime`` / ``totalDis`` / ``steps``
     / ``bdA``; this function only resamples at 10 s so an old record looks like
     the app's own record page.  It returns ``None`` when the server did not
     send enough fields to compute an honest series.
+
+    ``step_windows`` is the record/OBS ``step_freq_json`` list.  It is used
+    only when the points themselves have no ``steps`` (7.4.0 records), so the
+    cadence chart keeps working without re-adding a non-official field.
     """
     pts = []
     for p in (track or []):
@@ -1822,6 +1964,8 @@ def track_series(track: list[dict], limit: int = 240) -> dict | None:
     if len(pts) < 2:
         return None
     pts.sort(key=lambda x: x['t'])
+    if step_windows and not any(p['s'] > 0 for p in pts):
+        _apply_step_windows(pts, step_windows, start_ms)
     total_seconds = int(round(pts[-1]['t']))
     total_distance = max(x['d'] for x in pts)
     total_steps = int(round(max(x['s'] for x in pts)))
@@ -1864,6 +2008,7 @@ def track_series(track: list[dict], limit: int = 240) -> dict | None:
 
     splits = []
     prev_t = 0.0
+    prev_cum = 0
     cumulative_d = 0.0
     while cumulative_d + 1000.0 <= total_distance + 0.5:
         cumulative_d += 1000.0
@@ -1878,16 +2023,20 @@ def track_series(track: list[dict], limit: int = 240) -> dict | None:
             prev = cur
         if t is None:
             break
+        # Round the cumulative clock once and subtract, so per-kilometre
+        # rounding cannot make the table end a second past the run.
+        cum = int(round(t))
         splits.append({
             'km': 1.0,
-            'seconds': int(round(t - prev_t)),
-            'cumulative': int(round(t)),
+            'seconds': max(0, cum - prev_cum),
+            'cumulative': cum,
             'pace': round(t - prev_t, 1),
         })
         prev_t = t
+        prev_cum = cum
     if total_distance - cumulative_d > 1.0:
         rest = total_distance - cumulative_d
-        sec = max(0, total_seconds - int(round(prev_t)))
+        sec = max(0, total_seconds - prev_cum)
         splits.append({
             'km': round(rest / 1000.0, 3),
             'seconds': sec,
@@ -1955,16 +2104,24 @@ def validate_run_data(d: dict) -> list[str]:
         errs.append('bucket steps sum %d != %d'
                     % (sum(x['stepsNum'] for x in st), d.get('total_steps', 0)))
 
-    # ---- both coordinate frames must be present and different -----------
-    # lat/lng are BD-09, gLat/gLng are GCJ-02; here they differ by ~0.006 deg.
-    # If they are identical, one of them is wrong.
+    # ---- coordinate frames ----------------------------------------------
+    # 7.4.0 `MyLocation` writes lat/lng=-1 and the real pair in gLat/gLng.
+    # 7.2/7.3 wrote a BD-09 pair in lat/lng; those must differ from GCJ by
+    # ~0.006 deg.  Accept either shape, but never a point with no real pair
+    # or with lat/lng silently equal to gLat/gLng.
     try:
         wrap = d['locJsonEntity']
         pts = json.loads(wrap['allLocJson']) if isinstance(wrap.get('allLocJson'), str) \
             else wrap['allLocJson']
         p0 = pts[0]
-        if abs(float(p0['lat']) - float(p0['gLat'])) < 0.001:
+        glat, glng = float(p0.get('gLat') or 0), float(p0.get('gLng') or 0)
+        lat, lng = float(p0.get('lat') or 0), float(p0.get('lng') or 0)
+        if not (glat and glng) or glat == -1.0 or glng == -1.0:
+            errs.append('track gLat/gLng missing')
+        elif lat != -1.0 and abs(lat - glat) < 0.001:
             errs.append('track lat/gLat identical (BD and GCJ must differ)')
+        elif lng != -1.0 and abs(lng - glng) < 0.001:
+            errs.append('track lng/gLng identical (BD and GCJ must differ)')
     except Exception as e:  # noqa: BLE001
         errs.append('locJsonEntity unreadable: %s' % e)
 

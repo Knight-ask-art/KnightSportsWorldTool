@@ -1507,13 +1507,6 @@ function followDataGoto(el){
       if(target) target.focus();
     }, 90);
   }
-  if(el.dataset.checkAction === 'preflight'){
-    // Clicking the network row is the operator asking for the check; the
-    // egress lookup never runs automatically.
-    setTimeout(() => {
-      if(typeof runPreflight === 'function') runPreflight();
-    }, 140);
-  }
   if(el.dataset.checkAction === 'refresh-points'){
     setTimeout(() => {
       if(typeof loadPoints === 'function') loadPoints(true, {quiet: false});
@@ -5787,6 +5780,13 @@ function beijingEpoch(dateKey, hhmm){
   const hh = m ? +m[1] : 9, mm = m ? +m[2] : 0;
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), hh - 8, mm);
 }
+function clockSkewText(ms){
+  const sec = Math.abs(+ms || 0) / 1000;
+  if(sec < 1.5) return '已对齐';
+  if(sec < 90) return Math.round(sec) + ' 秒';
+  if(sec < 5400) return Math.round(sec / 60) + ' 分钟';
+  return (sec / 3600).toFixed(1) + ' 小时';
+}
 async function runPreflight(){
   const btn = $('#preflightBtn');
   if(btn){ btn.disabled = true; btn.textContent = '查询中…'; }
@@ -5799,41 +5799,66 @@ async function runPreflight(){
       school_name: LIVE.session && LIVE.session.schoolName || ''
     }, 30000);
     if(!liveOk(j)){
-      if(city) city.textContent = '自检失败';
+      if(city) city.textContent = '查询失败（仅提醒）';
       if(grid) grid.hidden = true;
-      if(text){ text.className = 'preflight-warn'; text.textContent = j.message || '网络自检失败'; }
-      liveLog('网络自检失败', j.message || '', 'warn');
-      LIVE.preflight = {ok: false, error: j.message || '网络自检失败', at: Date.now()};
+      if(text){
+        text.className = 'preflight-warn';
+        text.textContent = (j.message || '网络查询失败') + '（仅提醒，不影响提交）';
+      }
+      liveLog('网络诊断失败', j.message || '', 'warn');
+      LIVE.preflight = {ok: false, match: 'error',
+        error: j.message || '网络查询失败', at: Date.now()};
       refreshChecks();
       return;
     }
     const d = j.data || {};
-    const ip = (d.info && d.info.ip) || null;
-    const want = (d.info && d.info.expected_city) || d.campus || '—';
+    const info = d.info || {};
+    const ip = info.ip || null;
+    const want = info.expected_city || '';
     const got = ip && ip.city ? ip.city : '';
-    const match = ip && d.info && d.info.ip_city_matches;
-    if(city) city.textContent = match ? ('同城 · ' + want) :
-      (got ? ('不一致 · ' + got + ' / ' + want) : '无法确认');
+    const match = info.ip_city_matches;
+    const clock = info.server_time || null;
+    if(city) city.textContent = match === true
+      ? ('同城 · ' + (want || '校区'))
+      : (match === false
+        ? ('不同城 · ' + (got || '未知') + ' / ' + (want || '校区未知'))
+        : '无法确认');
     if(grid){
       grid.hidden = false;
-      grid.innerHTML = `<div>校区城市 <b>${esc(want)}</b></div>` +
-        `<div>出口 IP <b>${esc(got || '—')}</b></div>` +
-        `<div>开始时间 <b>${esc(d.start_text || ti.date + ' ' + (ti.time || '09:00'))}</b></div>` +
-        `<div>查询时间 <b>${esc((ip && ip.source) || '—')}</b></div>`;
+      const clockText = clock && clock.offset_ms != null
+        ? (clock.applied === false ? '未校正'
+           : (Math.abs(clock.offset_ms) < 1500 ? '已对齐'
+              : ((clock.offset_ms > 0 ? '慢 ' : '快 ') +
+                 clockSkewText(clock.offset_ms) + ' · 已自动校正')))
+        : (clock && (clock.error || clock.reason) ? '读取失败' : '未校准');
+      const serverText = clock && clock.server_time
+        ? beijingDateTime(clock.server_time) : '—';
+      grid.innerHTML = `<div>校区城市 <b>${esc(want || '未知')}</b></div>` +
+        `<div>出口 IP <b>${esc(got || '未知')}</b></div>` +
+        `<div>本机时钟 <b>${esc(clockText)}</b></div>` +
+        `<div>服务器时间 <b>${esc(serverText)}</b></div>` +
+        `<div>开始时间 <b>${esc(d.start_text || ti.date + ' ' + (ti.time || '09:00'))}</b></div>`;
     }
-    const warns = d.warnings || [];
+    const warns = (d.warnings || []).map(String);
     if(text){
-      text.className = warns.some(w => !w.startsWith('提醒')) ? 'preflight-warn' : 'preflight-ok';
-      text.innerHTML = warns.length
-        ? warns.map(w => esc(w)).join('<br>')
-        : '没有发现明显问题；提交前仍建议人工确认手机与电脑在同一城市网络。';
+      // Diagnostic only: even a mismatch is a note here, never a gate.
+      text.className = 'preflight-' + (match === false ? 'warn' : 'ok');
+      const lines = [];
+      if(match === false) lines.push('出口 IP 与校区城市不同：运营商省级 NAT 很常见，仅提醒，不影响提交。');
+      else if(match !== true) lines.push('无法确认出口城市；仅提醒，不影响提交。');
+      if(warns.length) lines.push(...warns.map(w => esc(w)));
+      if(!lines.length) lines.push('没有发现明显问题；仅提醒，不影响提交。');
+      text.innerHTML = lines.join('<br>');
     }
-    liveLog('网络自检', `${got || '未知'} / 校区 ${want}` +
-      (warns.length ? (' · ' + warns[0]) : ''), warns.length ? 'warn' : 'ok');
+    liveLog('网络诊断', `${got || '未知'} / 校区 ${want || '未知'}` +
+      (warns.length ? (' · ' + warns[0]) : ''), match === false ? 'warn' : 'ok');
     LIVE.preflight = {
       ok: match === true,
+      match: match === true ? 'same' : (match === false ? 'diff' : 'unknown'),
       city: got,
       want: want,
+      clock: clock,
+      clockApplied: !!(clock && clock.applied),
       warnings: warns,
       at: Date.now()
     };
@@ -5915,29 +5940,10 @@ function refreshChecks(){
   checks.push({ok: verified, label: 'token 有效',
     note: verified ? '服务端已验证' : (hasSession() ? '未验证/失效' : '未登录'),
     goto: 'accounts'});
-  // Network egress is part of the pre-submit checklist: the run detail page
-  // shows the IP's city, so a campus in Jiangmen on a Guangzhou egress is an
-  // avoidable exposure.  The check is advisory; submission is never blocked.
-  const pf = LIVE.preflight;
-  if(!pf){
-    checks.push({ok: false, warn: true, label: '网络出口',
-      note: '未自检；点「开始自检」确认与校区同城（仅提醒）',
-      goto: 'run', rtab: 'submit', action: 'preflight'});
-  }else if(pf.error){
-    checks.push({ok: false, warn: true, label: '网络出口',
-      note: pf.error + '（仅提醒）',
-      goto: 'run', rtab: 'submit', action: 'preflight'});
-  }else{
-    checks.push({
-      ok: !!pf.ok,
-      warn: !pf.ok,
-      label: '网络出口',
-      note: pf.ok
-        ? ('同城 · ' + (pf.city || pf.want || '已确认'))
-        : ('不一致 · ' + (pf.city || '未知') + ' / ' + (pf.want || '校区未知')),
-      goto: 'run', rtab: 'submit', action: 'preflight'
-    });
-  }
+  // Network egress stays a diagnostic card on the submit page, never a
+  // checklist gate.  IP geolocation is advisory and can be wrong (carrier
+  // NAT, stale databases), so it must not change `done`, the dock, or the
+  // submit button.  The card is queried only when the operator clicks it.
   const free = freeRunOn();
   const noPoints = !!LIVE.pointsEmpty;
   checks.push({ok: free || livePoints.length > 0,

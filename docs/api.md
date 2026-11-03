@@ -37,8 +37,9 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 
 | 字段 | 坐标系 |
 |---|---|
-| `lat` / `lon` | BD-09 |
-| `gLat` / `gLng`、`glat` / `glon` | GCJ-02 |
+| 轨迹点 `lat` / `lng` | 7.2/7.3 是 BD-09；7.4.0 是 `-1.0` 占位 |
+| `fivePoint` / 围栏的 `lat` / `lon` | BD-09（7.4.0 仍保留） |
+| `gLat` / `gLng`、`glat` / `glon` | GCJ-02（真实轨迹坐标） |
 | 本地内部（路线、围栏、地图） | GCJ-02 |
 
 ---
@@ -51,6 +52,7 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 | 极验预处理 | `api/v31/security/login/geepreprocess` | POST | upstream |
 | 极验校验 | `api/v70270/security/geevalidate` | POST | upstream |
 | 登录 | `api/v70100/login` | POST | upstream |
+| 服务器时间 | `api/v3/getserver/gmttime` | GET | Inverx 7.3.92 |
 | 用户信息 | `api/v70400/user/info`（7.4.0 起；404 时回退 `v70100`） | GET | 7.4.0 dex |
 | 校区列表 | `api/v61101/campus/zonelist?unid=` | GET | upstream |
 | 跑步策略 | `api/v70103/runModePolicy` | POST | upstream |
@@ -59,8 +61,9 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 | OBS 临时凭证 | `api/obs/temporary/url` | POST | upstream |
 | **提交记录** | `api/v70260/runnings/save/record` | POST | upstream |
 | 记录列表 | `api/v70230/runnings/records` | POST | upstream |
-| 记录详情 | `api/v61200/runnings/get_one_record` | POST | APK |
-| 记录详情（回退） | `api/v70260/runnings/get_one_record` | POST | upstream |
+| 记录详情 | `api/v70320/runnings/get_one_record` | POST | 7.4.0 dex 字符串池（7.3.70 起） |
+| 记录详情（旧版） | `api/v70260/runnings/get_one_record` | POST | upstream / 7.2.x |
+| 记录详情（最旧） | `api/v61200/runnings/get_one_record` | POST | 早期 APK |
 | 学期汇总 | `api/v55/runnings/recordssummary/semester` | POST | upstream |
 | 个人完成度 | `api/v41/running/getPersonalSemesterInfo` | POST | upstream |
 | 违规自查 | `api/v78/cheat/cheatlist` | POST | upstream |
@@ -70,8 +73,15 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 > `runModePolicy` 的 `operateType`：`0` = 开始跑步，只返回 `policy`；`1` = 学期
 > 视图，才返回 `runRuleModel`。设置页「从服务器读取」必须用 `operateType=1`。
 >
-> 记录详情先试 `v61200`（APK 里实际用的），失败再试 `v70260`（上游用的）。
-> 两条都失败时错误信息会同时带上两边的原因。
+> 记录详情按 `v70320`（7.3.70/7.4.0 字符串池）→ `v70260`（7.2.x 与上游）
+> → `v61200`（早期 APK）依次回退；全部失败时错误信息会同时带上三边的原因。
+> 7.4.0 与 7.3.70 的路由没有变化（`PROTO_DIFF_7.4.0`），所以 `v70320` 是第一优先。
+>
+> `api/v3/getserver/gmttime` 返回服务端毫秒时间戳。工具用请求往返的中点估算
+> 偏移，把它应用在**进程内**（`replica.domain.clock`）：生成的轨迹时间、报文
+> `timeStamp`、`tokenSign` 和页面显示都走校正后的时钟。响应体为空/被拦截时
+> 回退到同一响应的 HTTP `Date` 头（秒级，足够）。不会修改系统时间；登录前
+> 未校准时按本机时钟，提交前会强制再校准一次。
 >
 > 学期汇总必须带 `{"sid": <getPersonalSemesterInfo 返回的 sid>}`。空 body 不会报错，
 > 而是返回 `sname: ""`、所有计数为 0 的空记录；早期版本因此把有 10.24 km 的账号
@@ -86,9 +96,9 @@ if biz.get('status') is False: fail        # 有些接口只给 status
 > 绑定，换学期自动失效；服务器有目标时永远以服务器为准。
 >
 > 详情返回 `jsonFromObs=1` 时，数据库行里的 `allLocJson` / `fivePointJson` 是空的；
-> 完整轨迹在 OBS 对象 `run_data/{rrid//1000000}/{rrid}.json`（与上传的第二条 key
-> 相同）。详情接口会按需 GET 该对象，再解析 `run_data.allLocJson`；
-> OBS 读取失败只影响轨迹，不影响距离/配速/平台检查项。
+> 完整轨迹在 OBS 对象 `run_data/{YYYYMMDDHH}/{uuid}.json`（7.4.0 抓包只有这一条
+> PUT）。详情接口会先读该 key，再退回旧的 `run_data/{rrid//1000000}/{rrid}.json`，
+> 然后解析 `run_data.allLocJson`；OBS 读取失败只影响轨迹，不影响距离/配速/平台检查项。
 
 ---
 
@@ -237,15 +247,18 @@ POST api/v1/getGeoFenceForRun   {"geoFenceUpdateTime": 0}
 
 依据：`UploadFormatEntity.java` L462–496、`CreditRunPIml.java` L396、`RunHistoryDetailPImpl.java` L1066/L1069/L1145；Rust 参考 `src/api/submit.rs` 也没有这三个字段。
 
-### 5.2 OBS 十个键
+### 5.2 OBS 十一个键
 
 轨迹另存 OBS，全部是 `base64(gzip(...))`：
 
 ```
 rrid, uuid, uid,
-run_data, fixed_point_json, segment_json,
+run_data, extension_json, fixed_point_json, segment_json,
 speed_json, step_freq_json, laps_json, runFaceCheck
 ```
+
+> 7.4.0 抓包是 **11 个键**；`extension_json` 和 `segment_json` 解码都是空串。
+> 少发 `extension_json` 本身就是 schema 差异，值空也必须带上。
 
 - Bucket：`iydsj-hbase-hot`，前缀 `run_data/`
 - 上传后**回读校验**：重新签 GET，比对长度 + **SHA-256**；不一致重试 3 次并报错；
@@ -253,9 +266,11 @@ speed_json, step_freq_json, laps_json, runFaceCheck
 - `run_data` 内部：`{"allLocJson": "<数组字符串>", "useZip": false}`
 - `fivePointJson[].position` 是真机数组下标 `0,1,2,…`（上游 PR #106），
   不是服务端点位字段，也不能用 `999` 占位。
-- `speed_json` / `step_freq_json` 的 `queueNum` 是窗内下标，`id` 是本次
-  跑步内递增序号；末窗不足 10 秒时距离/步数按实际时长缩放，避免回放
-  算出 300+ 步/分。
+- `speed_json` / `step_freq_json` 的 `queueNum` 从 0 开始，**每 3 个 10 秒窗
+  （30 s）加 1**；`id` 是本次跑步内递增序号。真实 4 km 记录的窗口队列是
+  `0,0,0,1,1,1,…`，点队列也是 30 s 一批。末窗不足 10 秒时，生成器只分配
+  该窗口实际时长对应的距离/步数；OBS 序列化**不得再按 `window_s / 10`
+  二次缩放**，否则窗口合计会比 `juli` / `totalSteps` 少一截。
 - `laps_json[].avgPace` 的单位是**分钟/公里**：官方 `RunLapsFullAdapter`
   用 `(int)(avgPace * 60)` 格式化成 `i'rr"`。写秒会让手机把 6'00" 显示成
   360'00"。工具内部 `km_splits[].pace` 才是秒/公里，两者不要混用。
@@ -276,20 +291,24 @@ data.segment_json       → JSON 字符串
 也可能是 `base64(gzip(json))`（App 里有 `decompress_gzip_base64_values`）。
 `readonly._unwrap()` 最多剥 4 层，剥不动就原样返回。
 
-轨迹点字段：
+轨迹点字段（7.4.0 是 27 个）：
 
 | 字段 | 含义 |
 |---|---|
-| `gLat` / `gLng` | GCJ-02（地图直接用）|
-| `lat` / `lng` | BD-09 |
+| `gLat` / `gLng` | GCJ-02（地图直接用）；7.4.0 的真实坐标在这里 |
+| `lat` / `lng` | 7.2/7.3 是 BD-09；7.4.0 构造器写死 `-1.0` 占位 |
 | `bdA` | 海拔（米）|
-| `speed` | 原样，**单位未验证**，不做换算 |
-| `totalDis` / `totalTime` | 累计距离/时长 |
-| `steps` | 累计步数 |
-| `gainTime` | 采样时刻字符串 |
+| `speed` | **配速 min/km**（越大越慢）；`avgSpeed` / `bdS` 才是 m/s |
+| `totalDis` / `totalTime` | 累计距离（米）/ 活跃秒 |
+| `gainTime` | 墙钟采样时刻字符串；与 `totalTime` 不是同一个时钟 |
+| `steps` | 7.4.0 **没有**这个字段；旧版记录也没有，只有第三方实现写过 |
+
+> 7.4.0 的 `MyLocation` 有 30 个字段，`im/mp/ra` 是 DB-only，序列化后正好 27 个。
+> 读旧记录时 `parse_track()` 仍兼容 `steps`，但不能把它当成 7.4.0 的必需字段。
 
 > 缺 `gLat/gLng` 时，`readonly.parse_track()` 会把 `lat/lng` 从 BD-09 转成 GCJ-02，
-> 并在每个点上标 `crs='bd09->gcj02'`；两者都没有的点直接丢弃。
+> 并在每个点上标 `crs='bd09->gcj02'`；`lat/lng=-1` 的 7.4.0 占位点和两者都没有的
+> 点直接丢弃，不能把 -1 当 BD 坐标换算。
 
 ---
 
@@ -347,7 +366,7 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_submit_run` | `date`、`start_time` | 用所选日期/时间造数并提交；每日次数在提交前重新查服务器；返回 `param_warnings` |
 | `real_daily_count` | `date` | 查该北京日期已有几条记录；读不到返回 `source=unknown` |
 | `real_daily_counts` | `dates`（可选数组） | 一次返回最近 4 天的次数，供日期日历标注；读不到时 `runs=null` |
-| `real_preflight` | `start_ms`、`campus_name`、`school_name` | 显式网络自检；会查询公网 IP，只在 UI 点击时调用 |
+| `real_preflight` | `start_ms`、`campus_name`、`school_name` | 显式网络诊断（仅提醒）；会查询公网 IP 与服务器时间，只在 UI 点击时调用 |
 | `real_receipts` | `limit` | 列出写前回执（pending/accepted/rejected/unknown） |
 | `real_reconcile_receipts` | `uuid`、`limit` | **只读**核对未决回执与服务器记录；匹配到才回写 accepted，绝不重发 |
 | `real_semester` | — | 学期汇总 + 个人完成度，返回归一化 `view` 与原始数据。服务器没有户外目标时，回落本机设置的目标（`goal_source=local`） |

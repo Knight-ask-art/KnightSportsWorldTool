@@ -87,7 +87,8 @@ def test_record_detail_reads_the_obs_track_when_the_row_is_a_stub(monkeypatch):
                         lambda url, timeout=60, user_agent='': (200, _obs_body()))
     r = readonly.record_detail(_DetailClient(keys), _Acct(), 123)
     assert r['ok'] is True
-    assert keys == ['run_data/0/123.json']
+    assert len(keys) == 1 and keys[0].startswith('run_data/')
+    assert keys[0].endswith('/u-123.json'), keys
     assert len(r['track']) == 1
     assert r['track'][0]['lat'] == 22.4113343
     assert len(r['five_point']) == 1
@@ -109,8 +110,8 @@ def test_obs_failure_keeps_the_summary_instead_of_failing(monkeypatch):
     assert r['stats']['track_source'] == 'none'
 
 
-def test_obs_falls_back_to_the_uuid_key(monkeypatch):
-    """Old rows only exist at the hour/uuid key; the rrid key 404s."""
+def test_obs_falls_back_to_the_rrid_key(monkeypatch):
+    """Old rows only exist at the rrid key; the hour/uuid key 404s."""
     keys = []
     calls = {'n': 0}
 
@@ -124,8 +125,8 @@ def test_obs_falls_back_to_the_uuid_key(monkeypatch):
     r = readonly.record_detail(_DetailClient(keys), _Acct(), 123)
     assert r['ok'] is True
     assert len(keys) == 2
-    assert keys[0] == 'run_data/0/123.json'
-    assert keys[1].startswith('run_data/') and keys[1].endswith('/u-123.json')
+    assert keys[0].startswith('run_data/') and keys[0].endswith('/u-123.json')
+    assert keys[1] == 'run_data/0/123.json'
     assert len(r['track']) == 1
     assert r['detail']['obs_error'] == ''
     assert r['stats']['track_source'] == 'obs'
@@ -156,6 +157,40 @@ def test_inline_track_does_not_fetch_obs(monkeypatch):
     assert len(r['track']) == 1
     assert r['detail']['obs_error'] == ''
     assert r['stats']['track_source'] == 'inline'
+
+
+def test_detail_uses_step_windows_when_points_have_no_steps(monkeypatch):
+    """7.4.0 points dropped `steps`; the chart still needs step_freq_json."""
+    class _Inline(_DetailClient):
+        def request(self, acct, path, payload=None, retries=2):
+            out = super().request(acct, path, payload, retries)
+            if path != obs.OBS_SIGN_PATH:
+                d = out['json']['data']
+                d['jsonFromObs'] = 0
+                d['allLocJson'] = json.dumps([
+                    {'gLat': 22.4110, 'gLng': 112.9410,
+                     'totalDis': 0, 'totalTime': 0},
+                    {'gLat': 22.4120, 'gLng': 112.9420,
+                     'totalDis': 500, 'totalTime': 300},
+                    {'gLat': 22.4130, 'gLng': 112.9430,
+                     'totalDis': 1000, 'totalTime': 600},
+                ])
+                d['step_freq_json'] = json.dumps([
+                    {'beginTime': 1792584000000,
+                     'endTime': 1792584300000, 'stepsNum': 750},
+                    {'beginTime': 1792584300000,
+                     'endTime': 1792584600000, 'stepsNum': 750},
+                ])
+            return out
+
+    monkeypatch.setattr(obs, 'get_object_bytes',
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError('inline track must not read OBS')))
+    r = readonly.record_detail(_Inline([]), _Acct(), 123)
+    assert r['ok'] is True
+    assert r['analysis'] is not None
+    assert r['analysis']['avg_cadence'] is not None, r['analysis']
+    assert 140.0 <= r['analysis']['avg_cadence'] <= 160.0, r['analysis']
 
 
 def test_missing_obs_object_is_reported_as_404(monkeypatch):
@@ -207,3 +242,15 @@ def test_rules_read_uses_the_semester_operate_type(monkeypatch, tmp_path):
     assert out['data']['rules']['min_minutes'] == 5.0
     assert out['data']['rules']['step_min'] == 60
     assert client.seen[0]['operateType'] == 1
+
+
+def test_parse_track_drops_the_740_minus_one_placeholder():
+    """A 7.4.0 point with no gLat/gLng must not be converted as BD-09."""
+    assert readonly.parse_track([{'lat': -1.0, 'lng': -1.0}]) == []
+    assert readonly.parse_track([
+        {'gLat': 22.4110, 'gLng': 112.9410, 'lat': -1.0, 'lng': -1.0},
+    ])[0]['crs'] == 'gcj02'
+    # A -1 GCJ placeholder with a valid BD pair must fall back to BD.
+    assert readonly.parse_track([
+        {'gLat': -1.0, 'gLng': -1.0, 'lat': 22.4110, 'lng': 112.9410},
+    ])[0]['crs'] == 'bd09->gcj02'

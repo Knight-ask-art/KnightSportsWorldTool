@@ -175,6 +175,32 @@ def _account(username: str, device_model: str, os_version: str,
     return acct
 
 
+def _sync_clock(client, acct, log) -> None:
+    """Best-effort ``gmttime`` before login.
+
+    The login POST carries the same signed ``timeStamp`` as everything else,
+    so a laptop several minutes off can fail before the operator ever reaches
+    the network diagnostic.  This is read-only and never blocks login.  Test
+    fakes have no ``server_time`` method and are skipped.
+    """
+    fn = getattr(client, 'server_time', None)
+    if not callable(fn):
+        return
+    try:
+        st = fn(acct, timeout=5.0)
+        if st.get('applied'):
+            from ..domain import clock as _clock
+            off = int(st.get('offset_ms') or 0)
+            if abs(off) >= 1000:
+                log('[time] 已按服务器时间校正（本机%s %s），系统设置未改动'
+                    % ('慢' if off > 0 else '快', _clock.fmt_skew(off)))
+        else:
+            log('[time] 服务器时间不可用（按本机时钟继续）: %s'
+                % (st.get('reason') or '未知原因'))
+    except Exception as e:  # noqa: BLE001 - login must still be attempted
+        log('[time] 服务器时间读取失败（按本机时钟继续）: %s' % e)
+
+
 def login(username: str, password: str, device_model: str = 'NCO-AL00',
           os_version: str = '12', captcha_id: str | None = None,
           max_captcha_rounds: int = MAX_CAPTCHA_ROUNDS, log=_log,
@@ -191,6 +217,7 @@ def login(username: str, password: str, device_model: str = 'NCO-AL00',
     solver = solver or GT4.solve_gt4
     acct = _account(username, device_model, os_version, device)
     client = RealClient()
+    _sync_clock(client, acct, log)
 
     # The uuid ties checkGeeUse -> geevalidate -> login together.  The server
     # records "this uuid passed the captcha"; a different one gets 10003.
@@ -237,6 +264,7 @@ def login_with_ticket(username: str, password: str, ticket: dict,
 
     acct = _account(username, device_model, os_version, device)
     client = RealClient()
+    _sync_clock(client, acct, log)
     login_uuid = str(uuid.uuid4())
     needs = _check_needs_captcha(client, acct, username, login_uuid, log)
 

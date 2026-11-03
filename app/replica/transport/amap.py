@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 
 GEO_URL = 'https://restapi.amap.com/v3/geocode/geo'
+RE_GEO_URL = 'https://restapi.amap.com/v3/geocode/regeo'
 WALK_URL = 'https://restapi.amap.com/v3/direction/walking'
 
 KEY_ENV = 'JHP_AMAP_KEY'
@@ -64,6 +65,45 @@ def geocode(address: str, city: str = '', key: str | None = None) -> tuple[float
         raise AmapError('address not found: %r' % address)
     lng, lat = geos[0]['location'].split(',')
     return float(lng), float(lat)
+
+
+def regeo(lat: float, lng: float, key: str | None = None,
+          radius: int = 1000, timeout: float = 20.0) -> dict:
+    """GCJ-02 coordinate -> AMap ``addressComponent``.
+
+    This mirrors the official client's ``MapLogKt.getCity(gLat, gLng)``:
+    ``OutdoorRunViewModel.saveStartPointToDb()`` reverse-geocodes the run's
+    start point and stores the resulting city in ``SportRecord.address``.
+    """
+    params = {
+        'key': _key(key),
+        'location': '%.6f,%.6f' % (float(lng), float(lat)),
+        'extensions': 'base',
+        'radius': max(1, int(radius)),
+    }
+    body = _get(RE_GEO_URL, params, timeout=float(timeout))
+    return ((body.get('regeocode') or {}).get('addressComponent') or {})
+
+
+def regeo_city(lat: float, lng: float, key: str | None = None,
+               timeout: float = 20.0) -> str:
+    """The city name for a GCJ point, matching AMap's ``getCity()``.
+
+    AMap returns ``[]`` for the four municipalities; the official SDK falls
+    back to ``province`` there (``北京市``), so do the same.  An empty result
+    means "unknown", never a fabricated city.
+    """
+    comp = regeo(lat, lng, key=key, timeout=timeout)
+    city = comp.get('city')
+    if isinstance(city, list):
+        city = ''
+    city = str(city or '').strip()
+    if not city:
+        prov = comp.get('province')
+        if isinstance(prov, list):
+            prov = ''
+        city = str(prov or '').strip()
+    return city
 
 
 # --------------------------------------------------------------------------

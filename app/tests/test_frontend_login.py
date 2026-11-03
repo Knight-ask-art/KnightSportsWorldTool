@@ -192,10 +192,14 @@ def test_submit_checklist_covers_freeze_face_and_distance():
     assert 'sequential: !!LIVE.sequential' in SOURCE
 
 
-def test_network_egress_is_back_in_the_checklist():
-    assert "label: '网络出口'" in SOURCE
+def test_network_egress_is_diagnostic_not_a_checklist_gate():
+    # v0.1.8: IP geolocation is advisory.  It must never appear in
+    # `refreshChecks()` or change `done === checks.length`.
+    assert "label: '网络出口'" not in SOURCE
+    assert 'id="preflightBtn"' in HTML
+    assert '网络诊断（仅提醒）' in HTML
+    assert '仅提醒，不影响提交' in HTML
     assert 'LIVE.preflight =' in SOURCE
-    assert '未自检；点「开始自检」确认与校区同城（仅提醒）' in SOURCE
 
 
 def test_obs_track_fallback_is_wired():

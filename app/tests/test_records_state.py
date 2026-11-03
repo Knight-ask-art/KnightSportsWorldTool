@@ -33,6 +33,13 @@ def test_numeric_status_zero_is_ok():
     assert _row(status=0)['state'] == 'ok'
 
 
+def test_is_cheat_one_is_issue_even_when_status_is_zero():
+    """10-13 detail: isCheat=1 with a complete record must not paint green."""
+    r = _row(status=0, isCheat=1)
+    assert r['state'] == 'issue'
+    assert _row(status=0, isCheat=0)['state'] == 'ok'
+
+
 def test_suspicious_status_text_is_issue_even_without_code():
     assert _row(statusInfo='你的跑步成绩已被系统判为可疑')['state'] == 'issue'
 

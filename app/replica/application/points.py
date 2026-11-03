@@ -50,6 +50,7 @@ import uuid
 
 from ..build_info import app_root
 from ..transport import netsec
+from ..domain import clock
 from ..domain import coords
 
 POINTS_PATH_PREFIX = '/api/v560/get/1/distance/'
@@ -408,7 +409,7 @@ def url_sign(host: str, path: str) -> str:
 def build_body(acct, lat: float, lon: float, session: netsec.EnvelopeSession,
                anchor_ms: int | None = None,
                run_area_id=None, distance_m: float = 2000.0) -> dict:
-    now = int(time.time() * 1000) if anchor_ms is None else anchor_ms
+    now = clock.now_ms() if anchor_ms is None else anchor_ms
     runec_input = '%s%.6f%.6f%d' % (
         acct.uid, lon, lat, (now // 1000) * 1000)
     runec = netsec.build_envelope(session, runec_input, 'observed')['json']

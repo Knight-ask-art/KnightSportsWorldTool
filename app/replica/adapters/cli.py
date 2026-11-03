@@ -387,7 +387,8 @@ def _altitude_kwargs(args):
             'altitude_profile': profile}
 
 
-def do_forge(acct, cps, wps, args, start_ms=None, sequential=False):
+def do_forge(acct, cps, wps, args, start_ms=None, sequential=False,
+             fence=None, run_area_id=None):
     log('[3/6] 造数...')
     try:
         alt = _altitude_kwargs(args)
@@ -404,6 +405,8 @@ def do_forge(acct, cps, wps, args, start_ms=None, sequential=False):
             start_ms=start_ms,
             run_uuid=new_run_uuid(getattr(acct, 'platform', None)),
             km_times=km_times,
+            run_area_id=run_area_id,
+            geo_fences=(fence or {}).get('fences') or None,
             sequential=sequential,
             **alt)
     except ValueError as e:
@@ -462,11 +465,14 @@ def do_sign(run, acct, args, policy_data=None):
     from ..application import policy as POL
     from ..application import riskcheck
 
-    # `address` is the device city (upstream flow.rs fills it from
-    # identity.city, whose default is 大连市 — that default is issue #16).
-    city = riskcheck.device_city(acct.campusName, acct.schoolName)
-    if not city:
-        city = '%s %s' % (acct.schoolName, acct.campusName)
+    # Official `saveStartPointToDb` reverse-geocodes the run's start point
+    # and stores the city in `SportRecord.address`.  Fall back to the city
+    # inside the campus name, then to ""; never send the school name.
+    first = (run.get('locPoints') or [{}])[0]
+    city = riskcheck.address_for_start(
+        first.get('gLat'), first.get('gLng'),
+        acct.campusName, acct.schoolName,
+        key=getattr(args, 'amap_key', None)) or ''
 
     ctx = {
         'uid': acct.uid,
@@ -588,7 +594,7 @@ def do_submit(client, acct, run, ent, store, policy_ts=None):
 
 def do_readback(client, acct, res):
     try:
-        back = client.request(acct, 'api/v70260/runnings/get_one_record', {
+        back = client.request(acct, 'api/v70320/runnings/get_one_record', {
             'uuid': res['uuid'], 'rrid': res['rrid'], 'calculateBadge': False})
         d = as_dict(as_dict(back.get('json')).get('data'))
     except Exception as e:  # noqa: BLE001
@@ -824,6 +830,30 @@ def main(argv=None, client_factory=None):
     if args.record_json is not None:
         return _raw_record(client, acct, args)
 
+    # ---- clock ---------------------------------------------------------
+    # Every signed timestamp and the generated start/stop use this clock.
+    # The operator's system clock is never modified: a measured offset is
+    # applied inside the process (replica.domain.clock).  This comes after
+    # the read-only raw-record path: debugging must not add a network call.
+    clock_state = None
+    try:
+        st = client.server_time(acct, timeout=8.0)
+        clock_state = st
+        if st.get('applied'):
+            off = int(st.get('offset_ms') or 0)
+            if abs(off) >= 1000:
+                from ..domain import clock as _clock
+                log('[time] 已按服务器时间校正（本机%s %s），'
+                    '系统设置未改动'
+                    % ('慢' if off > 0 else '快', _clock.fmt_skew(off)))
+            else:
+                log('[time] 本机时钟与服务器一致')
+        else:
+            log('[time] 服务器时间不可用（按本机时钟继续）: %s'
+                % (st.get('reason') or st.get('error') or '未知原因'))
+    except Exception as e:  # noqa: BLE001 - never block a run on this
+        log('[time] 服务器时间读取失败（按本机时钟继续）: %s' % e)
+
     # ---- policy + campus centre ----------------------------------------
     # policy supplies `runes`, the rule set, the run areas, and the only
     # authoritative fence.  The separate getGeoFenceForRun reply is never used
@@ -957,9 +987,13 @@ def main(argv=None, client_factory=None):
     # ---- pre-flight risk checks ---------------------------------------
     if not getattr(args, 'no_preflight', False):
         from ..application import riskcheck
-        rc = riskcheck.preflight(acct.campusName, acct.schoolName,
-                                 start_ms=resolved_start,
-                                 explicit_start=backfill)
+        rc = riskcheck.preflight(
+            acct.campusName, acct.schoolName,
+            start_ms=resolved_start,
+            explicit_start=backfill,
+            clock_offset_ms=(int(clock_state.get('offset_ms'))
+                             if clock_state and clock_state.get('applied')
+                             else None))
         ip = rc.get('info', {}).get('ip') or {}
         if ip:
             log('[pre] IP %s · %s%s%s'
@@ -988,7 +1022,8 @@ def main(argv=None, client_factory=None):
     except ValueError as e:
         return _fail('路线不可用: %s' % e, 1)
     run = do_forge(acct, cps, wps, args, start_ms=resolved_start,
-                   sequential=sequential)
+                   sequential=sequential, fence=fence,
+                   run_area_id=(area or {}).get('id'))
 
     # ---- user-defined school rules -> qualification model --------------
     from ..application import qualification as Q

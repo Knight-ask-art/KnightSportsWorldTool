@@ -16,6 +16,8 @@ import datetime as _dt
 import random
 import re
 
+from . import clock as _clock
+
 #: matched case-insensitively as substrings of the key name
 SENSITIVE_KEYS = (
     'token', 'password', 'passwd', 'psw', 'authorization', 'cookie',
@@ -82,7 +84,17 @@ def mask(value: str, keep: int = 4) -> str:
 # --------------------------------------------------------------------------
 
 def now_ms() -> int:
-    return int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
+    """Server-aligned wall clock.
+
+    See :mod:`replica.domain.clock`.  The system clock is never changed; when
+    ``gmttime`` has been read, this returns the server's timeline instead.
+    """
+    return _clock.now_ms()
+
+
+def local_now_ms() -> int:
+    """The operating system's clock, for diagnostics only."""
+    return _clock.local_now_ms()
 
 
 def to_beijing(ms: int) -> _dt.datetime:

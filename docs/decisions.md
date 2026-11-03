@@ -21,11 +21,11 @@
 | 决策 | 依据 |
 |---|---|
 | 内部统一 **GCJ-02** | 围栏接口只返回 `glat/glon`；地图（高德）也用 GCJ |
-| 报文 `lat/lon` 用 **BD-09** | `submit.rs` / App 的 `lat/lon` 语义；`gLat/gLng` 才是 GCJ |
+| 轨迹点 `lat/lon`：7.2/7.3 用 **BD-09**，7.4.0 为 **-1 占位**；`fivePoint` 仍用 BD-09 | `submit.rs` / App 的 `lat/lon` 语义；`gLat/gLng` 才是 GCJ。7.4.0 `MyLocation` 构造器写死 `lat/lng=-1`，真实坐标只在 `gLat/gLng` |
 | OBS 默认不转 BD | 生成器内部已是 GCJ；只有喂真 BD 坐标才开 `JHP_OBS_CONVERT_BD=1` |
 | 距离统一按**米**处理，只转一次 | 提交体 `totalDis` 是米；列表接口也是米 |
-| 配速用 `时间 ÷ 距离` 算，不信 `speed` 字段 | `speed` 的单位在不同接口没有一致证据 |
-| `address` = 校区**城市**（如 `江门市`），不是学校名 | 上游 issue #16 的根因 |
+| 配速统一用 `时间 ÷ 距离` 算；轨迹 `speed` 是**配速 min/km**，`avgSpeed` / `bdS` 是 m/s | 官方 7.2/7.3 记录 667/667 点满足 `avgSpeed = 16.6667 / speed`（中位误差 0.0025）；7.4.0 `MyLocation` 三个字段都是 `double`；提交体 `speed = round(pace,2)*1000` 与 `UploadFormatEntity.setSpeed` 一致 |
+| `address` = **起点逆地理编码得到的城市**，取不到写空串；不是学校名 | 官方 `OutdoorRunViewModel.saveStartPointToDb()` → `MapLogKt.getCity(gLat,gLng)`；上游 issue #16 的 `大连市` 默认值只是反面证据 |
 | `policy` / `selDistance` 取自服务器 | `runModePolicy` 的 `policy`、`runRuleModel.minDistance`；不硬编码 |
 
 ## 3. 路线与围栏
@@ -60,13 +60,13 @@
 | **UI 点位**按最终提交「目标距离」拉取：绘制过程中不请求，路线定稿（关画笔/切页/导入/载入/拖动结束/手输）后按精确距离请求一次，仍受 5 分钟预算；**提交复用地图上的点位** | 实测每次请求随机抽 5 个点；逐 10 m 重拉会耗尽 3 次/5 分钟额度，提交时再抽会换一套（2026-10-30 修正） |
 | 提交结果用**常驻卡**，结果未知时锁提交 | 180 s 超时后 toast 已消失，按钮却恢复可点；只读回执核对完成才解锁 | 重复提交和“提示已消失”都是操作事故 |
 | 路线撤销用 **50 个完整快照**（含闭合状态） | `pop()` 只能撤销最后一个点，删中间点后越撤越乱；支持 Ctrl+Z / Ctrl+Shift+Z | 快照能精确恢复任意一次编辑 |
-| 检查表只有**带目标**的行显示可点击 | 没有修复入口的冻结期/人脸抽检不再伪装成按钮；网络出口点击才查 IP | 视觉 affordance 必须兑现 |
+| 检查表只有**带目标**的行显示可点击 | 没有修复入口的冻结期/人脸抽检不再伪装成按钮；网络出口已移出检查表，只在诊断卡里手动查 | 视觉 affordance 必须兑现；提醒项不能变成提交闸门 |
 | 冷却期间**刷新按钮置灰并每秒 tick** | 秒数只藏在 title 里时用户会反复点；按钮文本直接显示「冷却 Ns」 | 状态要可见、可等待 |
 | 目标距离默认 **0**，手绘后自动填充；手动输入优先 | 默认 2.5 km 会让用户在没画线时以为目标已确定；手绘长度才是这次要提交的真实距离 | 删除最后一点或清空路线回到 0，手动值保留 |
 | 点位与目标距离不一致要**显式提示** | 5 分钟预算/10603 可能让点位停留在旧距离；静默沿用会让界面和提交语义不一致 | chip、点位徽标、检查表、提交 note 四处同时标注，检查项可一键刷新 |
-| `fivePointJson[].position` 用数组下标；10s 窗 `queueNum` 用下标、末窗按实际时长缩放 | 上游 PR #106 真机 `RunData` 语义；旧实现 999/0/满窗会把回放步频顶到 300+ |
+| `fivePointJson[].position` 用数组下标；10s 窗 `queueNum` 每 3 个窗（30 s）加 1、末窗按实际时长缩放 | 官方 7.4.0 `SpeedPerTenSec.queueNum`；真实 4 km 记录的窗口队列是 `0,0,0,1,1,1,…`，点队列也是 30 s 一批（旧实现每窗 +1 会把回放批次拉快 3 倍） |
 | 回执核对只读、匹配到才写 accepted | 响应丢失时不能重发；只读查询能确认是否入库 |
-| 网络自检只在用户点击时查公网 IP | 自动查 IP 会泄露网络位置，也把“业务假数据”之外的信息带进提交链 |
+| 网络诊断只在用户点击时查公网 IP，且**不进入检查表** | 自动查 IP 会泄露网络位置；把出口城市当成提交闸门会让省级 NAT 用户无法提交 |
 | 设备指纹按 `data` 目录生成一次，登录/提交/OBS 共用 | 编译期常量会让所有用户同一台设备；每次启动随机会让账号天天换机 |
 | 旧数据升级冻结原来的提交指纹，不静默轮换 | 旧账号已经用旧指纹提交过；静默换机本身就是新的风控信号 |
 | 更换设备指纹必须显式 rotate，并先备份旧指纹 | 可回滚；避免误操作把真实账号变成“新手机” |
@@ -83,7 +83,7 @@
 | 路线库存 `data/routes.json`，不再只靠 localStorage | localStorage 按 origin 隔离，换端口/换 exe 会丢路线 |
 | 学期字段做保守归一化，缺失显示未知 | 不同学校/版本字段不一致；把缺失当 0 会误导达标判断 |
 | 学校规则读取用 `runModePolicy` 的 `operateType=1`；提交继续用 `operateType=0` | 真实返回里只有学期视图带 `runRuleModel`，开始跑步视图只带 `policy`；提交记录实测 `policy=0` 与开始跑步视图一致 |
-| 记录详情 `jsonFromObs=1` 时回读 OBS 对象 | 数据库行的 `allLocJson` 为空，完整轨迹在 `run_data/{rrid//1000000}/{rrid}.json`；不回读会显示“0 点” |
+| 记录详情 `jsonFromObs=1` 时回读 OBS 对象 | 数据库行的 `allLocJson` 为空，完整轨迹在日期式 `run_data/{YYYYMMDDHH}/{uuid}.json`（旧 rrid 式仅作回退）；不回读会显示“0 点” |
 | 打卡点命中半径由后端下发（`hit_radius_m`），前端不再写死 | 协议常量是 `RunSeqLocationManager` 的 `distance <= 25.0`；检查表曾用 40 m，会显示“全过”而服务端判定漏点，一次提交就白跑 |
 | 补跑开始时间保留秒和毫秒，不落在整分 | 官方开始时间来自 `System.currentTimeMillis()`；整分会把每个点 `flag`、10 s 窗边界、`gainTime` 全部对齐到同一网格 |
 | 步频窗 `maxDiff/minDiff/avgDiff` 保持 `0/1000/0`，`validDis/validTime` 保持与总量相等 | **反编译源码证实这是官方行为**：`StepManager` 的 `mDiff` 只有 `onDiffChanged` 会更新，而 `AccelerometerListener` 从不调用它；`RunLocationManager2` 明确 `setValidTime(mTotalTime)` / `setValidDis(mTotalDistance)`。上游审计 A2/A3 的“完美值”指控不成立，改了反而更像伪造 |
@@ -100,7 +100,7 @@
 | 服务器是否接受补跑的历史日期 | **未验证**；上游 README 写“前 3 天”，但 `#64 时间限制根因未确定` | 可能被 `11016` 或其它规则拒；工具只保证时间字段自洽 |
 | 补跑记录的服务器审查口径 | 未知 | 回溯性审查可能对历史日期更敏感；不要把它当作“安全补签” |
 | 记录详情字段全集 | 按 APK 前端代码对齐（`run_data.allLocJson` 等） | 真实返回不同时，`fields` 会列出实际键名 |
-| 详情里 `speed` 的单位 | 未知 | 只原样透出，不换算 |
+| 详情里 `speed` 的单位 | 已确认是**平均配速 min/km**（10-24 记录 6.08 = 24′31″/4.029 km） | 只原样透出；`speedTop/Bottom` 也是配速区间 |
 | 记录列表的排序方向 | 不假设 | 代码会检测「新→旧 / 旧→新」两种 |
 | 周汇总的窗口边界 | 北京时间周一~周日；`truncated` 标明页数用尽 | 记录很多时早期周只是下限 |
 | `allLocJson` 发完整轨迹 | 上游发空串，我们发完整轨迹（**主动偏离**） | 若服务器校验轨迹长度/形状，这是差异点 |
@@ -374,6 +374,9 @@ if (this.mCachePoint < 1 && lineBean2.getType() == lineBean.getType()
 窗口 CV 按 `0.20*(pace/6)^1.5` 放大：同一条 4 km 记录，6'05" 时 0.19、7'25" 时
 0.43、8'57" 时 0.52。固定定位误差在更慢的窗口里占比更大，这与实测吻合。
 
+> 上表的采样间隔是 7.2/7.3 账号样本的定标。§19 起目标切到 7.4.0，生成器
+> 默认采样改为 5 s（7.4.0 抓包 97/103 个间隔为 5 s），其余窗口/步频/海拔指标不变。
+
 每公里配速不再由全局平滑曲线决定：
 
 * 生成时按 `ceil(km)` 分公里，每公里独立抽一个约 ±6%（夹到 ±12%）的用时，
@@ -522,3 +525,105 @@ OBS `laps_json` 是分钟/公里（官方 App 读取）。
 单次响应；旧实现按 key 合并 mode 1/2，可能拼出“mode 1 的跑区 + mode 2 的
 围栏”。现在优先采用同时带 `runAreaModels` 和 `geoFence` 的那一条，两个
 模式都不完整时选围栏那条，不再跨回复拼字段。
+
+---
+
+## 18. 0.1.8：网络诊断移出检查表、服务器时钟、官方 address（2026-11-04）
+
+**网络出口只是提醒，不能挡提交。** 旧实现把 `LIVE.preflight` 当成检查表的一行：
+没有自检、`fetch_ip_info` 被拦截、或者出口城市不同，都会让 `done !==
+checks.length`，提交按钮和 dock 一直是未就绪。运营商省级 NAT 会让大量正常
+用户永远“不同城”，而官方客户端根本不看电脑的出口 IP。现在：
+
+- `refreshChecks()`、`done === checks.length`、dock、提交按钮都不再引用网络项；
+- 「跑步 → 提交」保留独立卡片「网络诊断（仅提醒）」，只在用户点击时联网；
+- `ip_city_matches` 显式三态：`true` / `false` / `null`（无法确认），三者都
+  不改变提交状态；
+- 时间窗、开始时间等真实检查仍然保留；网络失败不再被叫成“自检失败”。
+
+**时钟偏差由软件吸收，不让用户改系统设置。** 旧提示“请校准系统时间”会把
+一个系统设置问题推给用户，实际还会造成新的 issue：用户不知道怎么改、改了
+别的软件又出问题。服务端校验信封 `timeStamp`，本机快几分钟时生成的记录还会
+落在“未来”。现在：
+
+- `RealClient.server_time()` 读 `GET api/v3/getserver/gmttime`；
+- 响应体为空/被拦截时回退到同一响应的 HTTP `Date` 头，仍是服务器时钟；
+- 用请求往返中点估算偏移（`server - (t0+t1)/2`），避免把单程网络延迟算进去；
+- `replica.domain.clock` 保存偏移，并以 `time.monotonic()` 锚定：即使用户中途
+  改了系统时间，进程内的时间轴也不会跳；
+- `safety.now_ms()`、`netsec.now_ms()`、`nskpure.now_ms()`、请求头
+  `timeStamp`、`tokenSign`，以及 `runes` 的兜底全部改走这个时钟；
+- 偏移缓存到 `data/clock.json`，12 小时内复用；每次提交造数前强制重测一次；
+- 系统时间**从不修改**，提示改成“已自动改用服务器时间……不需要修改系统设置”。
+
+读不到 `gmttime` 时按本机时钟继续，提交结果里明确标注“未能校准”，不阻断
+提交。官方 App 的冷启动和结算前也都会调这个端点，Inverx 7.3.92 的
+`running/client.py` 同样用它当 `now`，所以这不是自造行为。
+
+**`address` 按官方链路取起点城市。** 旧实现用“校区城市表”，广工这类名字里
+没有城市的学校会得到 `None`，最后退化成“学校名 + 校区名”提交。反编译
+`OutdoorRunViewModel.saveStartPointToDb()` 显示官方是：
+
+```
+起点 MyLocation.gLat/gLng
+  -> MapLogKt.getCity(context, gLat, gLng, callback)
+  -> AMap RegeocodeAddress
+  -> SportRecordManager.setAddress(city)   // null -> ""
+```
+
+现在 `riskcheck.address_for_start()` 按同一顺序：AMap 逆地理（直辖市回退
+`province`）→ 校区/学校名中的城市 → 空串。提交和 CLI 都用轨迹首点的
+`gLat/gLng`，不再把学校名当城市。没有高德 Key 时只会回退到名字里的城市，
+识别不到就提交空串；这比伪造一个城市更接近官方行为。
+
+**记录详情跟到 7.4.0。** `readonly.DETAIL_PATHS` 现在是
+`v70320 → v70260 → v61200`。7.4.0 的 dex 字符串池仍是 `v70320`
+（`PROTO_DIFF_7.4.0`，7.3.70 起未变），7.2.x 仍答 `v70260`；`v61200` 是
+更早的 APK 路径，放最后。三个都失败才报错，错误信息带三边原因。
+
+**Inverx 的两项只读接口暂不接入。** `api/v1/barrierFree/getBarrierFree`
+（discovery 主机）和 `api/creditscore/v70390/popup` 都是客户端 UI/遥测：
+前者是安卓无障碍服务黑名单，后者是信用分弹窗。它们不参与
+`save/record` 的字段或签名，读它们不会让记录更容易通过，反而多一个跨主机
+请求面；真正与提交相关的 `api/v78/cheat/cheatlist` 已经以只读方式接入。
+因此 v0.1.8 明确暂缓，不假装“吸收了”。
+
+---
+
+## 19. 0.1.8 切到 7.4.0：27 字段、配速、30 s 分段（2026-11-04）
+
+用户确认当前官方 App 是 **7.4.0**。7.2/7.3 的 22 字段、字符串数值、`lat/lng=0`
+和 2 s 采样只保留为历史对照，不再作为 v0.1.8 的目标形状。
+
+| 项 | 7.4.0 目标 | 依据 |
+|---|---|---|
+| 轨迹点字段 | **27 个**，没有 `steps` | dex `MyLocation` 30 个字段去掉 DB-only 的 `im/mp/ra`；Demacia 10-26 抓包 103 点 × 27 字段 |
+| 字段类型 | `double/float/int/long`，不是字符串 | 7.4.0 `MyLocation` / `AnalysisStateDB` 声明 |
+| `lat/lng` | `-1.0` 占位，真实坐标在 `gLat/gLng` | `MyLocation` 构造器写死 `lat/lng=-1`；Demacia 10-26 抓包 103/103 点 |
+| OBS 对象 | **11 个键**，含 `extension_json`（空串）；`segment_json` 也是空串；**只写日期式 key** | Demacia 10-26 抓包 11 字段、1 条 PUT；少一个键或写两条 key 本身就是差异 |
+| `speed` | **配速 min/km** | 官方 7.2/7.3 记录 667/667 点满足 `avgSpeed = 16.6667 / speed`；`avgSpeed`/`bdS` 是 m/s |
+| `gainTime` | 墙钟字符串 | 官方记录 `%Y-%m-%d %H:%M:%S`；`totalTime` 是活跃秒，两者本来就不是同一个时钟 |
+| `id` / `queueNum` | `id=1..N`；点队列每 30 s 加 1 | 官方 4 km 记录 `queueNum` 在 0/15/30/45… 点跳变；窗口队列 `0,0,0,1,1,1…` |
+| 起终点 | index 0 `type=5`，末尾 `type=6`，异常点可为 `type=-1`，`locType=0` | 官方记录首点全零累计 + `type=5`，末点 `type=6` |
+| 分段 | `AnalysisStateDB` 11 键、30 s、`avgSpeed` 配速 | 官方 48 段记录逐段验证 `distance/(endTime-startTime)` 与 `avgSpeed` 一致 |
+| `geoFencesJson` | 真实围栏数组 `{id,name,points:[{lat,lng,glat,glng}]}` | `GeoFencesBean` / `GeoFencesPointBean`；官方记录围栏点 `lat/lng=0`、`glat/glng` 有值 |
+| `isCheat` | 非 0 参与状态判定 | 10-13 记录 `isCheat=1`、列表 `status=2`、详情多一条“运动数据有问题” |
+| `count` | 53–79，均值 ~67 | Demacia 7.4.0 真机统计：整数 53–79，均值 67.6，相邻差中位数 2 |
+| `state` / `bdG` | `1` / `1` | 7.4.0 抓包默认；不再随机 1/2/3 |
+| 采样 | **5 s 为主 + 抖动** | 7.4.0 抓包 97/103 个间隔是 5 s；2 s 是本账号 7.2/7.3 的设备行为 |
+
+**不采纳的两项**：Inverx 的 `fivePoint.isPass=true` 硬编码（我们按 25 m 实际
+通过判定）和 `maxRunTime/minSteps` 猜测（没有官方依据，保持不猜）。
+
+**分段仍在线上发空串。** `ObsClient` 的 `segment_json` 和
+`UploadFormatEntity.setSegmentJson()` 在 7.4.0 里最终都置空（Demacia 抓包的
+OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工具的内部预览/
+自检，不改变线上报文；不要因为它“看起来像”就塞进 OBS。
+
+**证据边界**：本账号没有 7.4.0 官方新记录，上述 7.4.0 结论来自
+“Demacia 7.4.0 抓包 + 7.4.0 dex + 本账号 7.2/7.3 官方记录”三份材料。
+5 s 采样、`count/state` 的具体分布、`fivePoint.lat/lon` 是否在真机 7.4.0 上
+始终非零，仍属于**有依据的假设**，不是本账号实测。`geoFencesJson` 的
+`freedomShowFence` 保持 `false`；没有跑区时 `runAreaId` 保持 `-1`
+（有服务端跑区时仍沿用官方 `getRunAreaId()` 的值）。计分 `runModePolicy`
+的围栏/跑区仍要等 06:30–22:00 才能只读确认。

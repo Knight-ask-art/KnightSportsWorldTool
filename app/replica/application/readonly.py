@@ -231,18 +231,20 @@ def _start_ms(r: dict) -> int:
 
 
 def _record_state(complete: bool, normal_run, status, reasons: list,
-                  status_code=None) -> str:
+                  status_code=None, is_cheat=None) -> str:
     """Classify a row honestly: ok / warn / issue.
 
     `complete=True` is not enough by itself: the server can accept a record but
     still list a failed reason such as “运动数据有问题”, return
-    `normalRun=false`, or mark the list row with `status=2` (“可疑”).  Those
-    must not be painted green as “已通过”.
+    `normalRun=false`, mark the list row with `status=2` (“可疑”), or set
+    `isCheat=1`.  Those must not be painted green as “已通过”.
 
     The list endpoint does not include `statusInfo`/`reasonList`; it only has
     the numeric `status` (observed 0 = normal, 1 = invalid data, 2 =
     suspicious).  That code is therefore the only honest signal available
-    before opening the detail.
+    before opening the detail.  The detail endpoint adds `isCheat`, which is
+    the explicit flag behind 10-13's `status=1` + “运动数据有问题” row; ignoring
+    it would label a flagged record as ok.
     """
     text = str(status or '')
     normal_bad = (normal_run is False
@@ -256,7 +258,13 @@ def _record_state(complete: bool, normal_run, status, reasons: list,
             code = int(status_code)
         except (TypeError, ValueError):
             code = None
-    code_bad = code in (1, 2)
+    cheat = None
+    if is_cheat is not None and str(is_cheat).strip() != '':
+        try:
+            cheat = int(is_cheat)
+        except (TypeError, ValueError):
+            cheat = None
+    code_bad = code in (1, 2) or (cheat is not None and cheat != 0)
     other_code = code not in (None, 0, 1, 2)
     if normal_bad or reason_bad or text_bad or code_bad:
         return 'issue'
@@ -311,7 +319,7 @@ def normalise_record(r: dict) -> dict | None:
         'status_code': r.get('status'),
         'state': _record_state(bool(r.get('complete')), r.get('normalRun'),
                                r.get('statusInfo') or '', reasons,
-                               r.get('status')),
+                               r.get('status'), r.get('isCheat')),
         'valid_distance_km': (round(_num(valid_raw) / 1000.0, 3)
                               if valid_raw is not None else None),
         'reasons': reasons,
@@ -540,8 +548,9 @@ def weekly_summary(client, acct, weeks: int = 4, now_ms: int | None = None,
 # --------------------------------------------------------------------------
 #
 # Evidence that the detail carries the whole run:
-#   * official APK constant `api/v61200/runnings/get_one_record`, next to
-#     `calculateBadge` (extracted_constants/api_path_scan.txt);
+#   * 7.4.0's dex string pool carries `api/v70320/runnings/get_one_record`
+#     (PROTO_DIFF_7.4.0; unchanged since 7.3.70), so that is the primary path;
+#   * 7.2.x still answers `v70260`; `v61200` is the older APK path, kept last;
 #   * the app's own UI parses exactly these fields:
 #         JSON.parse(JSON.parse(pi.run_data).allLocJson)
 #         JSON.parse(pi.fixed_point_json).fivePointJson
@@ -553,8 +562,9 @@ def weekly_summary(client, acct, weeks: int = 4, now_ms: int | None = None,
 # Each value may arrive as plain JSON *or* as base64(gzip(json)) — the app
 # ships `decompress_gzip_base64_values` for that reason.
 
-DETAIL_PATHS = ('api/v61200/runnings/get_one_record',
-                'api/v70260/runnings/get_one_record')
+DETAIL_PATHS = ('api/v70320/runnings/get_one_record',
+                'api/v70260/runnings/get_one_record',
+                'api/v61200/runnings/get_one_record')
 
 
 def _unwrap(v, rounds: int = 4):
@@ -591,11 +601,13 @@ def parse_track(raw) -> list[dict]:
         glng = _num(p.get('gLng'), 0.0)
         blat = _num(p.get('lat'), 0.0)
         blng = _num(p.get('lng'), 0.0)
-        if glat and glng:
+        if glat and glng and glat != -1.0 and glng != -1.0:
             lat, lng, crs = glat, glng, 'gcj02'
-        elif blat and blng:
+        elif blat and blng and blat != -1.0 and blng != -1.0:
             # `lat/lng` in this API are BD-09 (`submit.rs`); without gLat we
-            # must convert, otherwise the track sits ~500 m off the map
+            # must convert, otherwise the track sits ~500 m off the map.
+            # 7.4.0 uses -1/-1 as a placeholder: converting that would put
+            # the point off the coast of Africa, so drop it instead.
             lat, lng = coords.bd09_to_gcj02(blat, blng)
             crs = 'bd09->gcj02'
         else:
@@ -608,7 +620,7 @@ def parse_track(raw) -> list[dict]:
             'bd_lat': round(blat, 7),
             'bd_lng': round(blng, 7),
             'altitude': round(_num(alt), 2) if alt is not None else None,
-            'speed': _num(p.get('speed')),      # unit unverified: raw only
+            'speed': _num(p.get('speed')),      # pace min/km in official records
             'distance_m': round(_num(p.get('totalDis')), 1),
             'duration_s': int(_num(p.get('totalTime'))),
             'steps': int(_num(p.get('steps'))),
@@ -631,29 +643,38 @@ def _segments(raw) -> list:
     return seg if isinstance(seg, list) else []
 
 
+def _step_windows(raw) -> list:
+    """`step_freq_json` -> the 10 s window list (JSON or base64-gzip)."""
+    rows = _unwrap(raw)
+    if isinstance(rows, dict):
+        rows = rows.get('step_freq_json') or rows.get('stepsPerTenSec') or []
+    return rows if isinstance(rows, list) else []
+
+
 def _fetch_obs_detail(client, acct, rrid, uuid=None, start_ms=0) -> dict:
     """Read the OBS object when the server row is only a stub.
 
     Records uploaded with ``jsonFromObs=1`` keep ``allLocJson`` and
     ``fivePointJson`` empty in the database; the full ``OutdoorDecoder`` JSON
-    is at ``run_data/{rrid//1000000}/{rrid}.json``.  Without this fallback the
-    detail page says "no track" even though the replay has one.
+    is in OBS.  Without this fallback the detail page says "no track" even
+    though the replay has one.
 
-    Older records (and the official client) only wrote the hour/uuid key
-    ``run_data/{YYYYMMDDHH}/{uuid}.json``; the rrid key 404s for them.  Try
-    both before giving up, otherwise an existing trail is reported as
-    "OBS 读取失败".
+    The official 7.4.0 client writes only the hour/uuid key
+    ``run_data/{YYYYMMDDHH}/{uuid}.json``, so read that first.  Some old or
+    third-party records only have the rrid-shaped key; try it second.  Either
+    way, an existing trail must not be reported as "OBS 读取失败".
     """
     from urllib.error import HTTPError
 
     from ..domain import safety
     from ..transport import obs as OBS
 
-    keys = [OBS.rrid_key(rrid)]
+    keys = []
     if uuid and start_ms:
         # Same key format as obs.obs_keys(): Beijing hour + record uuid.
         keys.append('run_data/%s/%s.json' % (
             safety.to_beijing(start_ms).strftime('%Y%m%d%H'), uuid))
+    keys.append(OBS.rrid_key(rrid))
 
     ua = OBS.platform_user_agent(acct)
     for key in keys:
@@ -722,6 +743,9 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
 
     five = _five_list(obj.get('fixed_point_json'))
     segs = _segments(obj.get('segment_json'))
+    # 7.4.0 points no longer carry `steps`; keep the cadence chart by reading
+    # the 10 s step windows from the row (or OBS below) instead.
+    steps = _step_windows(obj.get('step_freq_json'))
 
     # `jsonFromObs=1` means the row is only a summary and the real track lives
     # in OBS.  Pull it on demand so the detail map is not empty.  Fetch only
@@ -749,6 +773,8 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
                 five = _five_list(obs_obj.get('fixed_point_json'))
             if not segs:
                 segs = _segments(obs_obj.get('segment_json'))
+            if not steps:
+                steps = _step_windows(obs_obj.get('step_freq_json'))
         elif not obs_error:
             obs_error = 'OBS 对象为空或格式不对'
 
@@ -778,7 +804,7 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
         'total_ascent': int(_num(obj.get('totalAscent'))),
         'total_descent': int(_num(obj.get('totalDescent'))),
         'avg_step_freq': int(_num(obj.get('avgStepFreq'))),
-        'speed': opt_num('speed'),           # raw; unit unverified
+        'speed': opt_num('speed'),           # average pace, min/km
         'address': obj.get('address') or '',
         'status': obj.get('statusInfo') or '',
         'status_code': obj.get('status'),
@@ -797,7 +823,7 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
         'appeal_info': str(obj.get('appealStatusInfo') or ''),
         'state': _record_state(bool(obj.get('complete')), obj.get('normalRun'),
                                obj.get('statusInfo') or '', reasons,
-                               obj.get('status')),
+                               obj.get('status'), obj.get('isCheat')),
         'reasons': reasons,
         'json_from_obs': bool(json_from_obs),
         'track_source': track_source,
@@ -821,7 +847,8 @@ def record_detail(client, acct, rrid, uuid=None) -> dict:
 
     return {'ok': True, 'error': None, 'detail': detail, 'track': track,
             'five_point': five, 'segments': segs, 'stats': stats,
-            'analysis': track_series(track),
+            'analysis': track_series(track, step_windows=steps,
+                                     start_ms=_start_ms(obj)),
             'fields': sorted(obj.keys())}
 
 

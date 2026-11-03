@@ -582,6 +582,15 @@ class ReplicaApi:
         os.environ.setdefault('JHP_POINTS_CACHE',
                               os.path.join(self.store_dir,
                                            'points_cache.json'))
+        # Server-aligned clock cached across restarts.  The system clock is
+        # never touched; only our own timestamps use the offset.
+        from ..domain import clock as CLOCK
+        self._clock_path = os.path.join(self.store_dir, 'clock.json')
+        if CLOCK.source() == 'local':
+            try:
+                CLOCK.load(self._clock_path)
+            except Exception:  # noqa: BLE001 - a bad cache must not block boot
+                pass
         self._students: dict[str, dict] = {}
         self._sport: dict[str, dict] = {}
         self._tasks: dict[str, dict] = {}
@@ -1515,6 +1524,39 @@ class ReplicaApi:
         except Exception:  # noqa: BLE001
             pass
 
+    def _sync_server_clock(self, acct=None, rc=None, force=False,
+                           timeout=8.0, max_age_s=600.0):
+        """Measure ``gmttime`` and apply it to our clock.  Never raises.
+
+        The operator's system clock is not modified.  Every generated or
+        signed timestamp reads :mod:`replica.domain.clock`, so after this call
+        a laptop that is minutes fast still produces valid requests.
+        """
+        from ..domain import clock as C
+        if not force and not C.needs_sync(max_age_s):
+            return C.state()
+        if acct is None:
+            try:
+                acct = self._real_account()
+            except Exception:  # noqa: BLE001
+                acct = None
+        if acct is None or not getattr(acct, 'token', ''):
+            return C.state()
+        try:
+            from ..transport import realclient as R
+            client = rc or R.RealClient(proxy=os.environ.get('JHP_PROXY')
+                                        or None)
+            info = client.server_time(acct, timeout=timeout)
+            try:
+                C.save(self._clock_path)
+            except Exception:  # noqa: BLE001
+                pass
+            return info
+        except Exception as e:  # noqa: BLE001 - diagnostics must not block
+            st = C.state()
+            st['error'] = str(e)[:160]
+            return st
+
     def real_preflight(self, campus_name=None, school_name=None,
                        start_ms=None, expect_city=None):
         """Explicit network/clock preflight (queries the public IP).
@@ -1522,27 +1564,55 @@ class ReplicaApi:
         The UI calls this only when the operator presses "网络自检"; it is not
         part of login/submit, so normal use does not leak network location.
         """
-        acct = self._real_account()
-        if acct is None:
-            return _fail('未配置 token（先在"账号"面板保存）')
+        try:
+            acct = self._real_account()
+        except Exception:  # noqa: BLE001 - a corrupt profile must not block the check
+            acct = None
         from ..application import riskcheck as RK
         from ..domain import safety as S
-        campus = campus_name if campus_name is not None else (acct.campusName or '')
-        school = school_name if school_name is not None else (acct.schoolName or '')
+        campus = campus_name if campus_name is not None else (
+            getattr(acct, 'campusName', '') if acct is not None else '')
+        school = school_name if school_name is not None else (
+            getattr(acct, 'schoolName', '') if acct is not None else '')
+        # Measure the server clock first: the diagnostic's "start is in the
+        # future" check and the displayed time should speak the server's
+        # timeline, not this laptop's.
+        clock = self._sync_server_clock(acct, force=True, timeout=8.0)
         try:
             ms = int(start_ms) if start_ms is not None else S.now_ms()
         except (TypeError, ValueError):
             ms = S.now_ms()
+        # The official client resolves `address` by reverse-geocoding the
+        # run's start point (MapLogKt.getCity).  For this diagnostic use the
+        # campus centre when known; the name fallback still handles schools
+        # whose campus name contains a city.
+        expected = expect_city
+        if not expected and acct is not None:
+            expected = RK.address_for_start(
+                getattr(acct, 'center_lat', 0.0),
+                getattr(acct, 'center_lng', 0.0),
+                campus, school,
+                key=os.environ.get('JHP_AMAP_KEY') or AMAP_KEY) or None
+        applied = bool(isinstance(clock, dict) and clock.get('applied'))
         try:
             r = RK.preflight(campus, school, start_ms=ms,
-                             expect_city=expect_city,
-                             explicit_start=True)
+                             expect_city=expected,
+                             explicit_start=True,
+                             clock_offset_ms=(clock.get('offset_ms')
+                                              if applied else None),
+                             clock_error=(None if applied else
+                                          (clock.get('error')
+                                           or clock.get('reason')
+                                           or '未配置登录')))
         except Exception as e:  # noqa: BLE001
             return _fail('网络自检失败: %s' % e)
         r = dict(r or {})
         r['campus'] = campus
         r['school'] = school
         r['start_text'] = S.fmt_beijing(ms)
+        if clock is not None:
+            r.setdefault('info', {})['server_time'] = clock
+        r['clock_state'] = S.now_ms()
         return _ok(r)
 
     def real_logout(self, local_only=False):
@@ -3350,6 +3420,13 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001
             return _fail(f'sidecar/加密层启动失败: {e}')
 
+        # Align to the server clock before ANY signed request in this flow:
+        # a laptop several minutes fast used to make the first policy call
+        # look stale and the generated start time look "in the future".
+        # Fail-open: an offline check must not block a submission.
+        clock_info = self._sync_server_clock(acct, rc=rc, force=True,
+                                             timeout=8.0)
+
         # The submit coordinate normally comes from this account's real fence.
         # Some schools configure no fence at all (official client: empty fence
         # list means "always in area"), and a manual campus point / the first
@@ -3616,6 +3693,7 @@ class ReplicaApi:
                                     closed=bool(closed),
                                     km_times=km_times,
                                     run_area_id=area['id'] if area else None,
+                                    geo_fences=fence.get('fences') or None,
                                     sequential=sequential,
                                     run_uuid=new_run_uuid(
                                         getattr(acct, 'platform', None)))
@@ -3712,14 +3790,20 @@ class ReplicaApi:
 
         from ..application import policy as POL
         from ..application import riskcheck as RK
-        city = RK.device_city(acct.campusName, acct.schoolName) or \
-            f'{acct.schoolName} {acct.campusName}'.strip()
+        # Official `OutdoorRunViewModel.saveStartPointToDb` reverse-geocodes
+        # the run's start point and stores the city in `SportRecord.address`.
+        # Use the generated first point, not the campus name; if AMap is not
+        # configured fall back to the city in the campus name, then to "".
+        first = (run.get('locPoints') or [{}])[0]
+        city = RK.address_for_start(
+            first.get('gLat'), first.get('gLng'),
+            acct.campusName, acct.schoolName,
+            key=os.environ.get('JHP_AMAP_KEY') or AMAP_KEY) or ''
         ctx = {
             'uid': acct.uid,
             'selectedUnid': acct.unid,
             'sportType': 1,
             'geeToken': geeToken or '',
-            # upstream: address = device identity.city (issue #16 default 大连市)
             'address': city,
             # upstream: policy = the server's rule set, not a hardcoded value
             'policy': POL.policy_value(policy_data, 1),
@@ -3761,6 +3845,13 @@ class ReplicaApi:
         res['freeze_seconds'] = freeze
         res['face_required'] = face_on
         res['sequential'] = sequential
+        res['clock'] = clock_info
+        if not (isinstance(clock_info, dict) and clock_info.get('applied')):
+            res.setdefault('warnings', [])
+            if isinstance(res['warnings'], list):
+                res['warnings'].append(
+                    '未能校准服务器时间，本次按本机时钟生成；'
+                    '若提交被软拒绝，重试一次即可（不会修改系统设置）。')
         if freeze > 0:
             res.setdefault('warnings', [])
             if isinstance(res['warnings'], list):
@@ -3821,7 +3912,7 @@ class ReplicaApi:
 
         # ---- 5. read back -------------------------------------------------
         try:
-            back = rc.request(acct, 'api/v70260/runnings/get_one_record', {
+            back = rc.request(acct, 'api/v70320/runnings/get_one_record', {
                 'uuid': res['uuid'], 'rrid': res['rrid'],
                 'calculateBadge': False})
             if back.get('error'):

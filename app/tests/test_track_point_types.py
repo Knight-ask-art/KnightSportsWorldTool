@@ -26,7 +26,7 @@ sys.path.insert(0, ROOT)
 from replica.domain.rundata import generate_run_data
 
 CENTER = (22.4108, 112.9408)
-LEGAL = {0, 1, 2, 5, 6}
+LEGAL = {-1, 0, 1, 2, 5, 6}
 
 
 def _run(**kw):
@@ -41,7 +41,7 @@ def test_plain_track_keeps_sentinels_and_stays_in_domain():
     # its own route, and those are genuinely on the track, so their 1-marks
     # are consistent with the fivePoint payload that ships next to them.
     assert set(types) <= {0, 1, 5, 6}
-    assert types[1] == 5                     # setStartPoint marker
+    assert types[0] == 5                     # setStartPoint marker
     assert types[-1] == 6                    # end sentinel
 
 
@@ -62,7 +62,7 @@ def test_checkpoint_marks_only_land_where_the_track_goes():
     # the mandatory (isFixed) checkpoint is 2, the others are 1
     assert sorted(types[i] for i in marked) == [1, 1, 2]
     # sentinels keep their own type
-    assert 1 not in marked and len(types) - 1 not in marked
+    assert 0 not in marked and len(types) - 1 not in marked
 
 
 def test_no_point_type_outside_the_client_domain():
