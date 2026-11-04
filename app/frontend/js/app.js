@@ -43,6 +43,27 @@ function toast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
 }
+/* Uiverse-style press ripple.  Delegated once so re-rendered rows and
+   buttons keep the feedback without re-binding. */
+const RIPPLE_HOSTS =
+  '.btn,.new-run,.filter,.rtab,.route-item,.record-row,.onboard-x';
+document.addEventListener('pointerdown', ev => {
+  if(ev.button !== 0) return;
+  if(window.matchMedia &&
+     window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const host = eventTargetEl(ev) ? eventTargetEl(ev).closest(RIPPLE_HOSTS) : null;
+  if(!host || host.disabled || host.getAttribute('aria-disabled') === 'true') return;
+  const rect = host.getBoundingClientRect();
+  if(!rect.width || !rect.height) return;
+  const size = Math.max(rect.width, rect.height) * 1.2;
+  const dot = document.createElement('span');
+  dot.className = 'ink-ripple';
+  dot.style.width = dot.style.height = size + 'px';
+  dot.style.left = (ev.clientX - rect.left - size / 2) + 'px';
+  dot.style.top = (ev.clientY - rect.top - size / 2) + 'px';
+  host.appendChild(dot);
+  setTimeout(() => dot.remove(), 620);
+}, {passive: true});
 function focusablesIn(root){
   if(!root) return [];
   return [...root.querySelectorAll(
@@ -912,11 +933,24 @@ function updateAltSummary(){
       ? ('模板 · ' + altTemplateLabel) : '模板 · 未选择文件';
   }
 }
+function syncAltThumb(){
+  const wrap = document.querySelector('.alt-modes');
+  const thumb = $('#altThumb');
+  if(!wrap || !thumb) return;
+  const active = wrap.querySelector('button.on');
+  if(!active){ thumb.style.width = '0px'; return; }
+  const width = active.offsetWidth;
+  if(!width) return;             // the params tab is not laid out yet
+  thumb.style.width = width + 'px';
+  thumb.style.transform = 'translateX(' + (active.offsetLeft - 3) + 'px)';
+}
 function altModeChanged(){
   const mode = ($('#altMode') && $('#altMode').value) || 'auto';
   const usesBase = mode === 'auto' || mode === 'fixed';
   document.querySelectorAll('[data-alt-mode]').forEach(b =>
     b.classList.toggle('on', b.dataset.altMode === mode));
+  syncAltThumb();
+  requestAnimationFrame(syncAltThumb);
   if($('#inAltLabelText')){
     $('#inAltLabelText').textContent = mode === 'fixed' ? '固定海拔' : '基准海拔';
   }
@@ -1140,6 +1174,20 @@ async function refreshSplits(){
 }
 
 /* ---------- run panel tabs / collapse ---------- */
+function syncRunTabThumb(){
+  const wrap = document.querySelector('.run-tabs');
+  const thumb = $('#rtabThumb');
+  if(!wrap || !thumb) return;
+  const active = wrap.querySelector('.rtab.active');
+  if(!active){ thumb.style.width = '0px'; return; }
+  const width = active.offsetWidth;
+  if(!width){ thumb.style.width = '0px'; return; }
+  // The highlighter is inset 8% on each side, matching the old painted mark.
+  const inner = Math.max(0, width * 0.84);
+  thumb.style.width = inner + 'px';
+  thumb.style.transform =
+    'translateX(' + (active.offsetLeft + (width - inner) / 2) + 'px)';
+}
 function switchRunTab(name){
   // Leaving the route tab means the operator is done drawing/editing; this
   // is the natural point to fetch the set for the final line length.
@@ -1152,12 +1200,28 @@ function switchRunTab(name){
   });
   document.querySelectorAll('.rsec').forEach(s =>
     s.classList.toggle('active', s.id === 'rsec-' + name));
+  requestAnimationFrame(syncRunTabThumb);
+  if(name === 'params') requestAnimationFrame(syncAltThumb);
   const body = document.querySelector('.run-body');
   if(body) body.scrollTop = 0;
 }
 document.querySelectorAll('.rtab').forEach(t => {
   t.addEventListener('click', () => switchRunTab(t.dataset.rtab));
 });
+if($('#rtabThumb')){
+  window.addEventListener('resize', () => requestAnimationFrame(syncRunTabThumb));
+  requestAnimationFrame(syncRunTabThumb);
+  if(document.fonts && document.fonts.ready){
+    document.fonts.ready.then(() => requestAnimationFrame(syncRunTabThumb));
+  }
+}
+if($('#navThumb')){
+  window.addEventListener('resize', () => requestAnimationFrame(syncNavThumb));
+  requestAnimationFrame(syncNavThumb);
+  if(document.fonts && document.fonts.ready){
+    document.fonts.ready.then(() => requestAnimationFrame(syncNavThumb));
+  }
+}
 ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => {
   $('#' + id).addEventListener('input', () => {
     if(id === 'inKm') distanceManual = true;
@@ -1453,18 +1517,18 @@ dockBtn.addEventListener('click', () => {
    ============================================================ */
 const REALISM_DEFAULTS = {obs_key_mode: 'single', pause_profile: 'none',
                           gps_profile: 'urban', terrain_coupling: false};
-const REALISM_LABEL = {obs_key_mode: {single: '单 key', legacy: '双 key'},
-                       pause_profile: {none: '关闭', auto: '自动',
-                                       manual: '手动'},
-                       gps_profile: {clean: '干净', urban: '城市',
-                                     tunnel: '隧道'}};
+function normaliseRealism(r){
+  r = r || {};
+  return {
+    obs_key_mode: r.obs_key_mode === 'legacy' ? 'legacy' : 'single',
+    pause_profile: r.pause_profile === 'auto' ? 'auto' : 'none',
+    gps_profile: ['clean', 'tunnel'].includes(r.gps_profile)
+      ? r.gps_profile : 'urban',
+    terrain_coupling: !!r.terrain_coupling
+  };
+}
 function realismNow(){
-  return LIVE.realism
-    ? {obs_key_mode: LIVE.realism.obs_key_mode || 'single',
-       pause_profile: LIVE.realism.pause_profile || 'none',
-       gps_profile: LIVE.realism.gps_profile || 'urban',
-       terrain_coupling: !!LIVE.realism.terrain_coupling}
-    : Object.assign({}, REALISM_DEFAULTS);
+  return normaliseRealism(LIVE.realism || REALISM_DEFAULTS);
 }
 function setHint(el, text, tone){
   if(!el) return;
@@ -1492,7 +1556,8 @@ async function loadRealismInner(){
     $('#realismStatus').className = 'mini warn';
     $('#setRealismSave').disabled = true;
     $('#setRealismSave').title = LIVE.realismError;
-    $('#setRealismHint').textContent = LIVE.realismError + '。本机仍在按默认值（单 key / 关闭暂停 / 城市 GPS）显示。';
+    $('#setRealismHint').textContent =
+      LIVE.realismError + '。当前按推荐默认值显示。';
     applyRealismForm(realismNow());
     return;
   }
@@ -1501,7 +1566,7 @@ async function loadRealismInner(){
     $('#realismStatus').textContent = '读取失败';
     $('#realismStatus').className = 'mini warn';
     $('#setRealismHint').textContent = LIVE.realismError +
-      '；可稍后重试，或保存当前显示值覆盖设置';
+      '；可以稍后重试，或保存当前显示值覆盖。';
     if($('#setRealismSave')){
       $('#setRealismSave').disabled = false;
       $('#setRealismSave').title = '读取失败；保存会把当前显示值写入本机';
@@ -1518,25 +1583,23 @@ async function loadRealismInner(){
   LIVE.realismError = null;
   $('#setRealismSave').disabled = false;
   $('#setRealismSave').title = '';
-  const mode = REALISM_LABEL.obs_key_mode[LIVE.realism.obs_key_mode];
-  $('#realismStatus').textContent = mode + ' · ' +
-    REALISM_LABEL.pause_profile[LIVE.realism.pause_profile] + ' · ' +
-    REALISM_LABEL.gps_profile[LIVE.realism.gps_profile] +
-    (LIVE.realism.terrain_coupling ? ' · 坡度联动' : '');
-  $('#realismStatus').className = 'mini' + (LIVE.realism.obs_key_mode === 'single'
-    ? ' ok' : '');
-  $('#setRealismHint').textContent = (LIVE.realism.obs_key_mode === 'legacy'
-    ? '双 key：只用于旧服务端或旧记录兼容，新记录默认单 key。'
-    : '单 key：与 7.4.0 客户端一致。') +
-    (LIVE.realismRead ? '' : '（后端报告这是内置默认值，尚未保存过设置）');
-  applyRealismForm(LIVE.realism);
+  $('#realismStatus').textContent = LIVE.realismRead ? '已保存' : '默认';
+  $('#realismStatus').className = 'mini' + (LIVE.realismRead ? ' ok' : '');
+  let hint = LIVE.realismRead
+    ? '已保存到本机。只影响之后生成的预览和提交。'
+    : '当前是推荐默认值，尚未保存；点「保存并应用」才会写入。';
+  if(LIVE.realism.obs_key_mode === 'legacy'){
+    hint = '已启用旧服务器兼容：会额外写入一份旧格式记录。一般不用改。';
+  }
+  $('#setRealismHint').textContent = hint;
+  applyRealismForm(realismNow());
 }
 function applyRealismForm(r){
-  if($('#setObsKey')) $('#setObsKey').value = r.obs_key_mode || 'single';
-  if($('#setPause')) $('#setPause').value = r.pause_profile || 'none';
-  if($('#setPause')) $('#setPause').querySelector('option[value="manual"]').disabled = true;
-  if($('#setGps')) $('#setGps').value = r.gps_profile || 'urban';
-  if($('#setTerrain')) $('#setTerrain').value = r.terrain_coupling ? '1' : '0';
+  const mode = normaliseRealism(r || REALISM_DEFAULTS);
+  if($('#setObsKey')) $('#setObsKey').value = mode.obs_key_mode;
+  if($('#setPause')) $('#setPause').value = mode.pause_profile;
+  if($('#setGps')) $('#setGps').value = mode.gps_profile;
+  if($('#setTerrain')) $('#setTerrain').value = mode.terrain_coupling ? '1' : '0';
 }
 async function saveRealism(){
   const btn = $('#setRealismSave');
@@ -1560,17 +1623,15 @@ async function saveRealism(){
     LIVE.realism = want;
     await loadRealism();
     refreshModelPreview().catch(() => {});
-    toast('已保存：' + (REALISM_LABEL.obs_key_mode[want.obs_key_mode] || '') +
-      ' · 暂停 ' + (REALISM_LABEL.pause_profile[want.pause_profile] || '') +
-      ' · GPS ' + (REALISM_LABEL.gps_profile[want.gps_profile] || ''));
-    liveLog('真实性与兼容设置已保存', jsonText(want).replace(/\s+/g, ' '), 'ok');
+    toast('已保存，之后生成的跑步数据会使用这些设置');
+    liveLog('跑步数据效果已保存', jsonText(want).replace(/\s+/g, ' '), 'ok');
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '保存并应用'; }
   }
 }
 function resetRealismForm(){
   applyRealismForm(REALISM_DEFAULTS);
-  toast('已恢复默认值；点「保存并应用」才会写入');
+  toast('已恢复推荐默认值；点「保存并应用」才会写入');
 }
 
 /* ---------------- P0: error explanation ---------------- */
@@ -2503,14 +2564,25 @@ function openRecordReplay(){
 /* ---------- page routing ---------- */
 const PAGES = ['overview', 'accounts', 'run', 'routes', 'records', 'profile', 'settings'];
 let runMapFitted = false;
+function syncNavThumb(){
+  const nav = document.querySelector('.nav');
+  const thumb = $('#navThumb');
+  if(!nav || !thumb) return;
+  const active = nav.querySelector('.nav-item.active');
+  if(!active){ thumb.style.height = '0px'; return; }
+  thumb.style.height = active.offsetHeight + 'px';
+  thumb.style.transform = 'translateY(' + active.offsetTop + 'px)';
+}
 function go(page){
   if(!PAGES.includes(page)) page = 'overview';
   document.querySelectorAll('.page').forEach(p =>
     p.classList.toggle('active', p.id === 'page-' + page));
   document.querySelectorAll('.nav-item').forEach(n =>
     n.classList.toggle('active', n.dataset.page === page));
+  requestAnimationFrame(syncNavThumb);
   if(history.replaceState) history.replaceState(null, '', '#' + page);
   if(page === 'run'){
+    requestAnimationFrame(syncRunTabThumb);
     setTimeout(() => {
       map.invalidateSize();
       if(!runMapFitted){ fitRunMap(); runMapFitted = true; }
@@ -2749,6 +2821,153 @@ const liveOk = j => !!(j && j.code === 200);
 const hasSession = () => !!(LIVE.session &&
   (LIVE.session.token_present || LIVE.session.token) &&
   !LIVE.session.disabled);
+
+/* ---------------- disclaimer gate ---------------- */
+const DISCLAIMER_VERSION = 3;
+const DISCLAIMER_CACHE_KEY = 'hxp.disclaimer.v3';
+const DISCLAIMER = {version: 0, acceptedAt: '', loaded: false};
+let DISCLAIMER_LAST_FOCUS = null;
+
+function readDisclaimerCache(){
+  try{
+    const doc = JSON.parse(localStorage.getItem(DISCLAIMER_CACHE_KEY) || 'null');
+    if(!doc || typeof doc !== 'object') return null;
+    const version = +doc.version || 0;
+    return version > 0 ? {version: version, at: doc.at || ''} : null;
+  }catch(e){
+    return null;
+  }
+}
+function writeDisclaimerCache(doc){
+  try{ localStorage.setItem(DISCLAIMER_CACHE_KEY, JSON.stringify(doc)); }catch(e){}
+}
+function clearDisclaimerCache(){
+  try{ localStorage.removeItem(DISCLAIMER_CACHE_KEY); }catch(e){}
+}
+function disclaimerAccepted(){
+  return +DISCLAIMER.version >= DISCLAIMER_VERSION;
+}
+function syncDisclaimerUI(){
+  const box = $('#loginAgree');
+  if(box) box.checked = disclaimerAccepted();
+  const hint = $('#loginAgreeHint');
+  if(hint) hint.hidden = disclaimerAccepted();
+}
+async function loadDisclaimerState(){
+  let version = 0, at = '';
+  try{
+    const j = await liveApi('real_get_ui_state', {}, 8000);
+    if(liveOk(j) && j.data){
+      version = +j.data.disclaimer_version || 0;
+      at = j.data.disclaimer_accepted_at || '';
+    }
+  }catch(e){}
+  const cached = readDisclaimerCache();
+  if(cached && +cached.version > version){
+    version = +cached.version;
+    at = cached.at || at;
+  }
+  DISCLAIMER.version = version;
+  DISCLAIMER.acceptedAt = at;
+  DISCLAIMER.loaded = true;
+  syncDisclaimerUI();
+  // Chrome may restore a checked checkbox after the first paint.  That is not
+  // consent: re-assert the real stored state unless the user has clicked.
+  setTimeout(() => {
+    if(!disclaimerAccepted()) syncDisclaimerUI();
+  }, 400);
+  return disclaimerAccepted();
+}
+async function acceptDisclaimer(){
+  DISCLAIMER.version = DISCLAIMER_VERSION;
+  DISCLAIMER.acceptedAt = new Date().toISOString();
+  DISCLAIMER.loaded = true;
+  writeDisclaimerCache({version: DISCLAIMER_VERSION, at: DISCLAIMER.acceptedAt});
+  syncDisclaimerUI();
+  try{
+    const j = await liveApi('real_set_ui_state',
+      {disclaimer_version: DISCLAIMER_VERSION}, 8000);
+    if(!liveOk(j)){
+      liveLog('免责声明接受状态保存失败', j.message || '', 'warn');
+    }
+  }catch(e){
+    liveLog('免责声明接受状态保存失败',
+            e && e.message ? e.message : String(e), 'warn');
+  }
+}
+async function revokeDisclaimer(){
+  DISCLAIMER.version = 0;
+  DISCLAIMER.acceptedAt = '';
+  clearDisclaimerCache();
+  syncDisclaimerUI();
+  try{
+    const j = await liveApi('real_set_ui_state', {disclaimer_version: 0}, 8000);
+    if(!liveOk(j)){
+      liveLog('免责声明撤回状态保存失败', j.message || '', 'warn');
+    }
+  }catch(e){
+    liveLog('免责声明撤回状态保存失败',
+            e && e.message ? e.message : String(e), 'warn');
+  }
+}
+function toggleDisclaimerAgree(){
+  const box = $('#loginAgree');
+  if(!box) return;
+  const row = document.querySelector('.login-agree-row');
+  if(row) row.classList.remove('is-missing');
+  if(box.checked){
+    acceptDisclaimer();
+  }else{
+    revokeDisclaimer();
+  }
+}
+function openDisclaimer(){
+  const modal = $('#disclaimerModal');
+  if(!modal) return;
+  DISCLAIMER_LAST_FOCUS = document.activeElement;
+  modal.hidden = false;
+  document.body.classList.add('disclaimer-open');
+  const gate = $('#loginGate'), app = $('#appShell');
+  if(gate) gate.inert = true;
+  if(app) app.inert = true;
+  const close = $('#disclaimerClose');
+  if(close) close.focus();
+}
+function closeDisclaimer(){
+  const modal = $('#disclaimerModal');
+  if(!modal) return;
+  modal.hidden = true;
+  document.body.classList.remove('disclaimer-open');
+  const gate = $('#loginGate'), app = $('#appShell');
+  if(gate) gate.inert = false;
+  if(app) app.inert = document.body.classList.contains('login-locked');
+  if(DISCLAIMER_LAST_FOCUS && typeof DISCLAIMER_LAST_FOCUS.focus === 'function'){
+    try{ DISCLAIMER_LAST_FOCUS.focus(); }catch(e){}
+  }
+  DISCLAIMER_LAST_FOCUS = null;
+}
+function agreeDisclaimerFromModal(){
+  const box = $('#loginAgree');
+  if(box) box.checked = true;
+  acceptDisclaimer();
+  closeDisclaimer();
+}
+async function enforceDisclaimerGate(){
+  // A pre-existing token must not skip the legal gate.  Local logout stops the
+  // keeper and clears the token; the next login still has to pass the box.
+  try{ await liveApi('real_logout', {local_only: true}, 10000); }catch(e){}
+  LIVE.session = {}; LIVE.checked = null;
+  setLoginBusy(false);
+  showLoginGate('使用前请阅读并勾选《免责声明》，否则无法登录。');
+  syncDisclaimerUI();
+}
+function afterBootAuth(){
+  initRunDate();
+  updateRunDateLabel();
+  refreshChecks();
+  refreshDailyCount();
+  refreshModelPreview();
+}
 
 /* ---------------- login gate ---------------- */
 const LOGIN = {visible: true, busy: false, timer: null, startedAt: 0};
@@ -3120,6 +3339,20 @@ async function gateLogin(){
   const pass = $('#loginPass') ? $('#loginPass').value : '';
   if(!user){ loginFail('请输入手机号', '#loginUser'); return; }
   if(!pass){ loginFail('请输入密码', '#loginPass'); return; }
+  const agree = $('#loginAgree');
+  // Both checks matter: a browser-restored checkbox is not user consent.
+  if(!agree || !agree.checked || !disclaimerAccepted()){
+    if(agree) agree.checked = false;
+    const hint = $('#loginAgreeHint');
+    if(hint) hint.hidden = false;
+    loginFail('请先阅读并勾选《免责声明》，否则无法登录。', '#loginAgree');
+    const row = document.querySelector('.login-agree-row');
+    if(row){
+      row.classList.add('is-missing');
+      setTimeout(() => row.classList.remove('is-missing'), 1200);
+    }
+    return;
+  }
   clearLoginError();
   const manualBtn = $('#loginManual');
   if(manualBtn) manualBtn.hidden = true;
@@ -3879,6 +4112,12 @@ async function liveInitSession(){
 async function bootAuth(){
   showLoginGate('正在读取本地会话…', 'busy');
   await restoreSavedLogin();
+  const accepted = await loadDisclaimerState();
+  if(!accepted){
+    await enforceDisclaimerGate();
+    afterBootAuth();
+    return;
+  }
   setLoginBusy(true, '正在读取本地会话…', 'busy');
   setLoginButton('读取中…', true);
   try{ await loadRules(); }catch(e){ /* local rules are optional for login */ }
@@ -3897,11 +4136,7 @@ async function bootAuth(){
   }else{
     showLoginGate((res && res.message) || '请输入手机号和密码登录。');
   }
-  initRunDate();
-  updateRunDateLabel();
-  refreshChecks();
-  refreshDailyCount();
-  refreshModelPreview();
+  afterBootAuth();
 }
 
 function renderEmptyData(){
@@ -8323,6 +8558,38 @@ function liveWire(){
       if(!rememberBox.checked) forgetSavedLogin();
     });
   }
+  const loginAgree = $('#loginAgree');
+  // `click` only: autofill/restoration can fire `change` without a human.
+  if(loginAgree) loginAgree.addEventListener('click', toggleDisclaimerAgree);
+  ['#disclaimerOpen', '#disclaimerOpenAbout'].forEach(sel => {
+    const el = $(sel);
+    if(el) el.addEventListener('click', openDisclaimer);
+  });
+  if($('#disclaimerClose'))
+    $('#disclaimerClose').addEventListener('click', closeDisclaimer);
+  if($('#disclaimerVeil'))
+    $('#disclaimerVeil').addEventListener('click', closeDisclaimer);
+  if($('#disclaimerAgree'))
+    $('#disclaimerAgree').addEventListener('click', agreeDisclaimerFromModal);
+  document.addEventListener('keydown', ev => {
+    const modal = $('#disclaimerModal');
+    if(!modal || modal.hidden) return;
+    if(ev.key === 'Escape'){
+      ev.preventDefault();
+      closeDisclaimer();
+      return;
+    }
+    if(ev.key !== 'Tab') return;
+    const focusables = modal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if(!focusables.length) return;
+    const first = focusables[0], last = focusables[focusables.length - 1];
+    if(ev.shiftKey && document.activeElement === first){
+      ev.preventDefault(); last.focus();
+    }else if(!ev.shiftKey && document.activeElement === last){
+      ev.preventDefault(); first.focus();
+    }
+  });
   $('#ovRefresh').addEventListener('click', async () => {
     const btn = $('#ovRefresh');
     if(btn.disabled) return;
@@ -8643,6 +8910,7 @@ function liveWire(){
       ev.target.value = '';
     });
     altModeChanged();
+    window.addEventListener('resize', () => requestAnimationFrame(syncAltThumb));
   }
   ['inStart'].forEach(id => $('#' + id).addEventListener('input', () => { updateRunDateLabel(); scheduleModelPreview(); refreshChecks(); }));
   // The six-page UI uses the date popover (#dateBtn/#datePop), not the old

@@ -1,6 +1,6 @@
 # One-click packaging for the pure-Python build.
 # Usage:  powershell -ExecutionPolicy Bypass -File packaging\build.ps1
-#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 0.1.7
+#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 0.1.8
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Backend pyinstaller
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -MigrateDataFrom dist\好想跑_v0.1.1
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -NoDataMigration

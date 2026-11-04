@@ -25,7 +25,7 @@ DEFAULT_DIST = APP_ROOT / 'dist'
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
 #: single source of truth, this only keeps standalone runs usable.
-DEFAULT_VERSION = '0.1.7'
+DEFAULT_VERSION = '0.1.8'
 DEFAULT_MIN_VERSION = '0.1.4'
 DEFAULT_ROLLBACK_VERSION = '0.1.6'
 DEFAULT_ENTRY = '好想跑.exe'
@@ -33,6 +33,16 @@ DEFAULT_ENTRY = '好想跑.exe'
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.1.8': [
+        '登录前必须阅读并勾选《免责声明》，旧会话会退出一次并要求重新确认',
+        '登录页、侧栏和关于页固定显示「完全免费开源、禁止倒卖」提示',
+        '免责声明全文可在登录页和关于页打开，仅保留右上角关闭按钮',
+        '设置页把「真实性与兼容」改为「跑步数据效果」，常用项用直白说明',
+        '旧服务器兼容收进折叠的高级项，默认行为不变',
+        '海拔来源改为滑动切换；导航、跑步标签、弹窗和按钮加入纸墨风格动效',
+        '按钮、筛选和勾选框统一视觉，支持系统「减少动态效果」设置',
+        '修复浏览器自动填充/恢复复选框被误认为已同意免责声明的问题',
+    ],
     '0.1.7': [
         '修复画线时点位反复加载失败：不再按每 10 m 目标距离重拉点位',
         '绘制路线时不再请求点位；路线定稿后按最终距离请求一次，自动请求最多 1 次/5 分钟',

@@ -108,7 +108,7 @@
     <h2 id="loginTitle">先登录，再开跑。</h2>
     <p class="login-sub">用你自己的账号进入工作台。</p>
 
-    <form class="login-form" id="loginForm" novalidate>
+    <form class="login-form" id="loginForm" novalidate autocomplete="off">
       <div class="login-field">
         <label for="loginUser">手机号</label>
         <div class="login-input-wrap">
@@ -133,6 +133,14 @@
         <span>记住密码</span>
         <em>仅保存在本机，使用系统加密</em>
       </label>
+      <div class="login-agree-row">
+        <input type="checkbox" id="loginAgree" aria-required="true"
+               aria-describedby="loginAgreeHint" autocomplete="off">
+        <label for="loginAgree">我同意并认真阅读了</label>
+        <button type="button" class="disclaimer-link" id="disclaimerOpen">《免责声明》</button>
+        <em class="login-agree-required">必选</em>
+      </div>
+      <div class="login-agree-hint" id="loginAgreeHint">必须勾选后才能登录。</div>
       <div class="login-error" id="loginError" role="alert" hidden></div>
       <button class="login-manual" id="loginManual" type="button" hidden>
         验证码过不去？手动滑一下
@@ -141,9 +149,10 @@
       <button class="login-submit" id="loginBtn" type="submit" disabled>
         <span id="loginBtnText">登录</span><span class="arrow" aria-hidden="true">→</span>
       </button>
+      <p class="anti-resale login">本项目完全免费开源。若您付费购买，请立即申请退款并举报商家。</p>
     </form>
 
-    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.7</span></div>
+    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.8</span></div>
   </section>
 </div>
 
@@ -194,6 +203,7 @@
     <button class="new-run" id="newRunBtn"><svg class="bi" aria-hidden="true"><use href="#bi-plus-lg"></use></svg><span class="label">新建跑步</span></button>
 
     <nav class="nav">
+      <span class="nav-thumb" id="navThumb" aria-hidden="true"></span>
       <div class="nav-label">工作台</div>
       <button class="nav-item active" data-page="overview">
         <svg class="bi" aria-hidden="true"><use href="#bi-house"></use></svg>
@@ -227,6 +237,8 @@
       </button>
     </nav>
 
+    <div class="anti-resale side">本项目完全免费开源；若您付费购买，请立即申请退款并举报商家。</div>
+
     <div class="side-foot">
       <div class="user-chip">
         <div class="avatar" id="sideAvatar" style="width:28px;height:28px;font-size:14px">?</div>
@@ -236,7 +248,7 @@
         </div>
       </div>
       <div class="side-meta-row">
-        <div class="side-meta" id="sideVersion">v0.1.7</div>
+        <div class="side-meta" id="sideVersion">v0.1.8</div>
         <button class="update-btn" id="updateBtn" type="button" hidden
                 title="发现新版本" aria-label="发现新版本">
           <svg class="bi" aria-hidden="true"><use href="#bi-cloud-arrow-down"></use></svg>
@@ -510,6 +522,7 @@
           </header>
 
           <div class="run-tabs" role="tablist" aria-label="跑步设置">
+            <span class="rtab-thumb" id="rtabThumb" aria-hidden="true"></span>
             <button class="rtab active" data-rtab="route" role="tab" aria-selected="true">路线</button>
             <button class="rtab" data-rtab="params" role="tab">参数</button>
             <button class="rtab" data-rtab="submit" role="tab">提交 <span class="rtab-dot" id="submitDot"></span></button>
@@ -615,6 +628,7 @@
                   <button type="button" class="mini-link" id="altAdjustToggle" aria-expanded="false">调整</button>
                 </div>
                 <div class="alt-modes" role="radiogroup" aria-label="海拔来源">
+                  <span class="alt-thumb" id="altThumb" aria-hidden="true"></span>
                   <button type="button" data-alt-mode="auto" class="on">自动</button>
                   <button type="button" data-alt-mode="fixed">固定</button>
                   <button type="button" data-alt-mode="range">区间</button>
@@ -1148,7 +1162,7 @@
         <header class="page-head">
           <div class="crumb">系统 <span style="color:var(--faint)">/</span> <b>设置</b></div>
           <div class="head-row">
-            <h1>设置<span class="date">v0.1.7</span></h1>
+            <h1>设置<span class="date">v0.1.8</span></h1>
           </div>
 
         </header>
@@ -1238,50 +1252,57 @@
         </section>
 
         <section class="sec" id="realismSection">
-          <div class="sec-head"><h2>真实性与兼容</h2><span class="mini" id="realismStatus">未读取</span></div>
-          <p class="hint" style="margin:-4px 0 9px">只影响<b>之后生成</b>的轨迹。暂停/坡度默认关闭，GPS 默认城市档案（保持旧行为）；<b>不是真机实测</b>，只是有依据的假设。</p>
-          <div class="form-grid network-grid">
+          <div class="sec-head"><h2>跑步数据效果</h2><span class="mini" id="realismStatus">未读取</span></div>
+          <p class="hint" style="margin:-4px 0 9px">只影响<b>之后生成</b>的跑步数据。不知道怎么选就保持默认，默认值就是原来的效果。</p>
+          <div class="form-grid realism-grid">
             <div class="field-line">
-              <label for="setObsKey">OBS key 模式</label>
-              <select id="setObsKey">
-                <option value="single">单 key（默认，与 7.4.0 一致）</option>
-                <option value="legacy">双 key（旧服务端 / 旧记录兼容）</option>
-              </select>
-            </div>
-            <div class="field-line">
-              <label for="setPause">暂停注入</label>
+              <label for="setPause">中途暂停</label>
               <select id="setPause">
-                <option value="none">关闭（默认，保持旧行为）</option>
-                <option value="auto">自动（全程 1–2 次，20–90 秒）</option>
-                <option value="manual" disabled>手动（界面未开放）</option>
+                <option value="none">不模拟暂停（推荐）</option>
+                <option value="auto">随机暂停 1–2 次（每次 20–90 秒）</option>
               </select>
+              <span class="field-note">只改变记录里的起止时间，跑步用时不变。</span>
             </div>
             <div class="field-line">
-              <label for="setGps">GPS 采样</label>
+              <label for="setGps">GPS 轨迹波动</label>
               <select id="setGps">
-                <option value="urban" selected>城市（默认，旧行为）</option>
-                <option value="clean">固定（测试用）</option>
-                <option value="tunnel">隧道（1–2 段低质量）</option>
+                <option value="urban">自然波动（推荐）</option>
+                <option value="clean">非常稳定（测试用）</option>
+                <option value="tunnel">模拟短暂信号差</option>
               </select>
+              <span class="field-note">控制轨迹点的密度和左右漂移幅度。</span>
             </div>
             <div class="field-line">
-              <label for="setTerrain">坡度联动配速</label>
+              <label for="setTerrain">按坡度调整配速</label>
               <select id="setTerrain">
-                <option value="0">关闭（默认）</option>
-                <option value="1">开启（有海拔模板时调整每公里配速）</option>
+                <option value="0">关闭（推荐）</option>
+                <option value="1">开启（需要先导入海拔模板）</option>
               </select>
+              <span class="field-note">没有海拔模板时不会生效，也不会改变总时长。</span>
             </div>
           </div>
+          <details class="adv-box">
+            <summary>高级兼容选项（一般不用改）</summary>
+            <div class="field-line">
+              <label for="setObsKey">旧服务器兼容</label>
+              <select id="setObsKey">
+                <option value="single">自动（推荐）</option>
+                <option value="legacy">兼容旧服务器（额外写一份旧格式）</option>
+              </select>
+              <span class="field-note">只有旧服务器读不到跑步记录时才需要切换。</span>
+            </div>
+          </details>
           <div class="form-actions">
             <button class="btn small primary" id="setRealismSave" disabled>保存并应用</button>
             <button class="btn small ghost" id="setRealismReset">恢复默认</button>
-            <span class="hint" id="setRealismHint" style="margin:0">保存到本机设置，只影响新生成的预览与提交。</span>
+            <span class="hint" id="setRealismHint" style="margin:0">保存后只影响之后生成的预览和提交。</span>
           </div>
         </section>
 
         <section class="sec">
           <div class="sec-head"><h2>关于</h2></div>
-          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.7</span></div>
+          <div class="anti-resale" id="antiResaleAbout">本项目完全免费开源。若您付费购买，请立即申请退款并举报商家。</div>
+          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.8</span></div>
           <div class="detail-row"><span>构建</span><span id="aboutBuild">—</span></div>
           <div class="detail-row"><span>更新</span><span id="updateState">未检查</span></div>
           <div class="form-actions" style="margin-top:8px">
@@ -1289,6 +1310,7 @@
             <button class="btn small ghost" id="diagCopy">复制诊断包</button>
             <button class="btn small ghost" id="diagZip">下载脱敏诊断包 ZIP</button>
             <button class="btn small ghost" id="onboardOpen">新手引导</button>
+            <button class="btn small ghost" id="disclaimerOpenAbout">免责声明</button>
             <span class="hint" id="diagHint" style="margin:0">不含 token / 密码 / uid / 坐标 / IP。</span>
           </div>
         </section>
@@ -1465,6 +1487,51 @@
         <button type="button" class="mini-link" id="onboardSkip">本次跳过</button>
         <button type="button" class="btn small ghost" id="onboardPrev">上一步</button>
         <button type="button" class="btn small primary" id="onboardNext">下一步</button>
+      </div>
+    </footer>
+  </section>
+</div>
+
+<div class="disclaimer-modal" id="disclaimerModal" role="dialog" aria-modal="true" aria-labelledby="disclaimerTitle" hidden>
+  <div class="disclaimer-veil" id="disclaimerVeil"></div>
+  <section class="disclaimer-card">
+    <header class="disclaimer-head">
+      <div>
+        <span class="tag warn">使用协议</span>
+        <h2 id="disclaimerTitle">软件使用协议与免责声明</h2>
+      </div>
+      <button type="button" class="onboard-x" id="disclaimerClose" aria-label="关闭免责声明">×</button>
+    </header>
+    <div class="disclaimer-body" id="disclaimerBody">
+      <p class="disclaimer-lead"><b>重要提示：</b>本软件仅供个人学习、技术研究及交流使用。请在下载、安装或使用本软件前仔细阅读以下条款。一旦您下载、安装、复制或使用本软件，即视为您已完全知悉并无条件接受本声明的所有条款。若您不同意以下任何条款，请立即停止使用并彻底删除本软件。</p>
+
+      <h3>一、属性与使用授权</h3>
+      <p><b>完全免费原则：</b>本软件属于非商业性质的个人开源/学习研究项目，永久免费提供。</p>
+      <p><b>严禁倒卖转售：</b>任何组织或个人不得将本软件（包括但不限于安装包、源码、编译产物、衍生版本及配套资源）用于任何形式的商业盈利活动，包括但不限于打包售卖、付费代搭建、付费技术支持、付费下载、捆绑销售或变相收取“茶水费/服务费”。</p>
+      <p><b>被收费告知：</b>若您是通过付费方式（如闲鱼、淘宝、拼多多、QQ群、微信群、网盘付费资源等渠道）获取本软件，说明您已遭遇第三方非法倒卖，请立即向对应平台举报并申请退款，开发者不对第三方的欺诈行为承担任何责任。</p>
+
+      <h3>二、合规使用与禁止行为</h3>
+      <p>使用者承诺在使用本软件时严格遵守所在国家/地区的法律法规、学术道德规范以及所在学校的相关规章制度。使用者明确同意不得将本软件用于以下用途：</p>
+      <ul>
+        <li>从事任何违反法律法规、危害网络安全、侵犯他人合法权益（包括隐私权、知识产权、肖像权等）的活动；</li>
+        <li>用于破坏学校、企事业单位或第三方平台网络规则的行为（包括但不限于自动化刷票、恶意爬虫、作弊脚本、破解防护等）；</li>
+        <li>进行任何干扰、破坏网络正常运行或给第三方服务器造成过载压力的行为；</li>
+        <li>任何违背学术诚信的行为。</li>
+      </ul>
+
+      <h3>三、责任限制与完全免责</h3>
+      <p><b>“现状”提供（As-Is）：</b>本软件按“现状”及“现有可用”基础提供，开发者不提供任何明示或暗示的担保（包括但不限于软件的稳定性、兼容性、适用性、无错误或无中断）。</p>
+      <p><b>后果自负：</b>因使用者不当配置、违规操作、恶意滥用本软件而产生的一切后果（包括但不限于设备故障、数据丢失、网络封禁、学术处分、行政处罚、法律纠纷及经济损失），均由使用者本人独立承担全部法律与赔偿责任，开发者不承担任何直接、间接、附带或衍生性责任。</p>
+      <p>开发者无法预见亦无法控制使用者的具体行为及使用环境，不对使用者的个人使用行为承担任何连带监控或担保责任。</p>
+      <p><b>二次修改免责：</b>任何经第三方二次开发、篡改、注入代码或打包发布的衍生版本，其安全性与合规性与原开发者完全无关。因使用非官方原版软件导致的账号泄露、木马病毒等风险，开发者概不负责。</p>
+
+      <h3>四、最终解释权</h3>
+      <p>开发者保留在法律法规允许的范围内，随时修订本免责声明及终止软件维护、更新、服务的权利。修订后的条款一经发布即生效。</p>
+    </div>
+    <footer class="disclaimer-foot">
+      <span class="mini">勾选即表示您已阅读并同意本声明。</span>
+      <div class="disclaimer-actions">
+        <button type="button" class="btn small" id="disclaimerAgree">我已阅读并同意</button>
       </div>
     </footer>
   </section>

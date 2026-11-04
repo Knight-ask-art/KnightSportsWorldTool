@@ -61,6 +61,25 @@ def test_bridge_writes_only_the_sealed_token(tmp_path):
     assert public['token_present'] is True
 
 
+def test_ui_state_keeps_disclaimer_acceptance(tmp_path):
+    api = _api(tmp_path)
+    assert api.real_get_ui_state()['data']['disclaimer_version'] == 0
+
+    assert api.real_set_ui_state(disclaimer_version=1)['code'] == 200
+    state = api.real_get_ui_state()['data']
+    assert state['disclaimer_version'] == 1
+    assert state['disclaimer_accepted_at']
+
+    # Withdrawing acceptance clears both fields, not just the version.
+    assert api.real_set_ui_state(disclaimer_version=0)['code'] == 200
+    state = api.real_get_ui_state()['data']
+    assert state['disclaimer_version'] == 0
+    assert state['disclaimer_accepted_at'] == ''
+
+    assert api.real_set_ui_state(disclaimer_version='bad')['code'] != 200
+    assert api.real_set_ui_state(disclaimer_version=True)['code'] != 200
+
+
 def test_ui_state_keeps_run_area_per_account(tmp_path):
     api = _api(tmp_path)
     res = api.real_set_ui_state(

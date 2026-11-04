@@ -3204,10 +3204,13 @@ class ReplicaApi:
                 data.get('post_submit_route_action') or 'ask'),
             'onboard_done_at': data.get('onboard_done_at') or '',
             'run_area_choice': prefs if isinstance(prefs, dict) else {},
+            'disclaimer_version': int(data.get('disclaimer_version') or 0),
+            'disclaimer_accepted_at': str(
+                data.get('disclaimer_accepted_at') or ''),
         })
 
     def real_set_ui_state(self, onboard_done=None, post_submit_route_action=None,
-                          run_area_choice=None):
+                          run_area_choice=None, disclaimer_version=None):
         path = self._ui_state_path()
         raw = _read_json(path, {})
         data = raw if isinstance(raw, dict) else {}
@@ -3235,6 +3238,22 @@ class ReplicaApi:
                 except (TypeError, ValueError):
                     return _fail('跑区 id 无效: %r' % (value,))
             data['run_area_choice'] = stored
+        if disclaimer_version is not None:
+            if isinstance(disclaimer_version, bool):
+                return _fail('disclaimer_version 必须是整数')
+            try:
+                version = int(disclaimer_version)
+            except (TypeError, ValueError):
+                return _fail('disclaimer_version 必须是整数')
+            if version < 0:
+                return _fail('disclaimer_version 不能为负数')
+            if version == 0:
+                data.pop('disclaimer_version', None)
+                data.pop('disclaimer_accepted_at', None)
+            else:
+                data['disclaimer_version'] = version
+                data['disclaimer_accepted_at'] = time.strftime(
+                    '%Y-%m-%d %H:%M:%S')
         try:
             _write_json(path, data)
         except OSError as e:

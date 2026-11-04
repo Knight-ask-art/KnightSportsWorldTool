@@ -43,6 +43,24 @@ def test_login_gate_uses_the_real_bridge_and_auto_keepalive():
     assert '已退出本机登录，请重新登录。' in SOURCE
 
 
+def test_login_requires_the_disclaimer_acknowledgement():
+    assert 'id="loginAgree"' in HTML
+    assert '我同意并认真阅读了' in HTML
+    assert 'id="disclaimerOpen"' in HTML
+    assert 'id="disclaimerModal"' in HTML
+    assert '软件使用协议与免责声明' in HTML
+    assert '本项目完全免费开源' in HTML
+    assert '完全免费原则' in HTML
+    assert '二次修改免责' in HTML
+    assert 'function disclaimerAccepted()' in JS
+    assert "liveApi('real_get_ui_state'" in JS
+    assert 'disclaimer_version' in JS
+    assert '使用前请阅读并勾选' in JS
+    # The gate must survive a reload with an old token: force a local logout.
+    assert 'enforceDisclaimerGate' in JS
+    assert "liveApi('real_logout', {local_only: true}" in JS
+
+
 def test_login_remembers_password_only_through_the_encrypted_bridge():
     assert 'id="loginRemember"' in HTML
     assert '使用系统加密' in HTML
