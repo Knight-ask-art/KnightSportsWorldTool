@@ -186,10 +186,13 @@ $listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $listener.Start()
 $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
 $listener.Stop()
-$proc = Start-Process -FilePath $EXE -ArgumentList "--no-window --port $port" -PassThru
+# The developer's own copy may be running while packaging.  The single-instance
+# mutex would make the smoke instance exit before it binds a port; the random
+# port and staging data directory keep the two processes isolated.
+$proc = Start-Process -FilePath $EXE -ArgumentList "--no-window --port $port --allow-multi" -PassThru
 try {
     $ok = $false
-    for ($i = 0; $i -lt 30; $i++) {
+    for ($i = 0; $i -lt 40; $i++) {
         Start-Sleep -Milliseconds 500
         try {
             $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:$port/"
