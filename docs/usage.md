@@ -210,6 +210,7 @@ Windows 系统时间，也不需要你手动校准。偏移只缓存在本机 `d
 27 个轨迹字段、`lat/lng=-1`、无 `steps`、OBS 11 键、窗口/分段/圈合计、
 `queueNum`、fivePoint、围栏和 `validate_run_data`。生成路径完全离线；
 记录审计只读详情。审计失败时不要提交，先按卡片里的第一个失败项修。
+卡片默认只列出失败和警告，点「显示全部」可展开通过项；「只看问题」可收回。
 
 提交结果卡上的「只读核验」读取 `v70320` 详情，显示 `complete`、
 `isCheat`、`reasonList`、OBS 轨迹和图表序列的逐项时间线。它**不会重发**，
@@ -238,7 +239,7 @@ Windows 系统时间，也不需要你手动校准。偏移只缓存在本机 `d
 
 | 选项 | 作用 | 注意 |
 |---|---|---|
-| 暂停 `auto`/`manual` | 在墙钟 `gainTime` 和 `stopTime` 中加入 20–90 s 暂停；`totalTime` 仍是活跃秒 | 窗口仍按活跃时钟分配，不是逐点真机复现 |
+| 暂停 `auto` | 全程 1–2 次、每次 20–90 s，只推进墙钟 `gainTime`/`stopTime`；`totalTime` 仍是活跃秒 | 窗口仍按活跃时钟分配，不是逐点真机复现；`manual` 仅 CLI 支持 |
 | GPS `urban` | 默认；`count` 53–79、`radius` 2.5–15 m 慢游走 | 与 v0.1.7 行为一致 |
 | GPS `clean` | 固定 `count=60`、`radius=5`，便于回归 | 测试档，不用于真实提交 |
 | GPS `tunnel` | 短时 `count` 4–8、`radius` 20–40 m | 保留点数，保证窗口/圈合计守恒 |

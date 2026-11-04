@@ -327,7 +327,7 @@
                 <h2>只读巡检</h2>
                 <div class="sec-actions">
                   <span class="mini" id="inspectAt">未登录</span>
-                  <button class="btn small ghost" id="inspectRefresh" disabled>巡检</button>
+                  <button class="btn small" id="inspectRefresh" disabled>巡检</button>
                 </div>
               </div>
               <p class="hint" style="margin:-4px 0 8px" id="inspectHint">检查 token、冷却、今日次数、最近记录与服务器时间。<b>只读</b>，不会提交或上传任何数据。</p>
@@ -768,10 +768,17 @@
 
               <div class="audit-card" id="auditCard">
                 <div class="audit-head">
-                  <div><span class="eyebrow">提交前审计（离线，不联网）</span><b id="auditSummary">未审计</b></div>
+                  <div class="audit-title">
+                    <span class="eyebrow">提交前审计（离线，不联网）</span>
+                    <span class="audit-summary-line">
+                      <b id="auditSummary">未审计</b>
+                      <span class="audit-meta" id="auditMeta"></span>
+                    </span>
+                  </div>
                   <div class="audit-actions">
-                    <button class="btn small ghost" id="auditBtn" disabled>开始审计</button>
+                    <button class="btn small" id="auditBtn" disabled>开始审计</button>
                     <button class="btn small ghost" id="auditCopy" disabled>复制 JSON</button>
+                    <button class="btn small ghost" id="auditToggle" hidden>只看问题</button>
                   </div>
                 </div>
                 <div class="audit-note" id="auditNote">检查 27 字段、速度/步频窗口、分段、打卡点与 OBS 键。生成路径不联网，记录路径只读。</div>
@@ -957,9 +964,9 @@
             <h1>记录<span class="date" id="recCount">—</span></h1>
             <div class="head-actions">
               <button class="btn small ghost" id="recExport">导出 CSV</button>
-              <button class="btn small ghost" id="recFit" disabled>FIT</button>
-              <button class="btn small ghost" id="recStats">统计</button>
-              <button class="btn small ghost" id="recDiagZip" disabled>诊断包</button>
+              <button class="btn small ghost" id="recFit" disabled title="从选中的记录导出 FIT">FIT</button>
+              <button class="btn small ghost" id="recStats" title="按本机回执与服务器记录统计（只读）">统计</button>
+              <button class="btn small ghost" id="recDiagZip" disabled title="生成脱敏诊断 ZIP，不含 token/坐标">诊断包</button>
               <button class="btn small ghost" id="recRefresh">刷新</button>
             </div>
           </div>
@@ -1245,8 +1252,8 @@
               <label for="setPause">暂停注入</label>
               <select id="setPause">
                 <option value="none">关闭（默认，保持旧行为）</option>
-                <option value="auto">自动（每公里 1–2 次，20–90 秒）</option>
-                <option value="manual">按下方分段（暂未开放）</option>
+                <option value="auto">自动（全程 1–2 次，20–90 秒）</option>
+                <option value="manual" disabled>手动（界面未开放）</option>
               </select>
             </div>
             <div class="field-line">
@@ -1261,7 +1268,7 @@
               <label for="setTerrain">坡度联动配速</label>
               <select id="setTerrain">
                 <option value="0">关闭（默认）</option>
-                <option value="1">开启（每 1% 坡度约 ±2.5% 速度）</option>
+                <option value="1">开启（有海拔模板时调整每公里配速）</option>
               </select>
             </div>
           </div>

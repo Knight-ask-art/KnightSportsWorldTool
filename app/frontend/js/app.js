@@ -1667,43 +1667,77 @@ function realismArgs(){
           terrain_coupling: r.terrain_coupling};
 }
 const AUDIT_LEVEL_LABEL = {error: '失败', warn: '警告', info: '信息'};
+function auditLevel(c){
+  // `level` describes the severity when a check fails; it is not the status of
+  // a passing check (every passing check still carries level='error').
+  if(c.ok) return 'ok';
+  return c.level === 'warn' ? 'warn' : 'error';
+}
+function auditRow(c){
+  const label = c.ok ? '通过'
+    : (c.level === 'warn' ? '警告' : (c.level === 'info' ? '信息' : '失败'));
+  return '<li class="audit-row ' + auditLevel(c) + '">' +
+    '<span class="audit-level">' + esc(label) + '</span>' +
+    '<span class="audit-label">' + esc(c.label || c.id || '') + '</span>' +
+    '<span class="audit-detail">' + esc(c.detail || '') + '</span></li>';
+}
 function renderAudit(){
   const box = $('#auditChecks');
   if(!box) return;
   const a = LIVE.audit;
+  const meta = $('#auditMeta');
+  const toggle = $('#auditToggle');
   if(!a){
     box.innerHTML = '';
-    if($('#auditSummary')) $('#auditSummary').textContent = '未审计';
-    if($('#auditSummary')) $('#auditSummary').className = '';
+    if($('#auditSummary')){ $('#auditSummary').textContent = '未审计'; $('#auditSummary').className = ''; }
+    if(meta) meta.textContent = '';
+    if(toggle) toggle.hidden = true;
     if($('#auditCopy')) $('#auditCopy').disabled = true;
     return;
   }
   if(a.error){
     box.innerHTML = '<li class="audit-row error"><span class="audit-level">失败</span><span class="audit-label">审计没有完成</span><span class="audit-detail">' + esc(a.error) + '</span></li>';
     if($('#auditSummary')){ $('#auditSummary').textContent = '审计失败'; $('#auditSummary').className = 'warn'; }
+    if(meta) meta.textContent = '';
+    if(toggle) toggle.hidden = true;
     if($('#auditCopy')) $('#auditCopy').disabled = true;
     return;
   }
   const s = a.summary || {};
-  const bad = (a.checks || []).filter(c => c.level === 'error' || !c.ok);
+  const all = a.checks || [];
+  const bad = all.filter(c => !c.ok);
   if($('#auditSummary')){
-    $('#auditSummary').textContent = (s.ok ? '通过' : '有问题') +
-      ' · ' + (s.passed || 0) + ' 通过 / ' + (s.warned || 0) + ' 警告 / ' +
-      (s.failed || 0) + ' 失败' + (a.at ? (' · ' + a.at) : '');
+    $('#auditSummary').textContent = s.ok ? '通过' : '有问题';
     $('#auditSummary').className = s.ok ? 'ok' : 'warn';
   }
+  if(meta){
+    const parts = [];
+    if(s.passed) parts.push(s.passed + ' 通过');
+    if(s.warned) parts.push(s.warned + ' 警告');
+    if(s.failed) parts.push(s.failed + ' 失败');
+    meta.textContent = (parts.join(' · ') || (all.length + ' 项')) +
+      (a.at ? (' · ' + a.at) : '');
+  }
   if($('#auditCopy')) $('#auditCopy').disabled = false;
-  const checks = (a.checks || []).slice().sort((x, y) => {
-    const w = c => (c.level === 'error' || !c.ok) ? 0 : (c.level === 'warn' ? 1 : 2);
+  const checks = all.slice().sort((x, y) => {
+    const w = c => c.ok ? 2 : (c.level === 'warn' ? 1 : 0);
     return w(x) - w(y);
   });
-  box.innerHTML = checks.map(c => {
-    const level = (c.level === 'error' || !c.ok) ? 'error' : (c.level === 'warn' ? 'warn' : 'ok');
-    return '<li class="audit-row ' + level + '"><span class="audit-level">' +
-      esc(AUDIT_LEVEL_LABEL[c.level] || c.level || '信息') + '</span>' +
-      '<span class="audit-label">' + esc(c.label || c.id || '') + '</span>' +
-      '<span class="audit-detail">' + esc(c.detail || '') + '</span></li>';
-  }).join('') || '<li class="audit-row ok"><span class="audit-detail">没有检查项</span></li>';
+  const showAll = !!LIVE.auditShowAll;
+  const shown = showAll ? checks : bad;
+  box.innerHTML = shown.length
+    ? shown.map(auditRow).join('')
+    : '<li class="audit-row ok"><span class="audit-level">通过</span>' +
+      '<span class="audit-label">全部通过</span>' +
+      '<span class="audit-detail">' + all.length + ' 项检查</span></li>';
+  if(toggle){
+    // Nothing to filter when every check passed; keep the card quiet.
+    toggle.hidden = !all.length || !bad.length;
+    toggle.disabled = !all.length;
+    toggle.textContent = showAll
+      ? ('只看问题（' + bad.length + '）')
+      : ('显示全部 ' + all.length + ' 项');
+  }
   if(bad.length) liveLog('提交前审计', bad.slice(0, 3).map(c => (c.label || c.id) + '：' + (c.detail || '')).join('；'),
                          bad.some(c => c.level === 'error') ? 'err' : 'warn');
 }
@@ -1712,6 +1746,7 @@ async function runAudit(){
   const prepared = auditArgs();
   if(prepared.error){ toast(prepared.error); return; }
   LIVE.auditBusy = true;
+  LIVE.auditShowAll = false;
   refreshAuditButton();
   if($('#auditBtn')) $('#auditBtn').textContent = '审计中…';
   try{
@@ -1731,6 +1766,7 @@ async function runAudit(){
       return;
     }
     LIVE.audit = j.data || {};
+    LIVE.auditShowAll = false;
     renderAudit();
     if(LIVE.audit.summary && LIVE.audit.summary.ok === false){
       switchRunTab('submit');
@@ -1762,13 +1798,17 @@ function renderVerify(box, v, errorText){
     '</span><span class="mini">' + esc((v.track && v.track.points ? v.track.points + ' 点' : '无轨迹') +
     (v.track && v.track.source ? ' · ' + v.track.source : '') + (v.at ? ' · ' + v.at : '')) +
     '</span></div>';
-  const rows = (v.timeline || []).map(t =>
+  // Per-step timestamps are optional; when the backend omits them, do not
+  // reserve an empty 60px column that squeezes the text into a ragged stack.
+  const timeline = v.timeline || [];
+  const hasAt = timeline.some(t => t && t.at);
+  const rows = timeline.map(t =>
     '<li class="verify-step ' + (t.ok === false ? 'bad' : 'ok') + '">' +
-    '<span class="verify-at">' + esc(t.at || '') + '</span>' +
+    (hasAt ? '<span class="verify-at">' + esc(t.at || '') + '</span>' : '') +
     '<span class="verify-name">' + esc(t.step || '') + '</span>' +
     '<span class="verify-text">' + esc(t.text || '') + '</span></li>').join('');
   const next = v.next ? ('<div class="verify-next">' + esc(v.next) + '</div>') : '';
-  box.innerHTML = head + '<ul class="verify-list">' + rows + '</ul>' + next;
+  box.innerHTML = head + '<ul class="verify-list' + (hasAt ? ' has-at' : '') + '">' + rows + '</ul>' + next;
 }
 async function verifyRecord(target){
   const r = target || {};
@@ -2018,8 +2058,9 @@ function renderStats(){
   const fails = (sub.top_failures || []).map(f =>
     '<li><b>' + esc(f.reason) + '</b><span>× ' + esc(f.count) + '</span></li>').join('') ||
     '<li class="mini">没有失败记录</li>';
+  const wdNames = ['一', '二', '三', '四', '五', '六', '日'];
   const wd = (s.weekday_km || []).map((km, i) =>
-    '<span title="' + esc(['周一', '周二', '周三', '周四', '周五', '周六', '周日'][i]) + '">' +
+    '<span title="周' + wdNames[i] + '"><i>' + wdNames[i] + '</i>' +
     esc(+km ? km.toFixed(1) : '–') + '</span>').join('');
   box.innerHTML =
     '<div class="stats-source">' + esc(src) + (s.window ? (' · ' + esc(s.window.start) + ' 至 ' + esc(s.window.end)) : '') + '</div>' +
@@ -3620,6 +3661,7 @@ function clearAccountActivity(){
   // inspection and the error note all describe the old account.
   LIVE.logSel = -1;
   LIVE.audit = null;
+  LIVE.auditShowAll = false;
   LIVE.verify = null;
   LIVE.stats = null;
   LIVE.inspect = null;
@@ -8714,6 +8756,10 @@ function featureWire(){
   // submit page: audit + verify
   if($('#auditBtn')) $('#auditBtn').addEventListener('click', runAudit);
   if($('#auditCopy')) $('#auditCopy').addEventListener('click', copyAuditJson);
+  if($('#auditToggle')) $('#auditToggle').addEventListener('click', () => {
+    LIVE.auditShowAll = !LIVE.auditShowAll;
+    renderAudit();
+  });
   if($('#submitResultVerify')) $('#submitResultVerify').addEventListener('click', () => {
     const r = LIVE.submitResult;
     if(!r) return;
