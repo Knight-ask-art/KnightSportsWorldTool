@@ -9,7 +9,6 @@
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Knight-ask-art/KnightSportsWorldTool?style=flat-square&label=release&color=2E4A7D"></a>
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/Knight-ask-art/KnightSportsWorldTool/total?style=flat-square&label=downloads&color=4E7657"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-2E4A7D?style=flat-square&logo=windows11&logoColor=white">
-  <img alt="protocol" src="https://img.shields.io/badge/protocol-7.4.0-A8782C?style=flat-square">
   <img alt="local" src="https://img.shields.io/badge/network-127.0.0.1%20only-B6483C?style=flat-square">
   <img alt="free" src="https://img.shields.io/badge/price-free-4E7657?style=flat-square">
 </p>
@@ -25,11 +24,11 @@
 
 <p align="center">
   <b>本地跑步数据工作台</b><br>
-  登录自己的账号 → 拉取校区围栏与打卡点 → 画路线 / 造数 → 本地校验 → 提交 → 只读回查
+  登录自己的账号 → 拉取校区围栏与打卡点 → 画路线 / 造数 → 本地自检 → 提交 → 只读回查
 </p>
 
 <p align="center">
-  <sub>纯协议复刻 · 不依赖模拟器 · 不依赖抓包重放 · 数据留在本机</sub>
+  <sub>本地生成 · 本地校验 · 数据留在本机 · 只登自己的账号</sub>
 </p>
 
 <p align="center">
@@ -53,14 +52,14 @@
 
 一个给自己用的跑步数据工作台。
 
-它不做模拟器，也不做抓包重放：按运动世界校园 **7.4.0** 的协议字段在本地生成轨迹，提交前先跑一遍形状审计，提交后只读核对回执。账号状态、提交回执、点位缓存和设备指纹都留在本机 `data/`，不经过第三方服务器。
+它在本地生成跑步轨迹，提交前先自检，提交后只读核对回执。账号状态、提交回执、点位缓存和设备信息都留在本机 `data/`，不经过第三方服务器。
 
 | 项目 | 当前状态 |
 |---|---|
 | 版本 | **v0.1.8** · stable · 2026-11-04 |
 | 回滚版本 | v0.1.7 |
 | 系统 | Windows 10 / 11 · 64 位 |
-| 协议 | 运动世界校园 7.4.0 |
+| 兼容 | 运动世界校园（各校规则不同） |
 | 网络 | 本机 `127.0.0.1` 工作台；提交直连官方接口 |
 | 价格 | 完全免费 · 禁止倒卖 |
 
@@ -72,7 +71,7 @@
 <tr>
 <td width="50%" valign="top">
 <h3>🧭 校区与跑区</h3>
-<p>按账号的 <code>campusName</code> / <code>schoolName</code> 自动匹配 <code>runAreaModels</code>，多账号各回各的校区。多跑区可以手动切换，下拉第一项「自动（按账号校区）」随时切回自动。选择按账号持久化，下次登录还在。</p>
+<p>按账号的校区信息自动匹配跑区，多账号各回各的校区。多跑区可以手动切换，下拉第一项「自动（按账号校区）」随时切回自动。选择按账号保存，下次登录还在。</p>
 </td>
 <td width="50%" valign="top">
 <h3>🗺️ 路线工作台</h3>
@@ -81,12 +80,12 @@
 </tr>
 <tr>
 <td width="50%" valign="top">
-<h3>🧪 7.4.0 形状</h3>
-<p>27 个轨迹字段、<code>lat/lng = -1</code> 占位、OBS 11 个键、30 s 分段自检、窗口 / 圈合计、<code>queueNum</code> 和围栏守恒。提交前先在本地审计，不把「看起来像」当成「已经通过」。</p>
+<h3>🧪 提交前自检</h3>
+<p>生成轨迹后先在本地检查距离、配速、时间窗、点位覆盖、围栏和校规；检查不过就不提交。把问题留在本地，而不是等服务器返回错误。</p>
 </td>
 <td width="50%" valign="top">
-<h3>🛡️ 审计与只读核验</h3>
-<p>提交前审计生成数据；提交结果卡会常驻在「提交」页。结果未知时按钮锁定，先去「记录」页只读核对回执。核验只读详情，<b>绝不重发、绝不补传 OBS</b>，空 200 也不会被当成成功。</p>
+<h3>🛡️ 提交与只读核验</h3>
+<p>提交结果卡会常驻在「提交」页。结果未知时按钮锁定，先去「记录」页只读核对回执。核验只读详情，<b>绝不重复提交、绝不补传轨迹</b>，空结果也不会被当成成功。</p>
 </td>
 </tr>
 <tr>
@@ -96,7 +95,7 @@
 </td>
 <td width="50%" valign="top">
 <h3>🔐 本地优先</h3>
-<p>只监听 <code>127.0.0.1</code>；token 用 Windows DPAPI 封存，密码默认不落盘，勾选「记住密码」才加密保存。不调用摄像头、不读取相册、不上传人脸；诊断包会双重清洗 token、密码、完整坐标和签名 URL。</p>
+<p>只监听 <code>127.0.0.1</code>；登录状态用 Windows 系统加密保存，密码默认不落盘，勾选「记住密码」才加密保存。不调用摄像头、不读取相册、不上传人脸；诊断包会自动脱敏。</p>
 </td>
 </tr>
 </table>
@@ -110,7 +109,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.8 实拍：纸墨风格、登录前免责声明确认、免费 / 防倒卖提示</sub>
+  <sub>v0.1.8 实拍：登录前免责声明确认、免费 / 防倒卖提示</sub>
 </p>
 
 ---
@@ -121,17 +120,17 @@
 flowchart LR
     A["登录"] --> B["围栏 / 点位"]
     B --> C["画路线"]
-    C --> D["造数 + 审计"]
+    C --> D["生成 + 自检"]
     D --> E["提交"]
     E --> F["只读回查"]
 ```
 
-1. **登录**：手机号 + 密码，本地过极验；首次登录约 5–15 秒，不是卡死。
-2. **拉围栏 / 点位**：按账号校区和跑区拉取；10603 时按账号冷却，不跨账号。
+1. **登录**：手机号 + 密码；首次登录约 5–15 秒，不是卡死。
+2. **拉围栏 / 点位**：按账号校区和跑区拉取；接口限流时按账号冷却，不跨账号。
 3. **画路线**：手绘、导入、田径场或自动；目标距离默认 0，画完自动按线路填写。
-4. **造数与审计**：生成 7.4.0 形状，先过 27 字段 / OBS 11 键 / 窗口守恒。
+4. **生成与自检**：生成轨迹后先做本地检查，再决定要不要提交。
 5. **提交**：一次提交；超时视为未知状态，锁住时段，先核对再决定。
-6. **回查**：读详情，看 `complete`、`isCheat`、`reasonList`、OBS 轨迹和图表序列。
+6. **回查**：查看状态、违规标记、轨迹和图表。
 
 ---
 
@@ -171,7 +170,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 1. 启动后先显示登录页；输入自己的手机号和密码。
 2. 阅读并勾选「我同意并认真阅读了《免责声明》」，不勾选不能登录。
 3. 登录成功后进入工作台，先走一遍 5 步新手引导；之后可以在「设置 → 关于 → 新手引导」重新打开。
-4. `data/` 会自动出现，里面是登录状态、回执、限额、设备指纹和点位缓存。想彻底重置就整个删掉，下次重新登录。
+4. `data/` 会自动出现，里面是登录状态、回执、限额、设备信息和点位缓存。想彻底重置就整个删掉，下次重新登录。
 
 > [!NOTE]
 > 从 v0.1.7 第一次升级到 v0.1.8 时，本机会退出一次登录，并要求重新确认《免责声明》。`data/` 不会删除，提交回执、限额和点位缓存都保留。
@@ -185,14 +184,14 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 - **安装版**：下载新的安装包，静默安装并重启。
 - **便携版**：下载新 zip，自动解压替换并重启。
 
-两种方式都不会覆盖 `data/`。下载后会校验大小与 SHA-256，只接受 HTTPS 资产。
+两种方式都不会覆盖 `data/`。下载后会校验文件完整性，只接受 HTTPS 资产。
 
 | 场景 | 做法 |
 |---|---|
 | 手动升级 | 下载新安装包 / zip，覆盖旧目录，`data/` 留着别删 |
-| 回滚到 v0.1.7 | 下载 `latest.json` 的 `rollback` 指向的 v0.1.7 包覆盖安装；token 格式兼容，不需要重新登录 |
-| 完整性 | 安装包和 zip 都必须带 SHA-256；校验不过会自动换镜像 |
-| 更新清单 | 仓库里的 `latest.json` 是给程序检查更新用的，普通使用不用管 |
+| 回滚到 v0.1.7 | 下载回滚包覆盖安装；登录状态兼容，不需要重新登录 |
+| 完整性 | 安装包和 zip 都会校验；校验不过会自动换镜像 |
+| 更新清单 | 程序自动读取，普通使用不用管 |
 
 完整版本历史与发布说明：[Releases](https://github.com/Knight-ask-art/KnightSportsWorldTool/releases)。
 
@@ -205,9 +204,9 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 
 | 边界 | 具体做法 |
 |---|---|
-| **不重试提交** | 网络超时 = 未知状态。写前回执会锁住该时段，宁可少跑一次，也不重复入库 |
+| **不重试提交** | 网络超时 = 未知状态。提交前会记录并锁住该时段，宁可少跑一次，也不重复入库 |
 | **本地闸门** | 默认每天最多 2 次，23:00–06:00 拒绝提交；命令行可用 `--max-per-day` / `--allow-night` / `--no-limit` 调整 |
-| **凭据只在本机** | token 用 DPAPI 封存；密码默认不落盘；`data/`、`.pem`、历史凭据目录都不进安装包 |
+| **凭据只在本机** | 登录状态和密码都用 Windows 系统加密；密码默认不落盘；`data/` 不进安装包 |
 
 ### 适合 / 不适合
 
@@ -241,9 +240,9 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 </details>
 
 <details>
-<summary><b>点位提示 10603 / 冷却中</b></summary>
+<summary><b>点位提示冷却中</b></summary>
 
-点位接口有频率限制。冷却按 `uid|unid` 隔离，一个账号被限流不会锁住另一个账号；倒计时结束后点一次「刷新」。冷却期间会继续使用上次点位，并在界面上标注来源距离。
+点位接口有频率限制。冷却按账号隔离，一个账号被限流不会锁住另一个账号；倒计时结束后点一次「刷新」。冷却期间会继续使用上次点位，并在界面上标注来源距离。
 </details>
 
 <details>
@@ -272,16 +271,14 @@ v0.1.8 新增了登录前免责声明确认。第一次升级会退出旧会话�
 
 ---
 
-## 实现一览
+## 关于
 
-- **桌面端**：Python 3.11 + pywebview，本地 HTTP bridge；前端是单页 HTML / CSS / JS + Leaflet。
-- **发布包**：Nuitka standalone 编译，核心 `replica/*` 不以 `.py` 源码进包；NSIS 安装包，升级 / 卸载保留 `data/`。
-- **更新器**：`latest.json` 描述版本、资产、SHA-256、镜像和回滚；只接受 HTTPS，zip / 安装包缺哈希会被拒绝。
-- **协议**：7.4.0 的 27 字段轨迹、OBS 11 键、30 s 分段自检、服务器时钟、起点城市 `address`；不伪造 `faceCheck=1`。
-- **安全**：单实例互斥量；token / 密码 DPAPI；提交不重试；结果未知先只读核对。
+- 只支持 Windows 10 / 11 64 位；安装版和便携版都不会覆盖 `data/`。
+- 只登自己的账号；不提供批量、代跑或人脸绕过。
+- 发布页只放安装包、更新清单和这份说明。
 
 > [!NOTE]
-> 发布页只放安装包、更新清单和这份说明。源码、内部研究资料和采集样本不随安装包分发。
+> 源码、内部研究资料和采集样本不随安装包分发。
 
 ---
 
