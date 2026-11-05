@@ -602,6 +602,11 @@ def effective_device(profile: dict, session: dict | None = None) -> dict:
                 'appInstallTime', 'appUpdateTime'):
         if session.get(key) not in (None, ''):
             device[key] = str(session[key])
+    # A platform override must not inherit the other platform's identifier.
+    if device['platform'] == 'android':
+        device.pop('idfa', None)
+    elif not device.get('idfa'):
+        device['idfa'] = _IDFA_ZERO
     return validate_profile(device)
 
 
