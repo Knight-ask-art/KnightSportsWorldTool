@@ -7,7 +7,6 @@
 
 > 这是一次修复版本。重点不是新功能，而是结束 v0.1.7 / v0.1.8 留下的两个环境问题：
 > 旧版共享设备指纹，以及 Android/iOS 版本头落后于官方 7.4.0。
-> 相关说明和道歉：https://github.com/Knight-ask-art/KnightSportsWorldTool/issues/9
 
 ## 本版修复
 
@@ -45,8 +44,6 @@
 
 ## 道歉
 
-关于 v0.1.7 / v0.1.8 造成的异常和损失，我在 issue #9 里做了说明和道歉：
-
-https://github.com/Knight-ask-art/KnightSportsWorldTool/issues/9
+关于 v0.1.7 / v0.1.8 造成的异常和损失，我在这里道歉：
 
 是我经验不足、验证不够，把 UI 改动和协议改动混在一起，也没有在发布前重新验证旧数据升级路径和 iOS 7.4.0。对不起。
