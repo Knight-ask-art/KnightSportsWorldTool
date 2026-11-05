@@ -105,7 +105,7 @@ adapters  ──▶ application ──▶ domain
 
 ```powershell
 cd 好想跑/app
-python -m pytest tests -q                 # 654 passed (v0.1.8 feature pack)
+python -m pytest tests -q                 # 665 passed (v0.1.9)
 python -m replica.selfcheck               # 28/28 modules
 python tests\legacy\legacy_bridge_suite.py  # 38 checks
 python tests\legacy\legacy_http_suite.py    # 23 checks
