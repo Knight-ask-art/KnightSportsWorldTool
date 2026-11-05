@@ -171,7 +171,10 @@ def probe_real_session(session: dict, proxy: str | None = None,
         # legacy defaults here made every keepalive look like the old synthetic
         # phone while submissions looked like the new one.
         store = store_dir or DP.default_store_dir()
-        profile = DP.load_or_create(store, legacy_session=session)
+        profile, migration = DP.load_or_create_ex(store, legacy_session=session)
+        if migration:
+            return {'ok': False, 'auth_failed': False,
+                    'message': '设备指纹已修复，需要重新登录'}
         DP.apply_to_account(acct, DP.effective_device(profile, session))
         if session.get('lat') and session.get('lon'):
             acct.center_lat = float(session['lat'])
@@ -245,6 +248,7 @@ def relogin_real(username: str, password: str,
     sess = do_login(username, password, log=lambda *_: None, device=device)
     if not sess.get('token'):
         raise RuntimeError('登录响应没有 token')
+    DP.clear_migration_marker(store)
     return {
         'uid': str(sess.get('uid') or ''),
         'token': sess['token'],
@@ -635,6 +639,9 @@ def self_test() -> list[tuple[str, bool, str]]:
 
         # ---- probe classification (no network) --------------------------
         session = {'uid': 'u-test', 'token': 'tok-old'}
+        probe_store = tempfile.mkdtemp(prefix='jhp_probe_')
+        from . import device_profile as _DP
+        _DP.save_profile(probe_store, _DP.generate_profile(platform='android'))
 
         class _ProbeClient:
             def __init__(self, res):
@@ -645,7 +652,8 @@ def self_test() -> list[tuple[str, bool, str]]:
 
         def classify(res):
             return probe_real_session(
-                session, client_factory=lambda: _ProbeClient(res))
+                session, client_factory=lambda: _ProbeClient(res),
+                store_dir=probe_store)
 
         r = classify({'status': 200, 'json': {'status': False,
                                               'message': '未登录'},

@@ -1,4 +1,4 @@
-"""Real-server client for 好想跑 (Coaixy 7.3.70 protocol).
+"""Real-server client for 好想跑 (Coaixy 7.4.0 protocol).
 
 REAL mode only — no mocks. Every request goes through:
   headers(24 fields, tokenSign=MD5) + headerSign=w30f(headers) [unidbg]
@@ -59,10 +59,11 @@ class Account:
     appUpdateTime: str = '1788581965711'
     isRoot: str = '1'
     idfa: str = ''
-    # The server enforces a minimum client version: api/v70103/runModePolicy
-    # answers `11019 ERROR:版本过低，请更新至7.3.10版本` for anything older, and
-    # the official CDN ships sw_7.3.11.apk as the current build.
-    appVersion: str = '7.3.11'
+    # The official Android build is 7.4.0 (Xiaomi/App Store listings,
+    # 2026-10-29).  Earlier builds answered 11019 below 7.3.10; a 7.3.11
+    # header with 7.4.0-shaped data is a version/data contradiction that the
+    # environment check can see.
+    appVersion: str = '7.4.0'
     # Run area centre (GCJ).  0/0 means "not resolved yet": the caller must
     # ask the server for this account's geofence and use its centre.  There is
     # deliberately no built-in campus default — the old 24.87845/118.673878
@@ -105,6 +106,25 @@ def _java_str_hash(s: str) -> int:
     for c in s:
         h = (h * 31 + ord(c)) & 0xFFFFFFFF
     return h
+
+
+def _wire_scalar(value) -> str:
+    """HTTP header value for a signed native type.
+
+    The signed JSON keeps ``isRoot`` as a boolean and ``uid`` as a number; the
+    wire copy must use the strings a native HTTP client writes.  Python's
+    urllib turns ``False`` into ``False`` (capital F), while NSURLSession writes
+    ``false``.  Normalise here, after headerSign has been computed.
+    """
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if value is None:
+        return ''
+    return str(value)
+
+
+def wire_headers(headers: dict) -> dict:
+    return {str(k): _wire_scalar(v) for k, v in headers.items()}
 
 
 def java_hashmap_json(d: dict) -> str:
@@ -153,7 +173,11 @@ def build_headers(acct: Account, ts: str, nonce: str) -> dict:
         'blMac': '',
         'nonce': nonce,
         'token': acct.token,
-        'tokenSign': token_sign(ts, acct.token, acct.uid),
+        # Pre-login requests carry uid=-1, an empty token and an EMPTY
+        # tokenSign in the captured Android header.  Only authenticated calls
+        # sign the token; a pre-login MD5 is a different header plaintext.
+        'tokenSign': (token_sign(ts, acct.token, acct.uid)
+                      if acct.token else ''),
         'cpuModel': acct.cpuModel,
         'deviceName': acct.deviceName,
         'appInstallTime': acct.appInstallTime,
@@ -188,10 +212,10 @@ def user_agent(acct: Account | None = None,
     iOS: every NSURLSession default UA starts with ``<CFBundleName>/<version>``
     and then ``(iPhone; iOS <ver>; Scale/<n>)``.  A bare
     ``CFNetwork/x Darwin/y`` has no app token, so it does not look like any
-    app's UA.  The reference client records
-    ``SWCampus/7.3.40 (iPhone; iOS 18.1; Scale/3.00)``; the version is pinned to
-    ``IOS_APP_VERSION`` so the UA and the signed ``appVersion`` never disagree,
-    and Scale is derived from the profile's own pixel pair.
+    app's UA.  The reference client recorded the 7.3.40 shape; the current
+    App Store build is 7.4.0 (2026-10-26), so the version is pinned to
+    ``IOS_APP_VERSION`` and the UA and the signed ``appVersion`` never disagree.
+    Scale is derived from the profile's own pixel pair.
     """
     name = platform or getattr(acct, 'platform', 'android') or 'android'
     if str(name).lower() == 'ios':
@@ -331,15 +355,16 @@ class RealClient:
 
     def _post(self, url: str, headers: dict, body: str,
               timeout: float = 30.0, platform: str = 'android',
-              extra_headers: dict | None = None):
-        hdrs = dict(headers)
+              extra_headers: dict | None = None, acct=None):
+        hdrs = wire_headers(headers)
         hdrs['headerSign'] = self.header_sign(headers, platform)
         # Wire-only defaults.  iOS's signed set does not include these; the
         # HTTP client still needs them, and they must not enter headerSign.
         hdrs.setdefault('Accept', 'application/json')
         hdrs.setdefault('Content-Type', 'application/json')
         hdrs.setdefault('User-Agent', user_agent(
-            platform=platform, os_version=str(headers.get('osVersion') or '')))
+            acct, platform=platform,
+            os_version=str(headers.get('osVersion') or '')))
         if extra_headers:
             hdrs.update(extra_headers)
         req = urllib.request.Request(url, data=body.encode('utf-8'),
@@ -478,7 +503,7 @@ class RealClient:
         platform = str(getattr(acct, 'platform', 'android') or 'android').lower()
         headers = build_headers(acct, ts, nonce)
         signature = self.header_sign(headers, platform)
-        wire = dict(headers)
+        wire = wire_headers(headers)
         # Wire-only fields: never signed.  Objective-C/iOS and okhttp both add
         # a real UA and Content-Type; Python's defaults are a detection signal.
         wire.setdefault('Accept', 'application/json')
@@ -598,7 +623,8 @@ class RealClient:
         plain = json.dumps(body_obj, separators=(',', ':'))
         body = self.encrypt_body(plain)
         status, data = self._post(LOGIN_URL, headers, body, platform=platform,
-                                  extra_headers={'Authorization': auth})
+                                  extra_headers={'Authorization': auth},
+                                  acct=acct)
         verdict, detail = classify(status, data)
         out = {'verdict': verdict, 'detail': detail, 'status': status,
                'resp_len': len(data), 'resp_head': data[:80].decode('utf-8', 'replace')}
@@ -635,7 +661,7 @@ class RealClient:
         body = self.encrypt_body(json.dumps({}, separators=(',', ':')))
         try:
             status, data = self._post(LOGOUT_URL, headers, body,
-                                      platform=platform)
+                                      platform=platform, acct=acct)
         except Exception as e:
             return {'ok': False, 'error': repr(e)}
         out = {'ok': True, 'status': status, 'resp_len': len(data)}

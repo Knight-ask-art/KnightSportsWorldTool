@@ -170,8 +170,12 @@ def _account(username: str, device_model: str, os_version: str,
     acct = Account(name=username, uid='-1', token='')
     acct.deviceName = device_model
     acct.osVersion = os_version
-    if device:
-        DP.apply_to_account(acct, device)
+    if device is None:
+        # Never fall back to Account's compiled-in rooted x86 fingerprint.
+        # Callers that need login/submit parity pass the installation profile;
+        # a one-off caller still gets a coherent Android identity.
+        device = DP.generate_profile(platform='android')
+    DP.apply_to_account(acct, device)
     return acct
 
 

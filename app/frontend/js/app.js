@@ -3959,6 +3959,8 @@ function renderSession(){
     'legacy-default': '旧版冻结',
     'legacy-session': '旧版会话',
     rotated: '已更换',
+    migrated: '旧版已修复',
+    repaired: '已修正',
     session: '手动',
     error: '读取失败'
   }[s.device_source] || '已冻结';
@@ -4062,6 +4064,11 @@ async function liveInitSession(){
   if(!liveOk(j)) liveLog('读取会话失败', j.message || '', 'err');
   renderSession();
   await loadKeepalive();
+  if(LIVE.session.device_migration_notice){
+    liveLog('设备指纹已修复', LIVE.session.device_migration_notice, 'warn');
+    renderEmptyData();
+    return {state: 'login', message: LIVE.session.device_migration_notice};
+  }
   if(LIVE.session.disabled){
     liveLog('账号已禁用', '不会探测或重登；请登录新账号', 'warn');
     renderEmptyData();

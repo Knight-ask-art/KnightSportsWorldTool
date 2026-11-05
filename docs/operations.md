@@ -9,6 +9,7 @@
 | `accounts_emu.json` | 会话（uid、校区、中心点、keepalive 状态）；`token` 由 DPAPI 封存为 `token_enc`，不再明文落盘 | **不能** |
 | `device_profile.json` | 本机设备指纹（平台、DeviceId、机型、系统版本、安装/更新时间）；登录和提交共用 | **不能** |
 | `device_profile.backup-*.json` | 更换设备指纹前的旧指纹备份（回滚用） | **不能** |
+| `device_migration.json` | 旧版指纹迁移的一次性通知（原因、备份文件名、脱敏旧 DeviceId）；登录成功后删除 | 可以（不含完整 DeviceId） |
 | `devices/<uid>.json` | CLI 手动 `--device-id` 的本次运行覆盖记录（审计用；不自动生效） | **不能** |
 | `limits/<uid>.json` | 按日期存的提交计数（北京时间） | 可以 |
 | `submission_receipts/<uid>__<unid>.json` | 提交回执（状态、rrid、时间窗） | 可以（不含 token/坐标） |
@@ -32,22 +33,25 @@
 >
 > **设备指纹**：`device_profile.json` 每个 data 目录只生成一次，之后登录、提交、回读
 > 都读同一份，不会逐请求漂移。新安装从 Android / iOS 随机池里抽一份；iOS 占比由
-> `JHP_IOS_CHANCE` 控制（默认 30，`0` 关闭）。iOS 登录头已接入，但提交链没有真实
-> 跑通验证，生产上要保守就设 `JHP_IOS_CHANCE=0`。旧数据首次升级时冻结原来的提交
-> 指纹（`source=legacy-*`），不会静默换机；要更换必须显式执行
-> `python -m replica.application.device_profile --data-dir <data> --rotate`
-> （可选 `--platform android|ios|random`），或在账号页「高级：更换设备指纹」选择
-> 平台后输入“更换”二次确认；两种方式都会先备份旧指纹并退出本机登录。旧指纹备份到
-> `device_profile.backup-*.json`。回滚时把备份文件复制回 `device_profile.json` 并
-> 重启程序。**升级/迁移时复制整个 `data/` 目录（含 `device_profile.json`）；只复制
-> `accounts_emu.json` 会被当成旧数据并冻结旧指纹。**
+> `JHP_IOS_CHANCE` 控制（默认 30，`0` 关闭）。iOS 7.3.40 已真机验证；当前 App Store
+> 为 7.4.0，提交链需要重新验证，生产上要保守可先设 `JHP_IOS_CHANCE=0`。
+> **旧版共享指纹不再冻结**：`source=legacy-default` 或 `DeviceId` 等于旧共享常量
+> （`afa505…4311`，带 `x86_64`/`isRoot=1`）时，启动会一次性生成唯一、自洽的新指纹，
+> 先备份为 `device_profile.backup-*.json`，并强制退出本机登录。旧 token 不会与新设备
+> 混用；重新登录后登录/提交/OBS 使用同一份新指纹。唯一但字段不自洽的旧指纹只修
+> CPU/root/机型/像素，保留 DeviceId。要手动执行迁移：
+> `python -m replica.application.device_profile --data-dir <data> --migrate`。
+> 要主动换机仍用 `--rotate`（可选 `--platform android|ios|random`），或在账号页
+> 「高级：更换设备指纹」输入“更换”二次确认；两种方式都会先备份旧指纹并退出本机登录。
+> 回滚时把备份文件复制回 `device_profile.json` 并重启程序。**升级/迁移时复制整个
+> `data/` 目录（含 `device_profile.json`）；只复制 `accounts_emu.json` 会被当成旧数据
+> 并触发一次迁移。**
 > **`data/` 不参与打包；把整个 `data/` 复制给别人等于复制同一台设备。**
 >
 > **迁移前先自查**：`python -m replica.application.device_profile --data-dir <data>
 > --audit`。新版随机池保证机型 / 系统 / 物理像素 / 逻辑像素 / CPU / root 自洽；
-> 旧版冻结指纹可能故意不符合新表（例如早期把逻辑像素写成了物理像素），命令会列出，
-> 但不会自动改。早期生成器造成的像素错误可用 `--repair-pixels` 只修这两个字段
-> （保留 DeviceId，先备份）；其他字段不匹配必须显式 rotate。任何字段修改都会改变
+> 旧版共享指纹会由 `--migrate` 或启动迁移修复。早期生成器造成的像素错误可用
+> `--repair-pixels` 只修这两个字段（保留 DeviceId，先备份）。任何字段修改都会改变
 > 指纹，必须由操作者确认后再做。
 > **已有账号跨平台切换（Android ↔ iOS）比同平台换机型更显眼**；新安装随机到 iOS
 > 是正常分布，但不要把已经提交过的 Android 账号随手换成 iOS。

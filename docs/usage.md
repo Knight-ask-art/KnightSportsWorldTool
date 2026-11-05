@@ -75,14 +75,18 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 
 > **设备指纹**：每个 `data` 目录首次运行生成一份随机指纹（Android 或 iOS），
 > 保存在 `data/device_profile.json`；登录、提交、OBS 回读共用同一份。iOS 进入
-> 随机池由 `JHP_IOS_CHANCE` 控制（默认 30，`0` 关闭，`100` 强制 iOS）。iOS 的
-> 登录链已接好，但**提交链没有真实跑通验证**；如果只是求稳，可把
-> `JHP_IOS_CHANCE=0`。旧数据升级会冻结原来的提交指纹，不会静默换机；更换需显式
-> 执行 `python -m replica.application.device_profile --data-dir <data> --rotate`
-> （可选 `--platform android|ios|random`），旧指纹会先备份。账号页显示实际生效的
-> 平台 / 机型 / 系统版本 / 脱敏 DeviceId 和来源（本机随机 / 旧版冻结 / 已更换）。
-> 升级/迁移时复制整个 `data/` 目录，不要只复制 `accounts_emu.json`，否则会回退到
-> 旧指纹。
+> 随机池由 `JHP_IOS_CHANCE` 控制（默认 30，`0` 关闭，`100` 强制 iOS）。iOS 7.3.40
+> 已真机验证；当前 App Store 为 7.4.0，提交链需要重新验证；求稳可先把
+> `JHP_IOS_CHANCE=0`。**旧版共享指纹不再冻结**：`source=legacy-default` 或
+> `DeviceId` 等于旧共享常量（带 `x86_64`/`isRoot=1`）时，启动会一次性生成唯一、
+> 自洽的新指纹，先备份为 `device_profile.backup-*.json`，并强制退出本机登录；
+> 重新登录后登录/提交/OBS 使用新指纹。唯一但字段不自洽的旧指纹只修字段、保留
+> DeviceId。手动迁移用
+> `python -m replica.application.device_profile --data-dir <data> --migrate`；
+> 主动换机用 `--rotate`（可选 `--platform android|ios|random`）。账号页显示实际
+> 生效的平台 / 机型 / 系统版本 / 脱敏 DeviceId 和来源（本机随机 / 旧版已修复 /
+> 已修正 / 已更换）。升级/迁移时复制整个 `data/` 目录，不要只复制
+> `accounts_emu.json`，否则会触发一次迁移。
 >
 > **更换设备指纹（高级）**：账号页 →「设备与会话」→「高级：更换设备指纹」。
 > 选择新平台（随机 / Android / iOS），输入“更换”并二次确认后，旧指纹会先备份，
@@ -92,9 +96,10 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 > **自查指纹是否自洽**：
 > `python -m replica.application.device_profile --data-dir <data> --audit`。
 > 新版随机池的机型、系统版本、物理/逻辑分辨率、CPU 和 root 状态按同一张表生成；
-> 旧版冻结指纹可能故意不符合新表（不能静默改），命令会逐条列出。早期生成器把逻辑
+> 旧版共享指纹会由启动迁移或 `--migrate` 修复，并先备份。早期生成器把逻辑
 > 像素写成了物理像素时，可用 `--repair-pixels` 只修正这两个字段（保留 DeviceId，
-> 先备份旧文件）；系统/CPU/root 不匹配仍需显式 rotate。
+> 先备份旧文件）；系统/CPU/root 不匹配会由 `--migrate` 一次性修复（共享常量则换
+> DeviceId）。
 
 ### 画路线
 

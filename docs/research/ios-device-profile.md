@@ -1,6 +1,8 @@
 # iOS 设备指纹：研究记录与接入状态
 
 > 状态：**iOS 全链已真机验证（2026-10-25，rrid `1344757460`）。**
+> 当前 App Store 版本为 **7.4.0（2026-10-26）**；文中 7.3.40 是验证时的历史版本，
+> 线上 `appVersion`/UA 已跟随到 7.4.0。
 > 分支：`experiment/ios-device-profile`（历史原型，已合入主线）
 > 结论先行：**iOS 提交链可用**——登录、策略、点位、提交、OBS 全部走 iOS 头，
 > 服务端返回 `status=0` / `isCheat=0` / `policy=0` / `stepFreqStatus=0`。
@@ -47,7 +49,7 @@ osVersion=18.x / 26.x
 logicPixel=360x640
 physicPixel=1080x1920
 cpuModel=x86_64
-appVersion=7.3.40
+appVersion=7.4.0
 isRoot=false
 appInstallTime=<持久化>
 nonce

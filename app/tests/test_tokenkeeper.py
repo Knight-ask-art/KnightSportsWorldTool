@@ -110,7 +110,10 @@ def test_status_has_no_secrets(tmp_path):
     assert 'u1' not in blob
 
 
-def test_real_probe_accepts_and_rejects_without_network():
+def test_real_probe_accepts_and_rejects_without_network(tmp_path):
+    from replica.application import device_profile as DP
+    DP.save_profile(str(tmp_path), DP.generate_profile(platform='android'))
+
     class Fake:
         def __init__(self, payload):
             self.payload = payload
@@ -122,20 +125,20 @@ def test_real_probe_accepts_and_rejects_without_network():
     ok = T.probe_real_session(
         session, client_factory=lambda: Fake({
             'status': 200, 'json': {'error': 10000, 'data': {}},
-            'plain': '{}', 'error': None}))
+            'plain': '{}', 'error': None}), store_dir=str(tmp_path))
     assert ok['ok'] is True
 
     dead = T.probe_real_session(
         session, client_factory=lambda: Fake({
             'status': 401, 'json': None, 'plain': None,
-            'error': 'decode failed'}))
+            'error': 'decode failed'}), store_dir=str(tmp_path))
     assert dead['ok'] is False
     assert dead['auth_failed'] is True
 
     hiccup = T.probe_real_session(
         session, client_factory=lambda: Fake({
             'status': 200, 'json': None, 'plain': None,
-            'error': 'decode failed'}))
+            'error': 'decode failed'}), store_dir=str(tmp_path))
     assert hiccup['ok'] is False
     assert hiccup['auth_failed'] is False
 

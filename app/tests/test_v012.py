@@ -106,7 +106,7 @@ def test_obs_uses_the_same_platform_ua_as_the_api(monkeypatch):
 
 def test_obs_follows_an_ios_profile(monkeypatch):
     _, seen = _fake_obs(monkeypatch, platform='ios')
-    assert seen['put_ua'].startswith('SWCampus/7.3.40 (iPhone; iOS 18.1;')
+    assert seen['put_ua'].startswith('SWCampus/7.4.0 (iPhone; iOS 18.1;')
     assert seen['get_ua'] == seen['put_ua']
 
 

@@ -77,7 +77,7 @@
 | Android 逻辑像素使用 dp，不再与物理像素相同 | 早期 `1080x2400 / 1080x2400` 是明显的合成指纹；按机型表一起生成 |
 | iOS 头使用独立的 typed JSON 序列化 | `uid/studentId` 是数字、`isRoot` 是布尔；套用 Android 的 Java HashMap 字符串化会改变 headerSign |
 | 请求带平台对应的 User-Agent（仅线上传输，不参与 headerSign） | 不设置时 urllib 会暴露 `Python-urllib/x.y`，比设备字段更显眼 |
-| UA 全链唯一来源，OBS 直传也用同一个 | 官方 Android dex 里没有自定义 UA（`SWCampus` 命中 0 次），故 Android 用 `okhttp/4.12.0`；iOS 用 NSURLSession 默认形态 `SWCampus/7.3.40 (iPhone; iOS x; Scale/3.00)`，版本与签名头 `appVersion` 同源。OBS 是独立域名，漏设 UA 会让同一次运行出现两种客户端（上游同样有此漏洞，antiban 审计点名） |
+| UA 全链唯一来源，OBS 直传也用同一个 | 官方 Android dex 里没有自定义 UA（`SWCampus` 命中 0 次），故 Android 用 `okhttp/4.12.0`；iOS 用 NSURLSession 默认形态 `SWCampus/7.4.0 (iPhone; iOS x; Scale/3.00)`，版本与签名头 `appVersion` 同源。OBS 是独立域名，漏设 UA 会让同一次运行出现两种客户端（上游同样有此漏洞，antiban 审计点名） |
 | iOS 的 `appInstallTime`/`DeviceId` 缺失时用兜底值 | 发 `0` / 空串是任何真机都不会报的值；参考实现按 iOS 3 天回退，DeviceId 进程序内固定生成（不逐请求漂移） |
 | 跳过打卡点仅在学校无点位且策略无必经点时可用 | 有必经点却跳过点位会生成永远不完整的记录，后端直接拒绝 |
 | 路线库存 `data/routes.json`，不再只靠 localStorage | localStorage 按 origin 隔离，换端口/换 exe 会丢路线 |
@@ -650,3 +650,13 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 坡度联动 | 只有提供海拔模板时才生效；按每 1% 坡度约 ±2.5% 速度重新分配每公里用时 | 没有模板不发明山丘；总时长保持不变 |
 | 多围栏 | `points.match_fence()` 用锚点/路线首点匹配；匹配不到抛 `FenceAmbiguous`，不取第一个 | CLI 与 UI 共用；没有锚点时要求人工确认 |
 | 预设/统计/FIT/诊断包/巡检 | 全部本地或只读；预设写 `store_dir`，统计只读，诊断包自动脱敏 | 巡检不提交，诊断包不含 token/密码/完整坐标/签名 URL |
+
+## 22. 旧版共享设备指纹一次性迁移（2026-11-05）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| 不再把 `LEGACY_DEVICE` 冻结为旧会话的指纹 | 该常量被所有旧安装共用，且 `x86_64`/`isRoot=1`/机型系统像素不自洽；服务端会看成「单设备多账号 + 模拟器/root」 | 旧值只保留用于识别和备份，不能保存、不能用于登录/提交 |
+| 旧共享指纹自动迁移为唯一、自洽的新指纹 | 共享 DeviceId 无法通过继续提交来“养回来”；唯一设备身份是恢复环境可信度的前提 | 迁移前备份 `device_profile.backup-*.json`；`save_profile` 拒绝再次写入共享常量 |
+| 迁移后强制退出本机登录 | 旧 token 是给旧设备签发的；换设备后继续用同一 token 会让服务端看到“同一 token 中途换机” | 只清本机 token，服务端注销尽力而为；重新登录后登录/提交/OBS 使用同一新指纹 |
+| 字段不自洽但 DeviceId 唯一的旧指纹只修字段、保留 DeviceId | 换 DeviceId 的信号比修 CPU/root/像素更大；能保留主身份就保留 | 只有共享常量或 `legacy-default` 才生成新 DeviceId |
+| 启动时检测并迁移，CLI/保活同样拒绝旧 token | GUI、CLI、保活共用一份 `data`；漏一条路径就会继续发旧环境 | 迁移通知写 `device_migration.json`，登录成功后清除 |

@@ -605,10 +605,30 @@ class ReplicaApi:
         self._keeper_lock = threading.Lock()
         self._device_lock = threading.RLock()
         self._device_cache = None
+        self._device_migration = None
         # One-time migration: 0.1.6 and earlier wrote the token in clear text.
         try:
             SESS.migrate(self._session_path())
         except Exception:  # noqa: BLE001 - a bad file must not block startup
+            pass
+        # Repair the shared/old device fingerprint before any request can use
+        # it.  A migrated profile must never reuse the old token: the server
+        # would see one token switch phones mid-session.  Clearing the local
+        # identity here forces the normal login flow to establish a token for
+        # the new device.
+        try:
+            session = self._read_session()
+            profile, migration = DP.load_or_create_ex(
+                self.store_dir, legacy_session=session)
+            self._device_cache = profile
+            self._device_migration = (migration
+                                      or DP.read_migration_marker(
+                                          self.store_dir))
+            if (self._device_migration
+                    and (session.get('token') or session.get('uid'))):
+                self._stop_keeper()
+                self._write_session(self._clear_session_identity(session))
+        except Exception:  # noqa: BLE001 - corrupt profiles surface on read
             pass
         self._load()
 
@@ -631,7 +651,7 @@ class ReplicaApi:
 
     def _post(self, base: str, path: str, payload: dict,
               headers: dict | None = None) -> dict:
-        h = {'appVersion': '7.3.70'}
+        h = {'appVersion': '7.4.0'}
         if headers:
             h.update(headers)
         try:
@@ -1114,8 +1134,10 @@ class ReplicaApi:
             if self._device_cache is None:
                 if session is None:
                     session = self._read_session()
-                self._device_cache = DP.load_or_create(
+                self._device_cache, migration = DP.load_or_create_ex(
                     self.store_dir, legacy_session=session)
+                if migration:
+                    self._device_migration = migration
             return self._device_cache
 
     def _effective_device(self, session: dict | None = None) -> dict:
@@ -1155,6 +1177,16 @@ class ReplicaApi:
         try:
             profile = self._device_profile(d)
             out.update(DP.public_view(profile, d))
+            migration = self._device_migration or DP.read_migration_marker(
+                self.store_dir)
+            if migration:
+                out['device_migration_notice'] = migration.get('message') or ''
+                out['device_migration'] = {
+                    'kind': migration.get('kind'),
+                    'from': migration.get('from'),
+                    'backup': migration.get('backup'),
+                    'old_device_masked': migration.get('old_device_masked'),
+                }
         except Exception as e:  # noqa: BLE001
             # A corrupt profile must not crash the login gate.  Keep the
             # session visible, but never claim a device is ready.
@@ -1181,6 +1213,12 @@ class ReplicaApi:
             # thread or in-memory password.
             self._stop_keeper()
         d = self._read_session()
+        identity_changed = any(
+            v not in (None, '') and str(d.get(k)) != str(v)
+            for k, v in (('DeviceId', DeviceId), ('platform', platform),
+                         ('deviceName', deviceName), ('osVersion', osVersion),
+                         ('cpuModel', cpuModel), ('physicPixel', physicPixel),
+                         ('logicPixel', logicPixel), ('isRoot', isRoot)))
         if token:
             # Different account => clear every identity field first.  The old
             # code only overwrote non-empty arguments, so a new login could
@@ -1201,6 +1239,17 @@ class ReplicaApi:
                      ('appUpdateTime', appUpdateTime)):
             if v not in (None, ''):
                 d[k] = v
+        if not token and identity_changed and d.get('token'):
+            # A device/platform change is a new phone.  Reusing the old token
+            # would make the server see one token switch devices mid-session.
+            self._stop_keeper()
+            d = self._clear_session_identity(d)
+            self._write_session(d)
+            self._invalidate_device()
+            out = self._public_session(d)
+            out['relogin_required'] = True
+            out['message'] = '设备身份已变更，请重新登录'
+            return _ok(out)
         if token:
             # An explicit new token is a deliberate re-enable.  The old
             # account was disabled by the user; only a new login/token can
@@ -1247,6 +1296,7 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001
             return _fail(f'更换设备指纹失败: {e}')
         self._invalidate_device()
+        self._device_migration = None
         return _ok({
             'device': DP.public_view(new),
             'backup': os.path.basename(backup) if backup else '',
@@ -1423,7 +1473,12 @@ class ReplicaApi:
             campusName=d.get('campusName') or '',
             unid=int(d.get('unid') or 0),
         )
-        DP.apply_to_account(acct, self._effective_device(d))
+        device = self._effective_device(d)
+        issues = DP.audit_profile(device)
+        if issues:
+            raise DP.DeviceProfileError(
+                '设备指纹不自洽，已停止请求: %s' % '；'.join(issues))
+        DP.apply_to_account(acct, device)
         if self._center_ok(d.get('lat'), d.get('lon')):
             acct.center_lat = float(d['lat'])
             acct.center_lng = float(d['lon'])
@@ -1438,7 +1493,10 @@ class ReplicaApi:
         it to ``v70400``; the older ``v70100`` is kept as a 404-only fallback
         (see ``replica/transport/routes.py``).
         """
-        acct = self._real_account()
+        try:
+            acct = self._real_account()
+        except DP.DeviceProfileError as e:
+            return _fail(str(e))
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
         from ..transport import realclient as R
@@ -1505,7 +1563,10 @@ class ReplicaApi:
         """Remove every account identity field but keep the keepalive shell."""
         for key in ('token', 'uid', 'name', 'nickname', 'campusName',
                     'schoolName', 'unid', 'lat', 'lon', 'DeviceId',
-                    'username', 'phone', 'mobile', 'password', 'pwd', 'avatar'):
+                    'username', 'phone', 'mobile', 'password', 'pwd', 'avatar',
+                    'platform', 'deviceName', 'osVersion', 'cpuModel',
+                    'physicPixel', 'logicPixel', 'isRoot', 'idfa',
+                    'appInstallTime', 'appUpdateTime'):
             d.pop(key, None)
         for key in ('disabled', 'disabled_reason', 'disabled_at'):
             d.pop(key, None)
@@ -1794,6 +1855,10 @@ class ReplicaApi:
         try:
             raw_session = self._read_session()
             device = self._effective_device(raw_session)
+            issues = DP.audit_profile(device)
+            if issues:
+                return _fail('设备指纹不自洽，已停止登录: %s'
+                             % '；'.join(issues))
             sess = do_login(username, password, log=lambda *_: None,
                             device=device)
         except Exception as e:  # noqa: BLE001
@@ -1820,6 +1885,10 @@ class ReplicaApi:
         try:
             raw_session = self._read_session()
             device = self._effective_device(raw_session)
+            issues = DP.audit_profile(device)
+            if issues:
+                return _fail('设备指纹不自洽，已停止登录: %s'
+                             % '；'.join(issues))
             sess = login_with_ticket(username, password, ticket,
                                      log=lambda *_: None, device=device)
         except Exception as e:  # noqa: BLE001
@@ -1991,6 +2060,10 @@ class ReplicaApi:
         try:
             raw_session = self._read_session()
             device = self._effective_device(raw_session)
+            issues = DP.audit_profile(device)
+            if issues:
+                return _fail('设备指纹不自洽，已停止登录: %s'
+                             % '；'.join(issues))
             sess = login_with_ticket(username, password, creds,
                                      log=lambda *_: None, device=device)
         except Exception as e:  # noqa: BLE001
@@ -2025,6 +2098,13 @@ class ReplicaApi:
             schoolName=profile.get('schoolName'),
             campusName=profile.get('campusName'),
             unid=sess.get('unid'), **extra)
+        # The new token was issued for the repaired profile; the one-shot
+        # notice has served its purpose.
+        try:
+            DP.clear_migration_marker(self.store_dir)
+        except Exception:  # noqa: BLE001
+            pass
+        self._device_migration = None
         # A new token replaces the identity block, including lat/lon.  Keep a
         # manually set campus centre when the same campus logs in again; a
         # school without a fence has no other way to recover it.
@@ -3674,7 +3754,13 @@ class ReplicaApi:
         A write-ahead receipt guards against double submission and against
         re-sending when a previous outcome is unknown.
         """
-        acct = self._real_account()
+        if self._device_migration:
+            return _fail(self._device_migration.get('message')
+                         or '设备指纹已修复，请重新登录后再提交')
+        try:
+            acct = self._real_account()
+        except DP.DeviceProfileError as e:
+            return _fail(str(e))
         if acct is None:
             return _fail('未配置 token（先在"账号"面板保存）')
         from ..transport import realclient as R

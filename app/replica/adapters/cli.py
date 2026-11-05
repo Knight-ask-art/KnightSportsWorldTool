@@ -133,6 +133,7 @@ def do_login(args):
     log('[1/6] 登录（纯协议，本地解极验）...')
     sess = login(args.user, args.password, captcha_id=args.captcha_id, log=log,
                  device=device)
+    DP.clear_migration_marker(store)
     log('      uid=%s unid=%s name=%s'
         % (sess['uid'], sess['unid'], sess['profile'].get('name')))
     return sess
@@ -832,7 +833,13 @@ def main(argv=None, client_factory=None):
     from ..application import device_profile as DP
     from ..application import identity
     store = DP.default_store_dir()
-    device = DP.load_or_create(store, legacy_session=DP.read_session(store))
+    device, migration = DP.load_or_create_ex(
+        store, legacy_session=DP.read_session(store))
+    if migration and args.token:
+        return _fail('检测到旧版共享/异常设备指纹，已生成独立指纹；'
+                     '请用账号密码重新登录后再提交', 1)
+    if migration:
+        DP.clear_migration_marker(store)
     if args.device_id:
         device['DeviceId'] = args.device_id
     if args.device_model:
@@ -840,6 +847,9 @@ def main(argv=None, client_factory=None):
     if args.os_version:
         device['osVersion'] = args.os_version
     try:
+        issues = DP.audit_profile(device)
+        if issues:
+            return _fail('设备指纹不自洽: %s' % '；'.join(issues), 1)
         DP.apply_to_account(acct, device)
     except Exception as e:  # noqa: BLE001
         return _fail('设备指纹无效: %s' % e, 1)

@@ -84,15 +84,17 @@ def test_ios_pool_can_be_disabled_and_forced(monkeypatch):
     assert DP.generate_profile()['platform'] in ('android', 'ios')
 
 
-def test_legacy_session_freezes_current_submission_fingerprint(tmp_path):
+def test_legacy_session_is_migrated_not_frozen(tmp_path):
     session = _session(tmp_path)
-    profile = DP.load_or_create(str(tmp_path), legacy_session=session)
-    assert profile['source'] == 'legacy-default'
-    assert profile['DeviceId'] == DP.LEGACY_DEVICE['DeviceId']
-    assert profile['deviceName'] == 'Xiaomi 2304FPN6DG'
-    assert profile['osVersion'] == '9'
-    assert profile['cpuModel'] == 'x86_64'
-    assert profile['isRoot'] == '1'
+    profile = DP.load_or_create_ex(str(tmp_path), legacy_session=session)[0]
+    assert profile['source'] == 'migrated'
+    assert profile['DeviceId'] != DP.LEGACY_DEVICE['DeviceId']
+    assert profile['deviceName'] != 'Xiaomi 2304FPN6DG'
+    assert profile['osVersion'] != '9'
+    assert profile['cpuModel'] == 'arm64-v8a'
+    assert profile['isRoot'] == '0'
+    assert not DP.audit_profile(profile)
+    assert DP.read_migration_marker(str(tmp_path))
 
 
 def test_legacy_session_with_explicit_device_id_is_preserved(tmp_path):
@@ -100,6 +102,85 @@ def test_legacy_session_with_explicit_device_id_is_preserved(tmp_path):
     profile = DP.load_or_create(str(tmp_path), legacy_session=session)
     assert profile['source'] == 'legacy-session'
     assert profile['DeviceId'] == 'dev-secret-123456'
+
+
+def test_shared_profile_file_is_migrated_with_backup(tmp_path):
+    legacy = dict(DP.LEGACY_DEVICE)
+    legacy.update(version=DP.PROFILE_VERSION, source='legacy-default',
+                  created_at=1_792_800_000_000)
+    DP._write_json_atomic(DP._profile_path(str(tmp_path)), legacy)
+
+    profile, info = DP.load_or_create_ex(str(tmp_path))
+    assert info and info['kind'] == 'shared-legacy-device'
+    assert profile['DeviceId'] != DP.LEGACY_DEVICE['DeviceId']
+    assert profile['source'] == 'migrated'
+    assert not DP.audit_profile(profile)
+    backup = tmp_path / info['backup']
+    assert backup.exists()
+    saved = json.loads(backup.read_text(encoding='utf-8'))
+    assert saved['DeviceId'] == DP.LEGACY_DEVICE['DeviceId']
+    assert DP.read_migration_marker(str(tmp_path))['kind'] == \
+        'shared-legacy-device'
+
+    # A second load is a no-op: the repaired profile stays put and no new
+    # backup is written.
+    again, info2 = DP.load_or_create_ex(str(tmp_path))
+    assert info2 is None and again == profile
+    assert len(list(tmp_path.glob('device_profile.backup-*'))) == 1
+
+
+def test_unique_but_incoherent_profile_is_repaired_with_same_id(tmp_path):
+    profile = DP.generate_profile(platform='android')
+    profile['cpuModel'] = 'x86_64'
+    profile['isRoot'] = '1'
+    DP.save_profile(str(tmp_path), profile)
+
+    fixed, info = DP.load_or_create_ex(str(tmp_path))
+    assert info and info['kind'] == 'incoherent-profile'
+    assert fixed['DeviceId'] == profile['DeviceId']
+    assert fixed['cpuModel'] == 'arm64-v8a'
+    assert fixed['isRoot'] == '0'
+    assert fixed['source'] == 'repaired'
+    assert not DP.audit_profile(fixed)
+    assert (tmp_path / info['backup']).exists()
+
+
+def test_save_profile_refuses_shared_legacy(tmp_path):
+    legacy = dict(DP.LEGACY_DEVICE)
+    legacy.update(version=DP.PROFILE_VERSION, source='legacy-default',
+                  created_at=1_792_800_000_000)
+    with pytest.raises(DP.DeviceProfileError):
+        DP.save_profile(str(tmp_path), legacy)
+
+
+def test_apply_to_account_refuses_shared_legacy():
+    legacy = dict(DP.LEGACY_DEVICE)
+    legacy.update(version=DP.PROFILE_VERSION, source='legacy-default',
+                  created_at=1_792_800_000_000)
+    with pytest.raises(DP.DeviceProfileError):
+        DP.apply_to_account(Account(name='x', uid='1', token='t'), legacy)
+
+
+def test_bridge_clears_old_token_and_clears_notice_after_login(
+        tmp_path, monkeypatch):
+    from replica.adapters.bridge_api import ReplicaApi
+    from replica.application import login_flow
+    _session(tmp_path)
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    assert api._read_session().get('token') is None
+    assert api.real_get_session()['data']['device_migration_notice']
+
+    def fake_login(username, password, **kwargs):
+        return {'uid': '1', 'token': 'tok-new', 'unid': 47203,
+                'profile': {'name': 'Test'}}
+
+    monkeypatch.setattr(login_flow, 'login', fake_login)
+    out = api.real_login('u', 'p')
+    assert out['code'] == 200
+    assert not DP.read_migration_marker(str(tmp_path))
+    assert api._read_session()['token'] == 'tok-new'
+    assert not api.real_get_session()['data'].get('device_migration_notice')
 
 
 def test_session_override_wins_over_install_profile(tmp_path):
@@ -133,15 +214,16 @@ def test_rotate_refuses_without_force(tmp_path):
         DP.rotate(str(tmp_path))
 
 
-def test_rotate_legacy_session_freezes_then_replaces(tmp_path):
+def test_rotate_legacy_session_migrates_then_replaces(tmp_path):
     session = _session(tmp_path)
     new, backup = DP.rotate(str(tmp_path), legacy_session=session, force=True)
     assert new['source'] == 'rotated'
-    assert new['rotated_from'] == 'legacy-default'
+    assert new['rotated_from'] == 'migrated'
     assert new['DeviceId'] != DP.LEGACY_DEVICE['DeviceId']
     with open(backup, encoding='utf-8') as f:
         saved = json.load(f)
-    assert saved['DeviceId'] == DP.LEGACY_DEVICE['DeviceId']
+    assert saved['DeviceId'] != DP.LEGACY_DEVICE['DeviceId']
+    assert saved['source'] == 'migrated'
 
 
 def test_corrupt_profile_fails_closed(tmp_path):
@@ -217,7 +299,8 @@ def test_public_view_never_returns_raw_device_id(tmp_path):
     blob = json.dumps(view, ensure_ascii=False)
     assert profile['DeviceId'] not in blob
     assert view['device_id_masked'].startswith(profile['DeviceId'][:4])
-    assert view['device_source'] == 'legacy-default'
+    assert view['device_source'] == 'migrated'
+    assert view['device_environment_ok'] is True
 
 def test_bridge_public_session_uses_install_profile(tmp_path):
     from replica.adapters.bridge_api import ReplicaApi
@@ -226,10 +309,13 @@ def test_bridge_public_session_uses_install_profile(tmp_path):
                      str(tmp_path))
     data = api.real_get_session()['data']
     assert data['device_id_present'] is True
-    assert data['device_source'] == 'legacy-default'
+    assert data['device_source'] == 'migrated'
     assert data['device_platform'] == 'android'
-    assert data['device_name'] == 'Xiaomi 2304FPN6DG'
-    assert data['device_os'] == '9'
+    assert data['device_name'] != 'Xiaomi 2304FPN6DG'
+    assert data['device_os'] != '9'
+    assert data['device_environment_ok'] is True
+    assert data['device_migration_notice']
+    assert data['token_present'] is False
     assert 'DeviceId' not in data
     for key in ('DeviceId', 'deviceName', 'osVersion', 'cpuModel',
                 'physicPixel', 'logicPixel', 'isRoot', 'appInstallTime',
@@ -275,6 +361,31 @@ def test_manual_session_device_survives_effective_device(tmp_path):
     assert device['osVersion'] == '12'
     assert device['source'] == 'session'
 
+def test_set_session_device_change_clears_token(tmp_path):
+    from replica.adapters.bridge_api import ReplicaApi
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    api.real_set_session(uid='1', token='tok', DeviceId='dev-1')
+    out = api.real_set_session(DeviceId='dev-2')
+    assert out['data']['relogin_required'] is True
+    assert 'token' not in api._read_session()
+
+
+def test_real_account_rejects_incoherent_session_override(tmp_path):
+    from replica.adapters.bridge_api import ReplicaApi
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    api.real_set_session(
+        uid='1', token='tok', platform='ios',
+        DeviceId='0123456789ABCDEF0123456789ABCDEF',
+        deviceName='Xiaomi 2304FPN6DG', osVersion='9',
+        cpuModel='x86_64', physicPixel='900x1600',
+        logicPixel='600x1066', isRoot='1',
+        appInstallTime='1790000000000', appUpdateTime='1790000000000')
+    with pytest.raises(DP.DeviceProfileError):
+        api._real_account()
+
+
 def test_real_login_keeps_manual_device_override(tmp_path, monkeypatch):
     from replica.adapters.bridge_api import ReplicaApi
     from replica.application import login_flow
@@ -282,9 +393,9 @@ def test_real_login_keeps_manual_device_override(tmp_path, monkeypatch):
                      str(tmp_path))
     api.real_set_session(
         uid='1', token='tok-old', DeviceId='manual-device-1',
-        deviceName='Manual Phone', osVersion='12',
+        deviceName='Pixel 8', osVersion='14', platform='android',
         cpuModel='arm64-v8a', physicPixel='1080x2400',
-        logicPixel='1080x2400', isRoot='0',
+        logicPixel='411x914', isRoot='0',
         appInstallTime='1790000000000', appUpdateTime='1790000000000')
     captured = {}
 
@@ -299,7 +410,7 @@ def test_real_login_keeps_manual_device_override(tmp_path, monkeypatch):
     assert captured['device']['DeviceId'] == 'manual-device-1'
     session = api._read_session()
     assert session['DeviceId'] == 'manual-device-1'
-    assert session['deviceName'] == 'Manual Phone'
+    assert session['deviceName'] == 'Pixel 8'
     assert session['token'] == 'tok-new'
 
 

@@ -9,11 +9,14 @@ change phone every day.  The only stable shape is:
 
 * create the profile once per data directory;
 * keep it forever (login, submit, OBS readback all use the same one);
-* never rotate silently.  An explicit ``rotate()`` backs up the old profile.
+* never rotate a **valid** profile silently.  An explicit ``rotate()`` backs up
+  the old profile.
 
-Existing data directories are not rotated on upgrade.  If a session predates
-this module, the profile freezes the fingerprint that was already used for
-submission.  ``rotate()`` is the one-time, operator-approved exception.
+The one exception is a profile that cannot be sent: the old compiled-in
+fingerprint shared by every installation (``LEGACY_DEVICE``) and fields that
+cannot coexist (``x86_64`` CPU, ``isRoot=1``, wrong model/OS/pixels).  Those are
+migrated once on load, with a ``device_profile.backup-*.json`` backup and a
+forced re-login.  A valid profile with a unique ``DeviceId`` is never changed.
 
 New installations draw from a coherent Android/iOS pool (``JHP_IOS_CHANCE``,
 default 30).  Once written, the profile is stable regardless of platform: the
@@ -48,6 +51,10 @@ from .guard import _file_lock
 PROFILE_FILENAME = 'device_profile.json'
 PROFILE_VERSION = 1
 LOCK_FILENAME = '.device_profile.lock'
+#: One-shot notice consumed by the desktop UI after a legacy fingerprint was
+#: repaired.  It is deliberately a separate file: ``device_profile.json`` is
+#: validated as a strict schema and must never grow UI-only fields.
+MIGRATION_FILENAME = 'device_migration.json'
 
 #: The fingerprint the current build already submits with.  Keep it byte for
 #: byte when freezing an existing installation; changing any of these fields
@@ -129,6 +136,7 @@ _DIGITS_RE = re.compile(r'^\d{10,16}$')
 
 _SOURCES = frozenset({
     'generated', 'legacy-default', 'legacy-session', 'rotated', 'session',
+    'migrated', 'repaired',
 })
 
 
@@ -297,6 +305,17 @@ def validate_profile(profile) -> dict:
             pass
     if profile.get('rotated_from'):
         out['rotated_from'] = str(profile['rotated_from'])[:32]
+    for stamp in ('migrated_at', 'repaired_at'):
+        if profile.get(stamp):
+            try:
+                out[stamp] = int(profile[stamp])
+            except (TypeError, ValueError):
+                pass
+    for text_key in ('migrated_from', 'migration_reason',
+                     'repaired_from', 'repair_reason',
+                     'previous_device_masked'):
+        if profile.get(text_key):
+            out[text_key] = str(profile[text_key])[:64]
     return out
 
 
@@ -324,9 +343,9 @@ def generate_android_profile(*, now_ms: int | None = None,
     os_version = secrets.choice(os_choices)
     # A real installation is older than the first run.  30-400 days keeps
     # install history plausible without every copy sharing one offset.  The
-    # app is current (7.3.11), so appUpdateTime is recent and later than the
+    # app is current (7.4.0), so appUpdateTime is recent and later than the
     # install; an install from last year with update == install would imply
-    # the app was never updated since 7.3.11 shipped.
+    # the app was never updated since 7.4.0 shipped.
     install = now - (30 + secrets.randbelow(371)) * 86_400_000
     update = now - (1 + secrets.randbelow(21)) * 86_400_000
     if update <= install:
@@ -401,10 +420,13 @@ def generate_profile(*, now_ms: int | None = None,
 
 
 def profile_from_session(session: dict | None) -> dict | None:
-    """Freeze the identity an older build was already submitting with.
+    """Build a clean profile from an old session.
 
-    A session without ``DeviceId`` used the compiled-in defaults.  A session
-    with one (manual import / CLI) wins for that field.
+    Older builds did not persist a profile and used a compiled-in Android
+    fingerprint for every installation.  Freezing that fingerprint is exactly
+    what made all upgraded users look like one rooted x86 device, so it must
+    never be reused.  A unique ``DeviceId`` that the session already carries is
+    preserved; every other field is checked and repaired to a coherent profile.
     """
     if not isinstance(session, dict):
         return None
@@ -413,15 +435,9 @@ def profile_from_session(session: dict | None) -> dict | None:
     platform = str(session.get('platform') or 'android').strip().lower()
     if platform == 'ios':
         profile = generate_ios_profile(source='legacy-session')
-        profile['created_at'] = _now_ms()
     else:
-        profile = dict(LEGACY_DEVICE)
-        profile['version'] = PROFILE_VERSION
-        profile['source'] = 'legacy-default'
-        profile['created_at'] = _now_ms()
-    if session.get('DeviceId'):
-        profile['DeviceId'] = str(session['DeviceId'])
-        profile['source'] = 'legacy-session'
+        profile = generate_android_profile(source='legacy-session')
+
     for src, dst in (('platform', 'platform'),
                      ('deviceName', 'deviceName'),
                      ('osVersion', 'osVersion'),
@@ -434,6 +450,50 @@ def profile_from_session(session: dict | None) -> dict | None:
                      ('appUpdateTime', 'appUpdateTime')):
         if session.get(src) not in (None, ''):
             profile[dst] = str(session[src])
+
+    session_id = str(session.get('DeviceId') or '').strip()
+    shared_id = (not session_id
+                 or session_id.lower() == LEGACY_DEVICE['DeviceId'].lower())
+    if not shared_id:
+        # A manual/imported id is the one piece of history worth keeping.
+        profile['DeviceId'] = session_id
+
+    # The session may carry a real model plus the old synthetic CPU/root
+    # fields, or a field an old build wrote in the wrong type.  Repair when
+    # possible; rebuild from the clean base when the copied field is invalid.
+    try:
+        issues = audit_profile(profile)
+    except DeviceProfileError:
+        profile = (generate_ios_profile(source='legacy-session')
+                   if platform == 'ios'
+                   else generate_android_profile(source='legacy-session'))
+        if not shared_id:
+            profile['DeviceId'] = session_id
+        issues = audit_profile(profile)
+
+    if issues:
+        profile, _ = repair_profile(profile, reason='legacy-session')
+        if shared_id:
+            # The id was also the shared legacy constant; the new random id
+            # inside the repaired profile is the migration, not a field repair.
+            profile['source'] = 'migrated'
+            profile['migrated_from'] = 'legacy-default'
+            profile['migrated_at'] = _now_ms()
+            profile['migration_reason'] = 'shared-legacy-device'
+            profile['previous_device_masked'] = _mask_device(
+                LEGACY_DEVICE['DeviceId'])
+            for stale in ('repaired_at', 'repaired_from', 'repair_reason'):
+                profile.pop(stale, None)
+        else:
+            profile['source'] = 'repaired'
+            profile['repaired_from'] = 'legacy-session'
+    elif shared_id:
+        # No unique identity exists.  Mark the new random profile as a
+        # migration so the UI can explain the one-time logout.
+        profile['source'] = 'migrated'
+        profile['migrated_from'] = 'legacy-default'
+        profile['migrated_at'] = _now_ms()
+        profile['migration_reason'] = 'shared-legacy-device'
     return validate_profile(profile)
 
 
@@ -446,30 +506,21 @@ def read_profile(store_dir: str) -> dict | None:
 
 def save_profile(store_dir: str, profile: dict) -> dict:
     profile = validate_profile(profile)
+    if is_shared_legacy(profile):
+        raise DeviceProfileError(
+            '拒绝保存旧版共享设备指纹；请生成独立设备身份')
     _write_json_atomic(_profile_path(store_dir), profile)
     return profile
 
 
 def load_or_create(store_dir: str, legacy_session: dict | None = None) -> dict:
-    """Read the profile, or create the safe default for this data directory.
+    """Read the profile, or create a coherent one for this data directory.
 
-    * profile exists -> use it (never regenerate);
-    * no profile, legacy session -> freeze the legacy fingerprint;
-    * no profile, no session -> generate a random profile.
+    Existing legacy profiles are migrated once, with a backup.  The detailed
+    variant :func:`load_or_create_ex` also returns the migration notice used by
+    the desktop shell to force a re-login.
     """
-    store_dir = os.path.abspath(store_dir)
-    os.makedirs(store_dir, exist_ok=True)
-    current = read_profile(store_dir)
-    if current is not None:
-        return current
-
-    with _file_lock(_lock_path(store_dir)):
-        current = read_profile(store_dir)
-        if current is not None:
-            return current
-        legacy = profile_from_session(legacy_session)
-        profile = legacy if legacy is not None else generate_profile()
-        return save_profile(store_dir, profile)
+    return load_or_create_ex(store_dir, legacy_session=legacy_session)[0]
 
 
 def _backup_path(store_dir: str, now: int) -> str:
@@ -527,7 +578,9 @@ def rotate(store_dir: str, legacy_session: dict | None = None,
         new = generate_profile(source='rotated', platform=platform)
         new['rotated_at'] = _now_ms()
         new['rotated_from'] = (old or {}).get('source', 'none')
-        return save_profile(store_dir, new), backup
+        new = save_profile(store_dir, new)
+        clear_migration_marker(store_dir)
+        return new, backup
 
 
 def effective_device(profile: dict, session: dict | None = None) -> dict:
@@ -555,6 +608,9 @@ def effective_device(profile: dict, session: dict | None = None) -> dict:
 def apply_to_account(acct, device: dict) -> None:
     """Copy every device field onto a realclient.Account."""
     device = validate_profile(device)
+    if is_shared_legacy(device):
+        raise DeviceProfileError(
+            '旧版共享设备指纹不能用于登录或提交；请先修复设备指纹')
     acct.platform = device['platform']
     acct.DeviceId = device['DeviceId']
     acct.deviceName = device['deviceName']
@@ -593,6 +649,11 @@ def public_view(profile: dict, session: dict | None = None) -> dict:
                                      device.get('logicPixel'),
                                      device.get('platform')),
         'device_installed_days': _install_age_days(device.get('appInstallTime')),
+        'device_migrated_at': device.get('migrated_at'),
+        'device_migrated_from': device.get('migrated_from'),
+        'device_repaired_at': device.get('repaired_at'),
+        'device_repaired_from': device.get('repaired_from'),
+        'device_environment_ok': not audit_profile(device),
     }
 
 
@@ -674,9 +735,10 @@ def repair_pixels(store_dir: str) -> tuple[dict, str | None, list[str]]:
 def audit_profile(profile: dict) -> list[str]:
     """Return human-readable coherence problems for a profile.
 
-    This is deliberately advisory: legacy fingerprints are frozen on purpose,
-    so an old install can legitimately fail the modern model table.  New
-    profiles must pass with an empty list.
+    A profile that fails this audit is not necessarily corrupt, but it cannot
+    be sent: ``cpuModel=x86_64``, ``isRoot=1`` and an impossible model/OS pair
+    are exactly the environment signals the server's suspicious-record check
+    looks for.  ``migrate_profile`` repairs them once, with a backup.
     """
     p = validate_profile(profile)
     issues: list[str] = []
@@ -729,6 +791,205 @@ def audit_profile(profile: dict) -> list[str]:
     return issues
 
 
+def is_shared_legacy(profile) -> bool:
+    """True for the old compiled-in fingerprint shared by every installation."""
+    if not isinstance(profile, dict):
+        return False
+    if str(profile.get('source') or '') == 'legacy-default':
+        return True
+    return (str(profile.get('DeviceId') or '').strip().lower()
+            == LEGACY_DEVICE['DeviceId'].lower())
+
+
+def _mask_device(value) -> str:
+    return mask_device_id(str(value or ''))
+
+
+def _normalise_times(profile: dict, now: int) -> list[str]:
+    """Keep plausible install/update times; clamp future or inverted values."""
+    changes = []
+    install = int(profile['appInstallTime'])
+    update = int(profile['appUpdateTime'])
+    if install <= 0 or install > now:
+        install = now - (30 + secrets.randbelow(371)) * 86_400_000
+        changes.append('appInstallTime clamped')
+    if update <= 0 or update > now:
+        update = now - (1 + secrets.randbelow(21)) * 86_400_000
+        changes.append('appUpdateTime clamped')
+    if update < install:
+        update = install
+        changes.append('appUpdateTime raised to appInstallTime')
+    profile['appInstallTime'] = str(install)
+    profile['appUpdateTime'] = str(update)
+    return changes
+
+
+def repair_profile(profile: dict, reason: str = 'incoherent-profile'):
+    """Make a coherent profile while keeping a unique ``DeviceId``.
+
+    Used for profiles created by early generators (wrong pixels, x86_64 CPU,
+    ``isRoot=1``) and for old sessions that carried a real model plus the old
+    synthetic fields.  A shared legacy id is **not** repaired here: it must be
+    replaced by a new random profile because every old copy carries the same
+    id.  See :func:`migrate_profile`.
+    """
+    p = validate_profile(profile)
+    issues = audit_profile(p)
+    if not issues:
+        return p, []
+
+    old_source = p.get('source', 'unknown')
+    old_id = p['DeviceId']
+    changes = list(issues)
+    platform = p['platform']
+    table = ANDROID_MODELS if platform == 'android' else IOS_MODELS
+    row = next((r for r in table if r[0] == p['deviceName']), None)
+    if row is None:
+        row = secrets.choice(table)
+    model, versions, physic, logic = row
+
+    if p['deviceName'] != model:
+        p['deviceName'] = model
+    if p['osVersion'] not in versions:
+        p['osVersion'] = secrets.choice(versions)
+    p['physicPixel'] = physic
+    p['logicPixel'] = logic
+    p['cpuModel'] = 'arm64-v8a' if platform == 'android' else IOS_CPU_MODEL
+    p['isRoot'] = '0'
+    if platform == 'android':
+        p.pop('idfa', None)
+    elif not p.get('idfa'):
+        p['idfa'] = _IDFA_ZERO
+    changes += _normalise_times(p, _now_ms())
+
+    p['source'] = 'repaired'
+    p['repaired_from'] = old_source
+    p['repaired_at'] = _now_ms()
+    p['repair_reason'] = str(reason or 'incoherent-profile')[:64]
+    p['previous_device_masked'] = _mask_device(old_id)
+    return validate_profile(p), changes
+
+
+def _migration_message(kind: str) -> str:
+    if kind == 'shared-legacy-device':
+        return ('检测到旧版共享设备指纹（老用户共用同一台设备，且带有 '
+                'x86_64/root 特征），已为本机生成独立指纹。'
+                '为避免旧 token 与新设备混用，本机登录已退出，请重新登录。'
+                '旧指纹已备份。')
+    return ('检测到旧版设备指纹字段不一致（CPU/root/机型），'
+            '已修正为本机独立指纹。请重新登录后再提交；旧指纹已备份。')
+
+
+def _migration_info(profile: dict, *, kind: str, backup: str = '',
+                    old_device: str = '', changes=None) -> dict:
+    return {
+        'kind': kind,
+        'at': int(profile.get('migrated_at')
+                  or profile.get('repaired_at') or _now_ms()),
+        'from': str(profile.get('migrated_from')
+                    or profile.get('repaired_from') or 'legacy'),
+        'backup': os.path.basename(backup) if backup else '',
+        'old_device_masked': (_mask_device(old_device)
+                              if old_device else
+                              str(profile.get('previous_device_masked') or '')),
+        'message': _migration_message(kind),
+        'changes': list(changes or [])[:8],
+    }
+
+
+def migrate_profile(store_dir: str, profile: dict):
+    """Back up and repair one old profile.  Caller must hold the file lock.
+
+    Returns ``(profile, backup_path, migration_info)``.  A no-op returns
+    ``(profile, None, None)``.
+    """
+    old = dict(profile)
+    if is_shared_legacy(old):
+        platform = 'ios' if old.get('platform') == 'ios' else 'android'
+        new = generate_profile(platform=platform, source='migrated')
+        new['migrated_from'] = str(old.get('source') or 'legacy-default')
+        new['migrated_at'] = _now_ms()
+        new['migration_reason'] = 'shared-legacy-device'
+        new['previous_device_masked'] = _mask_device(old.get('DeviceId'))
+        backup = _backup_path(store_dir, _now_ms())
+        _write_json_atomic(backup, old)
+        new = save_profile(store_dir, new)
+        info = _migration_info(new, kind='shared-legacy-device',
+                               backup=backup, old_device=old.get('DeviceId'))
+        return new, backup, info
+
+    issues = audit_profile(old)
+    if not issues:
+        return old, None, None
+    new, changes = repair_profile(old, reason='incoherent-profile')
+    backup = _backup_path(store_dir, _now_ms())
+    _write_json_atomic(backup, old)
+    new = save_profile(store_dir, new)
+    info = _migration_info(new, kind='incoherent-profile', backup=backup,
+                           old_device=old.get('DeviceId'), changes=changes)
+    return new, backup, info
+
+
+def read_migration_marker(store_dir: str) -> dict | None:
+    """Read the one-shot UI notice left by a profile migration."""
+    path = os.path.join(os.path.abspath(store_dir), MIGRATION_FILENAME)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) and data.get('message') else None
+    except Exception:  # noqa: BLE001 - a missing/broken notice is not fatal
+        return None
+
+
+def write_migration_marker(store_dir: str, info: dict | None) -> None:
+    if not info:
+        return
+    _write_json_atomic(os.path.join(os.path.abspath(store_dir),
+                                    MIGRATION_FILENAME), info)
+
+
+def clear_migration_marker(store_dir: str) -> None:
+    path = os.path.join(os.path.abspath(store_dir), MIGRATION_FILENAME)
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def load_or_create_ex(store_dir: str,
+                      legacy_session: dict | None = None):
+    """Return ``(profile, migration_info)`` and migrate old data once.
+
+    The migration is intentionally **not** silent: it writes
+    ``device_migration.json`` so the desktop/CLI can force a re-login.  A
+    profile that needs no change returns ``(profile, None)``.
+    """
+    store_dir = os.path.abspath(store_dir)
+    os.makedirs(store_dir, exist_ok=True)
+    with _file_lock(_lock_path(store_dir)):
+        current = read_profile(store_dir)
+        if current is not None:
+            new, backup, info = migrate_profile(store_dir, current)
+            if info:
+                write_migration_marker(store_dir, info)
+            return new, info
+
+        legacy = profile_from_session(legacy_session)
+        profile = legacy if legacy is not None else generate_profile()
+        profile = save_profile(store_dir, profile)
+        info = None
+        if profile.get('source') == 'migrated':
+            info = _migration_info(profile, kind='shared-legacy-device',
+                                   old_device=LEGACY_DEVICE['DeviceId'])
+        elif profile.get('source') == 'repaired':
+            info = _migration_info(profile, kind='incoherent-profile')
+        if info:
+            write_migration_marker(store_dir, info)
+        return profile, info
+
+
 def _cli(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description='Inspect or rotate the per-installation device profile.')
@@ -746,6 +1007,9 @@ def _cli(argv=None) -> int:
     ap.add_argument('--repair-pixels', action='store_true',
                     help='fix only physical/logical pixels for a known model; '
                          'backs up the old profile and keeps DeviceId')
+    ap.add_argument('--migrate', action='store_true',
+                    help='repair a shared/incoherent legacy profile once; '
+                         'backs up the old profile and prints the notice')
     args = ap.parse_args(argv)
 
     store_dir = os.path.abspath(os.path.expanduser(args.data_dir))
@@ -778,6 +1042,17 @@ def _cli(argv=None) -> int:
         print(f'device : {new["deviceName"]} / {label} {new["osVersion"]}')
         if backup:
             print(f'backup : {backup}')
+        return 0
+
+    if args.migrate:
+        try:
+            profile, info = load_or_create_ex(store_dir, legacy_session=session)
+        except DeviceProfileError as e:
+            print(f'ERROR {e}')
+            return 1
+        print(json.dumps({'migration': info,
+                          'device': public_view(profile, session)},
+                         ensure_ascii=False, indent=1))
         return 0
 
     profile = load_or_create(store_dir, legacy_session=session)
@@ -838,10 +1113,13 @@ def self_test() -> list[tuple[str, bool, str]]:
                            {'uid': '1', 'token': 'tok'})
         legacy = load_or_create(legacy_dir,
                                 legacy_session=read_session(legacy_dir))
-        out.append(('legacy session freezes default',
-                    legacy['DeviceId'] == LEGACY_DEVICE['DeviceId']
-                    and legacy['source'] == 'legacy-default',
+        out.append(('legacy session is migrated, not frozen',
+                    legacy['DeviceId'] != LEGACY_DEVICE['DeviceId']
+                    and legacy['source'] == 'migrated'
+                    and not audit_profile(legacy),
                     legacy['DeviceId'][:8] + '…'))
+        out.append(('migration notice is written',
+                    bool(read_migration_marker(legacy_dir)), 'notice'))
 
         new, backup = rotate(legacy_dir,
                              legacy_session=read_session(legacy_dir),

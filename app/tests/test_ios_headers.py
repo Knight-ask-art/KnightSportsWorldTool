@@ -8,7 +8,12 @@ from replica.transport.ios_headers import (
     ios_header_json,
     token_sign,
 )
-from replica.transport.realclient import Account, build_headers, user_agent
+from replica.transport.realclient import (
+    Account,
+    build_headers,
+    user_agent,
+    wire_headers,
+)
 
 
 def _account(**extra):
@@ -32,6 +37,26 @@ def _account(**extra):
     return Account(**values)
 
 
+def test_wire_headers_keep_native_types_only_for_signing():
+    headers = build_ios_headers(_account(), '1792828000000', 'nonce-10')
+    wire = wire_headers(headers)
+    # Signed JSON has boolean/number types; the actual HTTP values must be the
+    # strings a native client writes.
+    assert wire['isRoot'] == 'false'
+    assert wire['uid'] == '15663170'
+    assert wire['studentId'] == '15663170'
+    assert wire['appInstallTime'] == '1790000000000'
+
+
+def test_android_prelogin_token_sign_is_empty():
+    acct = _account(platform='android', uid='-1', token='', cpuModel='arm64-v8a',
+                    physicPixel='1080x2400', logicPixel='393x873')
+    headers = build_headers(acct, '1792828000000', 'nonce-11')
+    assert headers['uid'] == '-1'
+    assert headers['token'] == ''
+    assert headers['tokenSign'] == ''
+
+
 def test_ios_header_shape_matches_reference_order():
     headers = build_ios_headers(_account(), '1792828000000', 'nonce-1',
                                 idfa='IDFA-TEST')
@@ -48,7 +73,7 @@ def test_ios_header_shape_matches_reference_order():
     assert headers['logicPixel'] == '393x852'
     assert headers['physicPixel'] == '1179x2556'
     assert headers['cpuModel'] == 'arm64e'
-    assert headers['appVersion'] == IOS_APP_VERSION == '7.3.40'
+    assert headers['appVersion'] == IOS_APP_VERSION == '7.4.0'
     assert headers['isRoot'] is False
     assert headers['appInstallTime'] == 1790000000000
     assert headers['uid'] == 15663170
@@ -114,7 +139,7 @@ def test_user_agent_matches_platform_and_ios_major():
     assert user_agent(_account(platform='android')) == 'okhttp/4.12.0'
     # iOS: NSURLSession default shape <App>/<ver> (iPhone; iOS <ver>; Scale/n).
     ua = user_agent(_account(osVersion='18.1'))
-    assert ua == 'SWCampus/7.3.40 (iPhone; iOS 18.1; Scale/3.00)'
+    assert ua == 'SWCampus/7.4.0 (iPhone; iOS 18.1; Scale/3.00)'
     assert user_agent(_account(osVersion='16.7.10')).endswith(
         '(iPhone; iOS 16.7.10; Scale/3.00)')
     assert 'Darwin/' not in ua and 'CFNetwork/' not in ua

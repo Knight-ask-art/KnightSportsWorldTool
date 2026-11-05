@@ -244,7 +244,8 @@ class _ManualApi:
         return {}
 
     def _effective_device(self, session=None):
-        return {'DeviceId': 'dev', 'source': 'pool'}
+        from replica.application import device_profile as DP
+        return DP.generate_profile(platform='android')
 
     def _persist_login(self, sess, device, raw_session):
         self.persisted = sess

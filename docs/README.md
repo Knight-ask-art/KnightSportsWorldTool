@@ -69,9 +69,9 @@ validate_sim      1/2/3/5 km PASS
 
 | 能力 | 状态 |
 |---|---|
-| 登录（手机号+密码，本地过极验） | 2026-10-25 iOS 链路已验证；线上提交已跑通 |
+| 登录（手机号+密码，本地过极验） | 2026-10-25 iOS 7.3.40 链路已验证；当前 App Store 为 7.4.0，需重新真机确认 |
 | 拉点位 / 围栏 | 线上拉通过 |
-| 提交 `save/record` | 2026-10-25 iOS 验证通过：rrid `1344757460`，详情 `isCheat/policy/stepFreqStatus=0` |
+| 提交 `save/record` | 2026-10-25 iOS 7.3.40 验证通过：rrid `1344757460`，详情 `isCheat/policy/stepFreqStatus=0`；7.4.0 需重新验证 |
 | OBS 轨迹单 key 上传 + 回读 | iOS 记录详情确认 `jsonFromObs=1`、466 点来自 OBS；7.4.0 抓包只写日期式 key；v0.1.2 起回读校验为 SHA-256，同长度损坏会重试 |
 | 只读查询（记录/详情/周汇总/违规/学期/排行） | 已用真实 token 验证学期/记录/详情；周汇总/排行按需只读 |
 | token 保活 | 定时 `user/info` 探测；失效标记；可选内存自动重登；`disabled` 旧账号不探测 |
@@ -80,7 +80,7 @@ validate_sim      1/2/3/5 km PASS
 | v0.1.1 稳定包 | UI 点位按校区固定范围拉取（提交按目标距离补点）、回执只读核对、网络自检、记录轨迹地图、日历次数、学期进度、路线库落盘、14 天计划、诊断包、学校规则自动读取、个人主页/违规自查 |
 | v0.1.2 稳定收尾 | 版本号统一、跨版本 data 自动迁移、配速/步频软提醒、不可行路线明确报错；新增海拔来源（自动/固定/区间/模板）、围栏整段校验、原始详情 JSON CLI、构建标识、新手引导、`latest.json` 更新元数据 |
 | 打包/分发 | 默认 Nuitka standalone 编译（LTO、去 docstring/assert、源码泄漏门禁）；PyInstaller 仅兼容回退；zip 附 SHA-256 与 `latest.json` |
-| 设备指纹 | 每个 `data` 目录随机一次（Android / iOS，`JHP_IOS_CHANCE` 默认 30）；登录/保活/提交/OBS/注销共用；iOS 提交链已于 2026-10-25 验证 |
+| 设备指纹 | 每个 `data` 目录随机一次（Android / iOS，`JHP_IOS_CHANCE` 默认 30）；登录/保活/提交/OBS/注销共用；iOS 7.3.40 已于 2026-10-25 验证，7.4.0 需重新验证 |
 
 > 最后一条是硬限制：没有可用 token 时，所有真实接口都会明确报错，
 > 不会伪装成空数据。详见 [operations.md](operations.md#3-排错表)。

@@ -35,7 +35,7 @@ class MockIydsjState:
         self.tokens: dict[str, dict] = {}
         self.records: dict[str, dict] = {}
         self.lock = threading.Lock()
-        self.valid_versions = {'7.3.70', '7.2.70', '7.2.61', '1.0.0'}
+        self.valid_versions = {'7.4.0', '7.3.70', '7.2.70', '7.2.61', '1.0.0'}
 
 
 def _spring_error(handler: BaseHTTPRequestHandler, message: str,

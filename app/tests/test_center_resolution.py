@@ -10,6 +10,7 @@ import json
 import pytest
 
 from replica.adapters.bridge_api import ReplicaApi
+from replica.application import device_profile as DP
 from replica.transport.realclient import Account
 
 FENCE = [
@@ -25,6 +26,7 @@ def _api(tmp_path, **session):
     data = {'uid': '1', 'token': 'tok', 'unid': 47203,
             'campusName': '广州软件学院 江门校区'}
     data.update(session)
+    DP.save_profile(str(tmp_path), DP.generate_profile(platform='android'))
     (tmp_path / 'accounts_emu.json').write_text(
         json.dumps(data, ensure_ascii=False), encoding='utf-8')
     return ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',

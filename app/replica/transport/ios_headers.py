@@ -21,8 +21,11 @@ import json
 import time
 import uuid
 
-#: The iOS app version observed in the reference client's iOS header.
-IOS_APP_VERSION = '7.3.40'
+#: The current iOS App Store build (version history: 7.4.0, 2026-10-26).
+#: The previous value was 7.3.40, which is what the 2025 reference client
+#: captured; keeping it after the 7.4.0 client shipped makes the signed
+#: ``appVersion`` and UA older than the data shape we send.
+IOS_APP_VERSION = '7.4.0'
 TOKEN_SIGN_SUFFIX = '2slhe02lsfiwowlcixisla_sls-_slaor'
 
 #: Fallback install age when the profile has no appInstallTime (the reference
