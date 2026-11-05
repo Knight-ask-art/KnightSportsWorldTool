@@ -34,7 +34,7 @@ DEFAULT_ENTRY = '好想跑.exe'
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
     '0.1.9': [
-        '修复旧版共享设备指纹：不再让所有老用户共用同一 DeviceId / x86_64 / isRoot=1',
+        '修复旧版共享设备指纹：不再让命中的老用户共用同一 DeviceId / x86_64 / isRoot=1',
         '旧指纹启动时一次性迁移为唯一、自洽的新指纹，先备份，并强制重新登录',
         '设备指纹不合法（共享常量、x86_64、root、机型系统像素不一致）时拒绝保存/提交',
         'Android 和 iOS 的 appVersion / UA 对齐到当前官方 7.4.0',

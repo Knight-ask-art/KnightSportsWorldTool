@@ -3,68 +3,67 @@
   "app": "haoxiangpao",
   "name": "好想跑",
   "channel": "stable",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "min_version": "0.1.4",
-  "released_at": "2026-11-04T13:04:56+08:00",
+  "released_at": "2026-11-05T23:29:57+08:00",
   "notes": [
-    "登录前必须阅读并勾选《免责声明》，旧会话会退出一次并要求重新确认",
-    "登录页、侧栏和关于页固定显示「完全免费开源、禁止倒卖」提示",
-    "免责声明全文可在登录页和关于页打开，仅保留右上角关闭按钮",
-    "设置页把「真实性与兼容」改为「跑步数据效果」，常用项用直白说明",
-    "旧服务器兼容收进折叠的高级项，默认行为不变",
-    "海拔来源改为滑动切换；导航、跑步标签、弹窗和按钮加入纸墨风格动效",
-    "按钮、筛选和勾选框统一视觉，支持系统「减少动态效果」设置",
-    "修复浏览器自动填充/恢复复选框被误认为已同意免责声明的问题"
+    "修复旧版共享设备指纹：不再让命中的老用户共用同一 DeviceId / x86_64 / isRoot=1",
+    "旧指纹启动时一次性迁移为唯一、自洽的新指纹，先备份，并强制重新登录",
+    "设备指纹不合法（共享常量、x86_64、root、机型系统像素不一致）时拒绝保存/提交",
+    "Android 和 iOS 的 appVersion / UA 对齐到当前官方 7.4.0",
+    "修正 Android 登录前 tokenSign 应为空、iOS 布尔头线上被写成 False",
+    "只改设备身份但不重新登录的路径会被拦下，避免同一 token 中途换机",
+    "关于 v0.1.7 / v0.1.8 的环境异常与损失，作者已在发布说明中致歉"
   ],
   "assets": {
     "windows-x64": {
-      "file": "haoxiangpao_v0.1.8_win64.zip",
-      "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
-      "size": 83613602,
-      "sha256": "106e90e90949f9e821b1d6276d9923ab57b3b0f9127ebbf8964e632bbe15c785",
+      "file": "haoxiangpao_v0.1.9_win64.zip",
+      "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64.zip",
+      "size": 83643971,
+      "sha256": "4449bf91fe7f42749826288c1545965ae3b24091c0dfc4193c93530ab34eca99",
       "format": "zip",
       "layout": "onedir",
       "entry": "好想跑.exe",
-      "version": "0.1.8",
+      "version": "0.1.9",
       "urls": [
-        "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
-        "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
-        "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
-        "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip"
+        "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64.zip",
+        "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64.zip",
+        "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64.zip",
+        "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64.zip"
       ]
     },
     "windows-x64-setup": {
-      "file": "haoxiangpao_v0.1.8_win64_setup.exe",
-      "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64_setup.exe",
-      "size": 59461203,
-      "sha256": "ca90e81f7c6408166aa07b2222e844a49cad06a2b3b7df9d707556f69fd14a4c",
+      "file": "haoxiangpao_v0.1.9_win64_setup.exe",
+      "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64_setup.exe",
+      "size": 59480600,
+      "sha256": "8c0a589c7e67de3adea1cc2b0c75d024c7d525053f1d34b0107f6648643531f7",
       "format": "installer",
       "layout": "installer",
       "entry": "好想跑.exe",
-      "version": "0.1.8",
+      "version": "0.1.9",
       "urls": [
-        "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64_setup.exe",
-        "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64_setup.exe",
-        "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64_setup.exe",
-        "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64_setup.exe"
+        "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64_setup.exe",
+        "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64_setup.exe",
+        "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64_setup.exe",
+        "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64_setup.exe"
       ]
     }
   },
   "generated_by": "packaging/make_latest.py",
   "rollback": {
-    "file": "haoxiangpao_v0.1.7_win64.zip",
-    "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.7/haoxiangpao_v0.1.7_win64.zip",
-    "size": 83263691,
-    "sha256": "7f237bab83952f266189b1a8acc0064ee90aed70ae5855b40adf6359124edf91",
+    "file": "haoxiangpao_v0.1.8_win64.zip",
+    "url": "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
+    "size": 83613602,
+    "sha256": "106e90e90949f9e821b1d6276d9923ab57b3b0f9127ebbf8964e632bbe15c785",
     "format": "zip",
     "layout": "onedir",
     "entry": "好想跑.exe",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "urls": [
-      "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.7/haoxiangpao_v0.1.7_win64.zip",
-      "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.7/haoxiangpao_v0.1.7_win64.zip",
-      "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.7/haoxiangpao_v0.1.7_win64.zip",
-      "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.7/haoxiangpao_v0.1.7_win64.zip"
+      "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
+      "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
+      "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip",
+      "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.8/haoxiangpao_v0.1.8_win64.zip"
     ]
   }
 }
