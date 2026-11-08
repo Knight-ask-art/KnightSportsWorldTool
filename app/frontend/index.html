@@ -8,6 +8,9 @@
      paint.  The server generates this route from data/ui_state.json; an empty
      or invalid file leaves the default paper skin in place. -->
 <script src="/theme-boot.js"></script>
+<!-- If the theme-boot route is blocked by a proxy, use the last local choice
+     before the stylesheets paint instead of flashing the paper skin. -->
+<script>try{if(!document.documentElement.getAttribute('data-skin-source')){var s=localStorage.getItem('hxp_skin');if(s)document.documentElement.setAttribute('data-skin',s);}}catch(e){}</script>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="logo-128.png">
 <!-- Fonts are bundled in css/fonts.css + fonts/ (ZCOOL XiaoWei, Patrick Hand,

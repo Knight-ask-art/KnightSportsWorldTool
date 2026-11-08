@@ -278,13 +278,18 @@ def _window_pairs(raw, errors: list | None = None) -> list[tuple[int, int]]:
                     record('时段缺少结束时间：%s' % value[-1])
                 return
             for item in value:
-                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    add(item[0], item[1])
+                if isinstance(item, (list, tuple)):
+                    if len(item) >= 2:
+                        add(item[0], item[1])
+                    else:
+                        walk(item)
                 elif isinstance(item, dict):
                     add(item.get('start', item.get('startTime')),
                         item.get('end', item.get('endTime')))
                 elif isinstance(item, str):
                     walk(item)
+                elif item is not None and str(item).strip():
+                    record('时段格式不对：%r' % (item,))
                 if len(out) >= MAX_WINDOWS * 2:
                     break
             return
@@ -305,6 +310,8 @@ def normalize_windows(raw, errors: list | None = None) -> list[dict]:
     the settings save path.
     """
     pairs = list(_window_pairs(raw, errors))
+    if errors is not None and len(pairs) > MAX_WINDOWS:
+        errors.append('最多支持 %d 个有效时段' % MAX_WINDOWS)
     seen = set()
     out = []
     for a, b in sorted(pairs):
@@ -454,6 +461,25 @@ def resolve_start_ms(days_ago: int = 0, hhmm: str | None = None,
         school_windows = [{'start': SELECT_START, 'end': SELECT_END}]
     label = format_windows(school_windows) or '09:00–22:00'
 
+    # Validate an explicit clock before building slots.  Otherwise a time that
+    # is simply not in any band (or has not arrived yet today) is misreported
+    # as "today has no room left".
+    explicit_raw = None
+    explicit_start = None
+    if hhmm is not None and str(hhmm).strip():
+        explicit_raw = str(hhmm).strip()
+        explicit_minutes = _clock_minutes(explicit_raw)
+        explicit_start = _dt.datetime.combine(
+            day, _dt.time(explicit_minutes // 60, explicit_minutes % 60),
+            tzinfo=BEIJING)
+        if using_school and not in_windows(explicit_raw, school_windows):
+            raise ValueError('开始时间必须在学校的有效时段内（当前 %s；'
+                             '可用：%s）' % (explicit_raw, label))
+        if not using_school and (explicit_minutes < 9 * 60
+                                 or explicit_minutes > 22 * 60):
+            raise ValueError('开始时间必须在 09:00–22:00 之间（当前 %s）'
+                             % explicit_raw)
+
     # Build the actually usable slots for this date.  A slot ends at the band
     # end, or at "now" for today, minus the run duration.
     slots = []
@@ -477,41 +503,47 @@ def resolve_start_ms(days_ago: int = 0, hhmm: str | None = None,
             slots.append((lo, latest_start))
 
     if not slots:
+        if n == 0 and explicit_start is not None and explicit_start > now_bj:
+            raise ValueError('今天 %s 还没到（现在 %s）'
+                             % (explicit_raw, now_bj.strftime('%H:%M')))
+        if n == 0 and explicit_start is not None and (
+                explicit_start + duration > now_bj):
+            raise ValueError('这个时间结束时已经超过现在（现在 %s），'
+                             '请提前开始' % now_bj.strftime('%H:%M'))
         if n == 0:
+            now_min = now_bj.hour * 60 + now_bj.minute
+            starts = [_window_minutes(w['start']) for w in school_windows]
+            starts = [v for v in starts if v is not None]
+            if starts and min(starts) > now_min:
+                raise ValueError(
+                    '今天有效时段还没开始（最早 %s，现在 %s）；'
+                    '请到时间后再试，或改选昨天'
+                    % (_fmt_window_minutes(min(starts)),
+                       now_bj.strftime('%H:%M')))
             raise ValueError(
                 '今天已经放不下这次跑步（约 %d 分钟）；有效时段：%s。'
                 '请改选昨天或更早'
                 % (max(1, int(round(duration_ms / 60000.0))), label))
         raise ValueError('这次跑步太长，放不进有效时段：%s' % label)
 
-    if hhmm is not None and str(hhmm).strip():
-        raw = str(hhmm).strip()
-        minutes = _clock_minutes(raw)
-        start = _dt.datetime.combine(
-            day, _dt.time(minutes // 60, minutes % 60), tzinfo=BEIJING)
-        if using_school and not in_windows(raw, school_windows):
-            raise ValueError('开始时间必须在学校的有效时段内（当前 %s；'
-                             '可用：%s）' % (raw, label))
-        if not using_school and (minutes < 9 * 60 or minutes > 22 * 60):
-            raise ValueError('开始时间必须在 09:00–22:00 之间（当前 %s）'
-                             % raw)
+    if explicit_start is not None:
         chosen = None
         for lo, latest_start in slots:
-            if lo <= start <= latest_start:
+            if lo <= explicit_start <= latest_start:
                 chosen = latest_start
                 break
         if chosen is None:
-            if n == 0 and start > now_bj:
+            if n == 0 and explicit_start > now_bj:
                 raise ValueError('今天 %s 还没到（现在 %s）'
-                                 % (raw, now_bj.strftime('%H:%M')))
-            if n == 0 and start + duration > now_bj:
+                                 % (explicit_raw, now_bj.strftime('%H:%M')))
+            if n == 0 and explicit_start + duration > now_bj:
                 raise ValueError('这个时间结束时已经超过现在（现在 %s），'
                                  '请提前开始' % now_bj.strftime('%H:%M'))
             if using_school:
                 raise ValueError('这个时间结束会超过学校的有效时段（%s），'
                                  '请提前开始或换一个时段' % label)
             raise ValueError('这个时间结束会超过 22:00，请提前开始')
-        start_ms = int(start.timestamp() * 1000)
+        start_ms = int(explicit_start.timestamp() * 1000)
         return _jittered_start(start_ms, chosen, duration_ms)
 
     # Pick a slot weighted by its usable seconds so long bands are not

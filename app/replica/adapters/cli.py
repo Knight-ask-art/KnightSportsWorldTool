@@ -1161,10 +1161,13 @@ def main(argv=None, client_factory=None):
     # ---- local risk gate: daily cap + night window --------------------
     from ..application import limits
     if not args.no_limit:
+        start_hhmm = safety.to_beijing(ent['startTime']).strftime('%H:%M')
+        allow_school_night = bool(rules.get('windows')) and safety.in_windows(
+            start_hhmm, rules['windows'])
         refusal = limits.check(
             acct.uid, ent['startTime'],
             max_per_day=args.max_per_day,
-            block_night=not args.allow_night)
+            block_night=(not args.allow_night) and not allow_school_night)
         if refusal:
             return _fail(refusal + '（--no-limit 可完全关闭）', 4)
         st = limits.load(acct.uid, ent['startTime'])

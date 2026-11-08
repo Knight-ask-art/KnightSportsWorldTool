@@ -131,6 +131,9 @@ def _num(value, name, errors, integer=False):
     except (TypeError, ValueError):
         errors.append('%s 不是数字' % name)
         return None
+    if not math.isfinite(v):
+        errors.append('%s 必须是有限数字' % name)
+        return None
     if integer:
         if abs(v - round(v)) > 1e-6:
             errors.append('%s 必须是整数' % name)

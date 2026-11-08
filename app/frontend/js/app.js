@@ -1155,6 +1155,7 @@ function applySplitsToPace(){
   refreshParams();
   renderSplits();
   updateRunDateLabel();
+  if(typeof refreshChecks === 'function') refreshChecks();
   scheduleModelPreview();
 }
 
@@ -1557,7 +1558,10 @@ async function loadRealism(){
   if(!$('#realismStatus') || LIVE.realismLoading) return;
   LIVE.realismLoading = true;
   try{ await loadRealismInner(); }
-  finally{ LIVE.realismLoading = false; }
+  finally{
+    LIVE.realismLoading = false;
+    if(typeof updateRunDateLabel === 'function') updateRunDateLabel();
+  }
 }
 async function loadRealismInner(){
   const j = await liveMaybe('real_obs_key_mode', {}, 10000);
@@ -1633,6 +1637,7 @@ async function saveRealism(){
     if(!liveOk(j)){ toast('保存失败：' + bridgeMessage(j)); return; }
     LIVE.realism = want;
     await loadRealism();
+    if(typeof updateRunDateLabel === 'function') updateRunDateLabel();
     refreshModelPreview().catch(() => {});
     toast('已保存，之后生成的跑步数据会使用这些设置');
     liveLog('跑步数据效果已保存', jsonText(want).replace(/\s+/g, ' '), 'ok');
@@ -2771,7 +2776,8 @@ const LIVE = {
   routes: [], selectedRoute: -1,
   routeFilter: 'all', rules: null, rulesSyncedAt: 0, model: null, plan: null,
   modelWarnings: [],
-  runDate: null, daily: null, dailyCounts: {}, dailyCountsAt: 0,
+  runDate: null, runDateTouched: false, daily: null,
+  dailyCounts: {}, dailyCountsAt: 0,
   dailyCountsUid: null,
   recordsError: null, weekError: null, planError: null,
   semester: null, semesterError: null,
@@ -2806,7 +2812,8 @@ const SKIN_META = {
 };
 const SKIN_KEY = 'hxp_skin';
 function normalizeSkin(skin){
-  return SKIN_META[skin] ? skin : 'paper';
+  return Object.prototype.hasOwnProperty.call(SKIN_META, skin)
+    ? skin : 'paper';
 }
 function currentSkin(){
   return normalizeSkin(document.documentElement.getAttribute('data-skin'));
@@ -2856,6 +2863,7 @@ function refreshMapTheme(){
       }
     });
   }catch(e){}
+  try{ if(typeof paintDots === 'function') paintDots(); }catch(e){}
   refreshReplayColors();
   if(LIVE.replay && $('#replayModal') && !$('#replayModal').hidden){
     try{ replayDraw(); }catch(e){}
@@ -3926,6 +3934,7 @@ function refreshDateHeader(){
   _headerDay = bp.iso;
   if(!dayChanged || LOGIN.visible || !hasSession()) return;
   try{ closeDatePop(); }catch(e){}
+  if(!LIVE.runDateTouched) LIVE.runDate = beijingTodayKey();
   LIVE.daily = null;
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
   updateRunDateLabel();
@@ -6794,6 +6803,12 @@ async function loadRules(){
 async function saveRules(){
   if(accountBusy){ toast('正在登录，请稍候'); return; }
   if(LIVE.submitting){ toast('提交进行中，完成后再修改学校要求'); return; }
+  const rowCount = $('#windowRows')
+    ? $('#windowRows').querySelectorAll('.window-row').length : 0;
+  if(rowCount > 12){
+    toast('最多支持 12 个有效时段');
+    return;
+  }
   if(windowRowsInvalid()){
     toast('有效时段格式不对：要写成 HH:MM，结束要晚于开始');
     return;
@@ -6988,6 +7003,12 @@ function schoolWindows(){
   const rules = (LIVE.rules && LIVE.rules.configured) ? LIVE.rules.rules : null;
   return readWindowRowsFrom(rules);
 }
+function manualSplitMinutes(){
+  if(!splitsManual || !Array.isArray(splitRows) || !splitRows.length) return null;
+  const total = splitRows.reduce((sum, row) =>
+    sum + Math.max(0, +row.seconds || 0), 0);
+  return total > 0 ? total / 60 : null;
+}
 function selectedTimeInfo(){
   const key = LIVE.runDate || beijingTodayKey();
   const daysAgo = dateToDaysAgo(key);
@@ -6996,14 +7017,26 @@ function selectedTimeInfo(){
   // make the window check believe the run lasts zero minutes.
   const km = +$('#inKm').value || 0;
   const pace = +$('#inPace').value || 6;
-  const durMin = km * pace;
+  // Manual per-km splits are authoritative for the generated record; the
+  // average pace box must not make the slot check shorter than the submit.
+  const manualMin = manualSplitMinutes();
+  const durMin = manualMin != null ? manualMin : km * pace;
+  // Match the submit path: auto pause reserves up to 3 minutes (or 1.5 min for
+  // runs under 10 minutes).  The slot check must include that reserve.
+  let pauseReserveMin = 0;
+  try{
+    if(realismNow().pause_profile === 'auto'){
+      pauseReserveMin = (durMin * 60 >= 600) ? 3 : 1.5;
+    }
+  }catch(e){}
+  const slotMin = durMin + pauseReserveMin;
   const configured = schoolWindows();
   const usingSchool = configured.length > 0;
   const windows = usingSchool ? configured
     : [{start: '09:00', end: '22:00'}];
   const label = windowsText(windows) || '09:00–22:00';
   const out = {
-    date: key, daysAgo, raw, time: null, durMin, windows,
+    date: key, daysAgo, raw, time: null, durMin, slotMin, windows,
     dateOk: true, dateNote: dateDisplay(key),
     timeOk: true, timeNote: '', ok: true, note: ''
   };
@@ -7036,7 +7069,7 @@ function selectedTimeInfo(){
     const a = toMin(w.start), b = toMin(w.end);
     if(b <= a) return;
     const latestEnd = daysAgo === 0 ? Math.min(b, nowMin) : b;
-    const latestStart = latestEnd - durMin;
+    const latestStart = latestEnd - slotMin;
     if(latestStart >= a) slots.push({start: a, end: b, latestStart});
   });
   if(!slots.length){
@@ -7079,7 +7112,8 @@ function selectedTimeInfo(){
   }
   out.time = pad2(hh) + ':' + pad2(mm);
   out.timeNote = dateDisplay(key) + ' ' + out.time + ' 开始 · 约 ' +
-    Math.round(durMin) + ' 分钟';
+    Math.round(durMin) + ' 分钟' +
+    (pauseReserveMin ? (' · 预留暂停 ' + pauseReserveMin + ' 分钟') : '');
   out.note = out.timeNote;
   return out;
 }
@@ -7294,6 +7328,7 @@ function chooseRunDate(key){
   const n = dateToDaysAgo(key);
   if(n === null || n < 0 || n > 3) return;
   LIVE.runDate = key;
+  LIVE.runDateTouched = true;
   LIVE.daily = null;
   closeDatePop();
   updateRunDateLabel();
@@ -7867,7 +7902,9 @@ function liveDockClick(){
 function previewPendingFrom(params, ti, allReady){
   let di = dailyCountInfo();
   const dayText = dateDisplay(ti.date);
-  const timeText = ti.time || '09:00–22:00 内随机';
+  const timeText = ti.time || (ti.windows && ti.windows.length
+    ? ('留空 · 在 ' + windowsText(ti.windows) + ' 内随机')
+    : '09:00–22:00 内随机');
   const dailyText = di.loaded
     ? (di.count + ' / ' + (di.cap || '—') +
        (di.ok ? '' : '（已达上限，仅提醒）'))
@@ -9183,7 +9220,9 @@ function liveWire(){
     if(id === 'inKm' || id === 'inPace'){
       splitsManual = false; splitRows = null; splitAutoRows = []; renderSplits();
     }
-    updateRunDateLabel(); scheduleModelPreview();
+    updateRunDateLabel();
+    refreshChecks();
+    scheduleModelPreview();
   }));
   if($('#splitsList')){
     $('#splitsList').addEventListener('change', ev => {
@@ -9519,4 +9558,10 @@ document.addEventListener('keydown', ev => {
 setInterval(() => {
   if(document.visibilityState !== 'hidden') loadKeepalive();
   refreshDateHeader();
+  // Keep the "today, before now" slot valid while the page stays open.
+  const active = document.querySelector('.page.active');
+  if(active && active.id === 'page-run' && !LIVE.submitting){
+    updateRunDateLabel();
+    refreshChecks();
+  }
 }, 60000);

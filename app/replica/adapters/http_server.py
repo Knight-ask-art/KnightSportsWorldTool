@@ -95,18 +95,21 @@ def theme_boot_js(store_dir: str | None = None) -> str:
     """
     store = store_dir or STORE_DIR
     skin = P.DEFAULT_SKIN
+    loaded = False
     try:
         with open(os.path.join(store, 'ui_state.json'),
                   encoding='utf-8') as fh:
             data = json.load(fh)
-        if isinstance(data, dict):
+        if isinstance(data, dict) and 'skin' in data:
             skin = P.normalize_skin(data.get('skin'))
+            loaded = True
     except (OSError, ValueError):
         pass
+    source = ("r.setAttribute('data-skin-source','server');"
+              if loaded else '')
     return ("(function(){try{var r=document.documentElement;"
-            "r.setAttribute('data-skin',%s);"
-            "r.setAttribute('data-skin-source','server');"
-            "}catch(e){}})();\n" % json.dumps(skin))
+            "r.setAttribute('data-skin',%s);%s"
+            "}catch(e){}})();\n" % (json.dumps(skin), source))
 
 
 #: The bridge is loopback-only.  A Host/Origin from any other name is a
@@ -142,6 +145,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Content-Security-Policy', "frame-ancestors 'none'")
+        self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.end_headers()
         self.wfile.write(body)
@@ -212,6 +216,11 @@ class Handler(BaseHTTPRequestHandler):
             path = '/index.html'
         if path.startswith('/bridge/'):
             return self._json({'code': 500, 'message': 'use POST', 'data': None})
+        if path in ('/login-cover', '/login-cover.css', '/theme-boot.js'):
+            if not self._bridge_origin_ok():
+                return self._json({'code': 403,
+                                   'message': 'cross-origin rejected',
+                                   'data': None}, 403)
         if path == '/login-cover':
             return self._serve_login_cover()
         if path == '/login-cover.css':

@@ -39,9 +39,11 @@ param(
     [string]$MigrateDataFrom = '',
     [switch]$NoDataMigration,
     [string]$DownloadBaseUrl = '',
+    [string[]]$MirrorBaseUrl = @(),
     [string]$Channel = 'stable',
     [string]$RollbackVersion = '0.1.9',
     [string]$RollbackBaseUrl = '',
+    [string[]]$RollbackMirrorBaseUrl = @(),
     [ValidateSet('nuitka', 'pyinstaller')]
     [string]$Backend = 'nuitka',
     [switch]$NoInstaller,
@@ -49,6 +51,12 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ROOT = Split-Path $PSScriptRoot -Parent
+$NSI = Join-Path $PSScriptRoot 'installer.nsi'
+$NSI_HEAD = [IO.File]::ReadAllBytes($NSI) | Select-Object -First 3
+$HAS_BOM = ($NSI_HEAD.Length -eq 3) -and ($NSI_HEAD[0] -eq 0xEF) -and ($NSI_HEAD[1] -eq 0xBB) -and ($NSI_HEAD[2] -eq 0xBF)
+if (-not $HAS_BOM) {
+    throw 'installer.nsi must be saved as UTF-8 with BOM (EF BB BF)'
+}
 $DIST = Join-Path $ROOT 'dist'
 $WORK = Join-Path $ROOT 'build_tmp'
 $STAGE = Join-Path $ROOT 'build_stage'
@@ -313,8 +321,14 @@ $latestArgs = @($makeLatest, '--dist', $DIST, '--version', $Version,
 if ($DownloadBaseUrl) {
     $latestArgs += @('--base-url', $DownloadBaseUrl)
 }
+foreach ($mirror in $MirrorBaseUrl) {
+    if ($mirror) { $latestArgs += @('--mirror-base-url', $mirror) }
+}
 if ($RollbackBaseUrl) {
     $latestArgs += @('--rollback-base-url', $RollbackBaseUrl)
+}
+foreach ($mirror in $RollbackMirrorBaseUrl) {
+    if ($mirror) { $latestArgs += @('--rollback-mirror-base-url', $mirror) }
 }
 if ($setupBuilt) {
     $latestArgs += @('--setup', $setupBuilt)

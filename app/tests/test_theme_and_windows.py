@@ -45,6 +45,10 @@ def test_normalize_windows_accepts_server_shapes():
     assert safety.normalize_windows(
         ['06:00', '07:59', '09:01', '11:59']) == BANDS[:2]
     assert safety.normalize_windows(['06：00-07：59']) == [BANDS[0]]
+    late = safety.normalize_windows(['06:00-24:00'])
+    assert late == [{'start': '06:00', 'end': '24:00'}]
+    assert safety.in_windows('23:30', late)
+    assert safety.run_fits_window('23:30', 20, late)
 
 
 def test_policy_maps_every_band_and_writes_an_envelope():
@@ -126,6 +130,26 @@ def test_qualification_accepts_a_later_band():
     assert '放不进' in check['detail']
 
 
+def test_today_future_time_reports_not_arrived():
+    today = dt.datetime.now(BEIJING).date()
+    now = dt.datetime.combine(today, dt.time(13, 0), tzinfo=BEIJING)
+    try:
+        safety.resolve_start_ms(
+            date=today.isoformat(), hhmm='16:00', duration_s=900,
+            now=int(now.timestamp() * 1000), windows=BANDS)
+    except ValueError as exc:
+        assert '还没到' in str(exc)
+    else:
+        raise AssertionError('future time should be rejected with a specific reason')
+
+
+def test_over_limit_windows_are_reported():
+    errors = []
+    safety.normalize_windows(
+        [{'start': '06:00', 'end': '07:00'}] * 13, errors)
+    assert any('12' in e for e in errors), errors
+
+
 def test_resolve_start_uses_windows_and_rejects_gaps():
     now = _now()
     start = safety.resolve_start_ms(date=_day_ago_key(), hhmm='18:00',
@@ -151,6 +175,22 @@ def test_empty_random_stays_inside_a_band():
         assert safety.in_windows(hhmm, BANDS), hhmm
 
 
+def test_nan_rules_are_rejected():
+    _, errors = qualification.normalize_rules({'min_km': 'nan'})
+    assert errors and '有限' in '；'.join(errors)
+    _, errors = qualification.normalize_rules({'max_per_day': 'inf'})
+    assert errors
+
+
+def test_nested_bad_window_is_reported():
+    errors = []
+    safety.normalize_windows([[['10:00', '11:00']]], errors)
+    assert not errors   # a one-item wrapper around a valid pair is accepted
+    errors = []
+    safety.normalize_windows([[['10:00']]], errors)
+    assert errors
+
+
 def test_bad_window_rows_are_rejected_not_silently_deleted():
     rules, errors = qualification.normalize_rules({
         'windows': [{'start': '06:00'}, {'start': '09:01', 'end': '11:59'}]
@@ -169,6 +209,22 @@ def test_save_rejects_bad_window_rows(tmp_path, monkeypatch):
         assert '缺少结束时间' in str(exc)
     else:
         raise AssertionError('malformed window row was saved silently')
+
+
+def test_upgrade_migrates_old_single_window_and_keeps_downgrade_envelope(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv('JHP_DATA_DIR', str(tmp_path))
+    old = {'min_km': 2.0, 'window_start': '06:00', 'window_end': '07:59',
+           'auto_fetch': True}
+    merged, changed = policy.merge_rules(
+        old, {'runRuleModel': {'validTime': BANDS}})
+    assert changed is True
+    saved = qualification.save_rules(merged)
+    assert saved['windows'] == BANDS
+    # A v0.1.9 client only reads these two fields; the envelope must accept
+    # every band even though it cannot see the gaps.
+    assert saved['window_start'] == '06:00'
+    assert saved['window_end'] == '22:00'
 
 
 def test_rules_roundtrip_keeps_windows(tmp_path, monkeypatch):
@@ -199,6 +255,21 @@ def test_theme_boot_reads_ui_state(tmp_path):
     script = http_server.theme_boot_js(str(tmp_path))
     assert 'data-skin' in script and '"archive"' in script
     assert "data-skin-source" in script
+
+    (tmp_path / 'ui_state.json').write_text('{broken', encoding='utf-8')
+    fallback = http_server.theme_boot_js(str(tmp_path))
+    assert '"paper"' in fallback
+    assert 'data-skin-source' not in fallback
+
+    (tmp_path / 'ui_state.json').write_text(
+        '{"onboard_done": true}', encoding='utf-8')
+    no_skin = http_server.theme_boot_js(str(tmp_path))
+    assert 'data-skin-source' not in no_skin
+
+
+def test_installer_script_keeps_utf8_bom():
+    with open(os.path.join(ROOT, 'packaging', 'installer.nsi'), 'rb') as fh:
+        assert fh.read(3) == b'\xef\xbb\xbf'
 
 
 def test_index_loads_skin_system_before_styles():

@@ -1,4 +1,4 @@
-; 好想跑 Windows 安装包（NSIS 3.x）
+﻿; 好想跑 Windows 安装包（NSIS 3.x）
 ;
 ; 本文件必须保存为 **UTF-8 with BOM**。NSIS 只有在看到 BOM 时才按 UTF-8
 ; 解析脚本；没有 BOM 会把「好想跑」当成 ANSI，装出来的路径全是乱码。

@@ -139,10 +139,13 @@ html[data-skin="poster"] .brand-logo{
 }
 html[data-skin="poster"] .brand-logo img{filter:none}
 html[data-skin="poster"] .anti-resale{
+  background:rgba(242,200,75,.14);color:var(--ink);
+  border-left-color:var(--amber);
+}
+html[data-skin="poster"] .sidebar .anti-resale{
   background:rgba(242,200,75,.12);color:var(--paper-2);
   border-left-color:var(--highlighter);
 }
-html[data-skin="poster"] .anti-resale.side{color:var(--sidebar-ink)}
 html[data-skin="poster"] .user-name{color:var(--sidebar-ink)}
 html[data-skin="poster"] .user-meta,
 html[data-skin="poster"] .side-meta{color:var(--sidebar-muted)}
@@ -335,7 +338,7 @@ html[data-skin="poster"] .boot{
   --boot-paper-2:#fbf6ea;
   --boot-stamp:#d6472c;
   --boot-rule:rgba(17,17,15,.22);
-  --boot-faint:#7b7466;
+  --boot-faint:#6D6659;
   background:#f3eee3;
 }
 
@@ -446,7 +449,8 @@ html[data-skin="minimal"] .btn.primary::after{display:none}
 html[data-skin="minimal"] .btn.ghost{background:transparent}
 html[data-skin="minimal"] .btn:disabled,
 html[data-skin="minimal"] .btn.primary:disabled{
-  background:var(--paper-3);color:var(--faint);border-color:var(--rule);box-shadow:none;
+  opacity:1;background:var(--paper-3);color:var(--faint);
+  border-color:var(--rule);box-shadow:none;
 }
 html[data-skin="minimal"] .tag,
 html[data-skin="minimal"] .chip{
@@ -576,7 +580,7 @@ html[data-skin="minimal"] .boot{
   --boot-paper-2:#ffffff;
   --boot-stamp:#4f46e5;
   --boot-rule:rgba(17,17,19,.14);
-  --boot-faint:#8a8f98;
+  --boot-faint:#5F6B7A;
   background:#ffffff;
 }
 
@@ -824,8 +828,35 @@ html[data-skin="archive"] .boot{
   --boot-paper-2:#f4ebdd;
   --boot-stamp:#a6402f;
   --boot-rule:rgba(42,37,32,.2);
-  --boot-faint:#8a7c66;
+  --boot-faint:#6B5F4E;
   background:#e8deca;
+}
+
+/* Small copy and secondary labels must not disappear on any skin. */
+.boot .acc-hint{color:var(--boot-faint)}
+.sidebar .nav-label{color:var(--sidebar-muted)}
+.dp-canvas .dp-axis{fill:var(--faint)}
+#map{background:var(--paper-3)}
+
+/* Neutralise the warm paper tints that would otherwise leak into the
+   monochrome skin on secondary panels and hover states. */
+html[data-skin="minimal"] .param-hero,
+html[data-skin="minimal"] .today-panel,
+html[data-skin="minimal"] .split-mode,
+html[data-skin="minimal"] .map-chip,
+html[data-skin="minimal"] .callout,
+html[data-skin="minimal"] .onboard-tip,
+html[data-skin="minimal"] .mode-help,
+html[data-skin="minimal"] .toggle-row,
+html[data-skin="minimal"] .pt-mini,
+html[data-skin="minimal"] .run-log pre{
+  background:var(--paper-3);border-color:var(--rule);
+}
+html[data-skin="minimal"] .check-row[data-goto]:hover,
+html[data-skin="minimal"] .simple-table .trow:hover,
+html[data-skin="minimal"] .route-item:hover,
+html[data-skin="minimal"] .filter:hover{
+  background:var(--paper-3);
 }
 
 /* ---------- skin chooser (settings) ------------------------------------- */

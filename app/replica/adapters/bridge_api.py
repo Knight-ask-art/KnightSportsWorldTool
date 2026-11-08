@@ -2414,7 +2414,10 @@ class ReplicaApi:
 
     def save_school_rules(self, rules=None, **kw):
         from ..application import qualification as Q
-        payload = dict(rules or {})
+        try:
+            payload = dict(rules or {})
+        except (TypeError, ValueError):
+            return _fail('学校要求必须是对象')
         payload.update(kw)
         try:
             clean = Q.save_rules(payload)
@@ -3279,13 +3282,17 @@ class ReplicaApi:
         data = raw if isinstance(raw, dict) else {}
         from ..application import preferences as P
         prefs = data.get('run_area_choice')
+        try:
+            disclaimer_version = int(data.get('disclaimer_version') or 0)
+        except (TypeError, ValueError, OverflowError):
+            disclaimer_version = 0
         return _ok({
             'onboard_done': bool(data.get('onboard_done')),
             'post_submit_route_action': str(
                 data.get('post_submit_route_action') or 'ask'),
             'onboard_done_at': data.get('onboard_done_at') or '',
             'run_area_choice': prefs if isinstance(prefs, dict) else {},
-            'disclaimer_version': int(data.get('disclaimer_version') or 0),
+            'disclaimer_version': disclaimer_version,
             'disclaimer_accepted_at': str(
                 data.get('disclaimer_accepted_at') or ''),
             'skin': P.normalize_skin(data.get('skin')),
@@ -3318,7 +3325,7 @@ class ReplicaApi:
                     continue
                 try:
                     stored[session_key] = int(value)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     return _fail('跑区 id 无效: %r' % (value,))
             data['run_area_choice'] = stored
         if disclaimer_version is not None:
@@ -3326,7 +3333,7 @@ class ReplicaApi:
                 return _fail('disclaimer_version 必须是整数')
             try:
                 version = int(disclaimer_version)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return _fail('disclaimer_version 必须是整数')
             if version < 0:
                 return _fail('disclaimer_version 不能为负数')
@@ -4024,6 +4031,8 @@ class ReplicaApi:
         rules = Q.load_rules()
         rules, rules_refreshed = POL.merge_rules(rules, policy_data)
         if rules_refreshed:
+            submit_notes.append(
+                '已按服务器最新规则刷新学校要求（手动保存的规则不会被自动覆盖）')
             try:
                 Q.save_rules(rules)
             except Exception:  # noqa: BLE001
@@ -4045,8 +4054,11 @@ class ReplicaApi:
         # hard block here.  The cap is a *reminder* in the model; the operator
         # may still have a legitimate reason to submit (and the server decides).
         from ..application import limits as L
+        start_hhmm = S.to_beijing(start_ms).strftime('%H:%M')
+        allow_night = bool(rules.get('windows')) and S.in_windows(
+            start_hhmm, rules['windows'])
         refusal = L.check(acct.uid, start_ms, max_per_day=0,
-                          block_night=True)
+                          block_night=not allow_night)
         if refusal:
             return _fail(refusal, data={'start': {
                 'ms': start_ms, 'text': S.fmt_beijing(start_ms),
