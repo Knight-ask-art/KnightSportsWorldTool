@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>好想跑 · 工作台</title>
+<!-- Runs before the stylesheets so the saved skin is on <html> for the first
+     paint.  The server generates this route from data/ui_state.json; an empty
+     or invalid file leaves the default paper skin in place. -->
+<script src="/theme-boot.js"></script>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="logo-128.png">
 <!-- Fonts are bundled in css/fonts.css + fonts/ (ZCOOL XiaoWei, Patrick Hand,
@@ -12,6 +16,7 @@
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/splash.css">
+<link rel="stylesheet" href="css/skins.css">
 <!-- The server injects the stored login cover here (an empty file when there
      is none), so the first paint already has the right image: no default-cover
      flash under ?boot=0 or prefers-reduced-motion. -->
@@ -152,7 +157,7 @@
       <p class="anti-resale login">本项目完全免费开源。若您付费购买，请立即申请退款并举报商家。</p>
     </form>
 
-    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.1.9</span></div>
+    <div class="login-foot">好想跑 · 本地工作台 · <span id="loginVersion">v0.2.0</span></div>
   </section>
 </div>
 
@@ -248,7 +253,7 @@
         </div>
       </div>
       <div class="side-meta-row">
-        <div class="side-meta" id="sideVersion">v0.1.9</div>
+        <div class="side-meta" id="sideVersion">v0.2.0</div>
         <button class="update-btn" id="updateBtn" type="button" hidden
                 title="发现新版本" aria-label="发现新版本">
           <svg class="bi" aria-hidden="true"><use href="#bi-cloud-arrow-down"></use></svg>
@@ -1162,10 +1167,44 @@
         <header class="page-head">
           <div class="crumb">系统 <span style="color:var(--faint)">/</span> <b>设置</b></div>
           <div class="head-row">
-            <h1>设置<span class="date">v0.1.9</span></h1>
+            <h1>设置<span class="date">v0.2.0</span></h1>
           </div>
 
         </header>
+
+        <section class="sec" id="appearanceSection">
+          <div class="sec-head">
+            <h2>外观</h2>
+            <span class="mini" id="skinStatus">纸感手账</span>
+          </div>
+          <p class="hint" style="margin:-4px 0 9px">整套视觉皮肤，会同时更换字体、卡片、纹理和强调色；不改布局，也不影响账号、跑步数据或提交内容。</p>
+          <div class="skin-grid" id="skinGrid" role="radiogroup" aria-label="外观主题">
+            <button type="button" class="skin-card" data-skin="paper" role="radio" aria-checked="true">
+              <span class="skin-preview" aria-hidden="true"><span class="sp-side"></span><span class="sp-main"><span class="sp-line w72"></span><span class="sp-line w46"></span><span class="sp-cards"><i></i><i></i></span></span></span>
+              <span class="skin-meta"><b>纸感手账</b><small>暖纸 · 手写 · 荧光笔</small></span>
+              <span class="skin-mark">已选</span>
+            </button>
+            <button type="button" class="skin-card" data-skin="poster" role="radio" aria-checked="false">
+              <span class="skin-preview" aria-hidden="true"><span class="sp-side"></span><span class="sp-main"><span class="sp-line w58"></span><span class="sp-line w78"></span><span class="sp-cards"><i></i><i></i></span></span></span>
+              <span class="skin-meta"><b>赛场海报</b><small>粗体 · 硬边 · 信号红</small></span>
+              <span class="skin-mark">已选</span>
+            </button>
+            <button type="button" class="skin-card" data-skin="minimal" role="radio" aria-checked="false">
+              <span class="skin-preview" aria-hidden="true"><span class="sp-side"></span><span class="sp-main"><span class="sp-line w64"></span><span class="sp-line w38"></span><span class="sp-cards"><i></i><i></i></span></span></span>
+              <span class="skin-meta"><b>极简白</b><small>留白 · 细线 · 单强调色</small></span>
+              <span class="skin-mark">已选</span>
+            </button>
+            <button type="button" class="skin-card" data-skin="archive" role="radio" aria-checked="false">
+              <span class="skin-preview" aria-hidden="true"><span class="sp-side"></span><span class="sp-main"><span class="sp-line w50"></span><span class="sp-line w70"></span><span class="sp-cards"><i></i><i></i></span></span></span>
+              <span class="skin-meta"><b>复古档案</b><small>牛皮纸 · 打字机 · 红章</small></span>
+              <span class="skin-mark">已选</span>
+            </button>
+          </div>
+          <div class="form-actions">
+            <button class="btn small ghost" id="skinReset">恢复默认</button>
+            <span class="hint" id="skinHint" style="margin:0">切换后立即生效，自动保存在本机。</span>
+          </div>
+        </section>
 
         <section class="sec" id="rulesSection">
           <div class="sec-head">
@@ -1186,8 +1225,16 @@
             <div class="field-line"><label for="rMaxDay">学校允许每日次数</label><input id="rMaxDay" placeholder="留空=不要求"></div>
             <div class="field-line"><label for="rStepMin">步频下限（spm）</label><input id="rStepMin" placeholder="留空=不要求"></div>
             <div class="field-line"><label for="rStepMax">步频上限（spm）</label><input id="rStepMax" placeholder="留空=不要求"></div>
-            <div class="field-line"><label for="rWinStart">有效时间窗开始</label><input id="rWinStart" placeholder="HH:MM（可留空）"></div>
-            <div class="field-line"><label for="rWinEnd">有效时间窗结束</label><input id="rWinEnd" placeholder="HH:MM（可留空）"></div>
+            <div class="field-line window-field">
+              <label>有效时间段</label>
+              <div class="window-editor">
+                <div class="window-rows" id="windowRows"></div>
+                <div class="window-actions">
+                  <button type="button" class="btn small ghost" id="addWindow">+ 添加时间段</button>
+                  <span class="field-note">开始时间必须落在任一时段内；留空会在这些时段内随机。</span>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="form-actions">
             <button class="btn small primary" id="saveRules">保存要求</button>
@@ -1302,7 +1349,7 @@
         <section class="sec">
           <div class="sec-head"><h2>关于</h2></div>
           <div class="anti-resale" id="antiResaleAbout">本项目完全免费开源。若您付费购买，请立即申请退款并举报商家。</div>
-          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.1.9</span></div>
+          <div class="detail-row"><span>版本</span><span id="aboutVersion">v0.2.0</span></div>
           <div class="detail-row"><span>构建</span><span id="aboutBuild">—</span></div>
           <div class="detail-row"><span>更新</span><span id="updateState">未检查</span></div>
           <div class="form-actions" style="margin-top:8px">

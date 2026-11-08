@@ -32,8 +32,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0/haoxiangpao_v0.2.0_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0/haoxiangpao_v0.2.0_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases"><img alt="All Releases" src="https://img.shields.io/badge/All-Releases-6F695C?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
@@ -56,8 +56,8 @@
 
 | 项目 | 当前状态 |
 |---|---|
-| 版本 | **v0.1.9** · stable · 2026-11-05 |
-| 回滚版本 | v0.1.8 |
+| 版本 | **v0.2.0** · stable · 2026-11-08 |
+| 回滚版本 | v0.1.9 |
 | 系统 | Windows 10 / 11 · 64 位 |
 | 兼容 | 运动世界校园（各校规则不同） |
 | 网络 | 本机 `127.0.0.1` 工作台；提交直连官方服务 |
@@ -105,11 +105,11 @@
 ## 界面
 
 <p align="center">
-  <img src="assets/login.webp" alt="好想跑 v0.1.8 登录页" width="86%">
+  <img src="assets/login.webp" alt="好想跑 登录页" width="86%">
 </p>
 
 <p align="center">
-  <sub>v0.1.8 实拍：登录前免责声明确认、免费 / 防倒卖提示</sub>
+  <sub>登录前免责声明确认、免费 / 防倒卖提示</sub>
 </p>
 
 ---
@@ -138,11 +138,11 @@ flowchart LR
 
 ### 安装版（推荐）
 
-下载 `haoxiangpao_v0.1.9_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
+下载 `haoxiangpao_v0.2.0_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
 
 ### 便携版
 
-下载 `haoxiangpao_v0.1.9_win64.zip`，解压后双击 `好想跑.exe`。
+下载 `haoxiangpao_v0.2.0_win64.zip`，解压后双击 `好想跑.exe`。
 
 > [!WARNING]
 > 便携版要整个文件夹一起用。`好想跑.exe` 旁边的依赖文件不要删，也别只把 exe 拖出来。
@@ -160,7 +160,7 @@ flowchart LR
 例如安装版：
 
 ```text
-https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9/haoxiangpao_v0.1.9_win64_setup.exe
+https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0/haoxiangpao_v0.2.0_win64_setup.exe
 ```
 
 ---
@@ -173,7 +173,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 4. `data/` 会自动出现，里面是登录状态、回执、限额、设备信息和点位缓存。想彻底重置就整个删掉，下次重新登录。
 
 > [!NOTE]
-> 从 v0.1.8 第一次升级到 v0.1.9 时，如果本机是旧版共享设备指纹，程序会生成独立指纹并退出一次登录；`data/` 不会删除，提交回执、限额、点位缓存都会保留，旧指纹备份在 `data/device_profile.backup-*.json`。重新登录即可。之前已经接受过《免责声明》的，接受状态保留；没有接受过的仍需勾选。
+> 从 v0.1.9 升级到 v0.2.0 不会强制退出登录，也不会删除 `data/`、回执、限额或点位缓存。升级后会在后台从服务器刷新学校有效时段；旧版单时段配置会自动迁移成多行。之前已经接受过《免责声明》的，接受状态保留。
 
 ---
 
@@ -189,7 +189,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 | 场景 | 做法 |
 |---|---|
 | 手动升级 | 下载新安装包 / zip，覆盖旧目录，`data/` 留着别删 |
-| 回滚到 v0.1.8 | 下载回滚包覆盖安装；设备指纹和 `data/` 兼容，登录状态保留。若刚升级 v0.1.9 还没重新登录，回退后仍需登录一次 |
+| 回滚到 v0.1.9 | 下载回滚包覆盖安装；设备指纹和 `data/` 兼容，登录状态保留。新保存的多时段规则在 v0.1.9 里会按最外层时段读取，可能会放宽校验 |
 | 完整性 | 安装包和 zip 都会校验；校验不过会自动换镜像 |
 | 更新清单 | 程序自动读取，普通使用不用管 |
 
@@ -246,9 +246,9 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 </details>
 
 <details>
-<summary><b>升级到 0.1.9 后要重新登录</b></summary>
+<summary><b>升级到 0.2.0：外观与学校时段</b></summary>
 
-v0.1.9 会迁移旧版共享设备指纹：如果本机还是旧指纹，会生成独立指纹并退出一次登录，旧指纹自动备份。`data/`、回执和点位缓存都不会丢；重新登录后即可继续使用。
+v0.2.0 不会强制退出登录。设置 → 外观新增 4 套整套皮肤，点击即生效并保存在本机；学校有效时段改为多行，登录后会从服务器刷新。旧版单时段配置会自动迁移，`data/`、回执和点位缓存都不会丢。
 </details>
 
 <details>

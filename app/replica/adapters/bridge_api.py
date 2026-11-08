@@ -3277,6 +3277,7 @@ class ReplicaApi:
         """
         raw = _read_json(self._ui_state_path(), {})
         data = raw if isinstance(raw, dict) else {}
+        from ..application import preferences as P
         prefs = data.get('run_area_choice')
         return _ok({
             'onboard_done': bool(data.get('onboard_done')),
@@ -3287,10 +3288,12 @@ class ReplicaApi:
             'disclaimer_version': int(data.get('disclaimer_version') or 0),
             'disclaimer_accepted_at': str(
                 data.get('disclaimer_accepted_at') or ''),
+            'skin': P.normalize_skin(data.get('skin')),
         })
 
     def real_set_ui_state(self, onboard_done=None, post_submit_route_action=None,
-                          run_area_choice=None, disclaimer_version=None):
+                          run_area_choice=None, disclaimer_version=None,
+                          skin=None):
         path = self._ui_state_path()
         raw = _read_json(path, {})
         data = raw if isinstance(raw, dict) else {}
@@ -3334,6 +3337,12 @@ class ReplicaApi:
                 data['disclaimer_version'] = version
                 data['disclaimer_accepted_at'] = time.strftime(
                     '%Y-%m-%d %H:%M:%S')
+        if skin is not None:
+            from ..application import preferences as P
+            value = str(skin or '').strip().lower()
+            if value not in P.SKINS:
+                return _fail('未知外观主题: %s' % value)
+            data['skin'] = value
         try:
             _write_json(path, data)
         except OSError as e:
@@ -3644,9 +3653,11 @@ class ReplicaApi:
             duration_s = float(km) * float(pace) * 60.0
             duration_s += estimate_pause_seconds(
                 pause_profile, None, int(duration_s))
+            rules = Q.load_rules()
             try:
-                start_ms = S.resolve_start_ms(days_ago, start_time, duration_s,
-                                              date=date)
+                start_ms = S.resolve_start_ms(
+                    days_ago, start_time, duration_s, date=date,
+                    windows=rules.get('windows'))
             except ValueError as e:
                 return _fail('开始时间无效: %s' % e)
             try:
@@ -3683,7 +3694,7 @@ class ReplicaApi:
                     daily_runs = int(daily_runs)
                 except (TypeError, ValueError):
                     daily_runs, daily_source = None, 'unknown'
-            model = Q.evaluate(run, Q.load_rules(),
+            model = Q.evaluate(run, rules,
                                checkpoints=cps or None,
                                daily_runs=daily_runs,
                                daily_source=daily_source)
@@ -4000,16 +4011,28 @@ class ReplicaApi:
                 wps = RT.smooth(wps, samples=8, closed=bool(closed))
         except Exception:  # noqa: BLE001
             pass
-        # The operator may backfill today .. 3 days ago, 09:00-22:00.  Resolve
-        # the slot before forging so every timestamp in the record agrees.
+        # The operator may backfill today .. 3 days ago.  Resolve the slot
+        # before forging so every timestamp in the record agrees.  The school's
+        # validTime bands decide the allowed starts; merge the policy fetched
+        # above so a stale school_rules.json cannot reject a valid 18:00 run.
         from ..domain import safety as S
         from ..domain.rundata import estimate_pause_seconds
+        from ..application import qualification as Q
+        from ..application import policy as POL
+        rules = Q.load_rules()
+        rules, rules_refreshed = POL.merge_rules(rules, policy_data)
+        if rules_refreshed:
+            try:
+                Q.save_rules(rules)
+            except Exception:  # noqa: BLE001
+                pass
         duration_s = float(km) * float(pace) * 60.0
         duration_s += estimate_pause_seconds(
             pause_profile, None, int(duration_s))
         try:
-            start_ms = S.resolve_start_ms(days_ago, start_time, duration_s,
-                                          date=date)
+            start_ms = S.resolve_start_ms(
+                days_ago, start_time, duration_s, date=date,
+                windows=rules.get('windows'))
         except ValueError as e:
             return _fail(f'开始时间无效: {e}')
         day_key = S.to_beijing(start_ms).strftime('%Y-%m-%d')
@@ -4100,22 +4123,12 @@ class ReplicaApi:
             except Exception as e:  # noqa: BLE001
                 return _fail('提交前围栏校验失败，已停止提交: %s' % e)
 
-        # User-entered school rules -> qualification model.  If the rules are
-        # incomplete the model stays silent; it never guesses a school's rules.
+        # User-entered school rules -> qualification model.  The rules were
+        # already merged with the fresh runModePolicy before start resolution;
+        # reuse that copy so the gate and the timestamp agree.
         from ..application import qualification as Q
         from ..application import policy as POL
         from ..application import readonly as RO
-        rules = Q.load_rules()
-        # `school_rules.json` is written once -- when Settings is first opened
-        # -- and never refreshed.  The gate below is only as good as those
-        # bands, so fold in the runModePolicy already fetched for this
-        # submission instead of trusting the file alone.
-        rules, rules_refreshed = POL.merge_rules(rules, policy_data)
-        if rules_refreshed:
-            try:
-                Q.save_rules(rules)
-            except Exception:  # noqa: BLE001
-                pass          # the gate still uses the fresh copy
         # The school's daily cap applies to the *run date*.  Prefer the
         # server's record list (it also sees other devices/app runs); the local
         # receipt counter is a lower bound but is not proof that the server
@@ -4142,8 +4155,9 @@ class ReplicaApi:
                              '服务端若按 runModePolicy 复核，可能判为不合格。')
             model.setdefault('warnings', []).insert(0, rules_warning)
         if model.get('configured') and model.get('verdict') == 'fail':
-            bad = [c['label'] + ' ' + c['value'] for c in model['checks']
-                   if c['status'] == 'fail']
+            bad = [c['label'] + ' ' + c['value'] +
+                   ('（' + c.get('detail') + '）' if c.get('detail') else '')
+                   for c in model['checks'] if c['status'] == 'fail']
             return _fail('合格模型未通过: %s' % '；'.join(bad),
                          data={'model': model,
                                'param_warnings': plausibility_warnings(pace, cadence)})

@@ -18,6 +18,7 @@ from ..build_info import app_root, is_compiled
 from ..compat.mocks.mock_65530 import MockBackendState, serve as serve_be
 from ..compat.mocks.mock_iydsj import MockIydsjState, serve as serve_iydsj
 from ..domain import crypto as C
+from ..application import preferences as P
 from .bridge_api import ReplicaApi
 
 
@@ -83,6 +84,28 @@ def login_cover_css(store_dir: str | None = None) -> str:
     if not stamp.isdigit():
         stamp = str(int(os.path.getmtime(img)))
     return '#loginGate{background-image:url("/login-cover?t=%s")}\n' % stamp
+
+def theme_boot_js(store_dir: str | None = None) -> str:
+    """First-paint skin script.
+
+    The saved skin lives in ``data/ui_state.json`` because localStorage is
+    scoped to the random localhost port.  This tiny script is linked before
+    the stylesheets, so the page never flashes the default paper skin before
+    the bridge call finishes.
+    """
+    store = store_dir or STORE_DIR
+    skin = P.DEFAULT_SKIN
+    try:
+        with open(os.path.join(store, 'ui_state.json'),
+                  encoding='utf-8') as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            skin = P.normalize_skin(data.get('skin'))
+    except (OSError, ValueError):
+        pass
+    return ("(function(){try{document.documentElement.setAttribute("
+            "'data-skin','%s');}catch(e){}})();\n" % skin)
+
 
 #: The bridge is loopback-only.  A Host/Origin from any other name is a
 #: DNS-rebinding attempt, even if the socket happened to accept it.
@@ -191,6 +214,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_login_cover()
         if path == '/login-cover.css':
             return self._serve_login_cover_css()
+        if path == '/theme-boot.js':
+            store = getattr(API, 'store_dir', None) or STORE_DIR
+            return self._send(theme_boot_js(store).encode('utf-8'),
+                              'text/javascript; charset=utf-8')
         # realpath + separator check: `str.startswith(FRONTEND_DIR)` also
         # accepts a sibling like `<...>/frontendX/secret`.
         full = static_file(path)

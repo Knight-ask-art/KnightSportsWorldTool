@@ -13,7 +13,7 @@ Hard gates (a failure blocks submission unless explicitly ignored):
   * distance inside [min_km, max_km]
   * average pace inside [pace_min, pace_max] min/km
   * duration inside [min_minutes, max_minutes]
-  * start time inside the configured window
+  * start time inside any configured validTime band
   * start date between today and 3 days ago (Beijing calendar days)
   * every checkpoint marked ``isPass``
 
@@ -41,6 +41,7 @@ The output is a plain dict so the CLI and the web UI can share it:
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import math
 import os
@@ -55,7 +56,7 @@ RULE_KEYS = (
     'min_km', 'max_km', 'pace_min', 'pace_max',
     'min_minutes', 'max_minutes', 'max_per_day',
     'step_min', 'step_max',
-    'window_start', 'window_end',
+    'window_start', 'window_end', 'windows',
 )
 REQUIRED = RULE_KEYS  # backward-compatible name for older callers
 
@@ -65,7 +66,7 @@ DEFAULT_RULES = {
     'min_minutes': None, 'max_minutes': None,
     'max_per_day': None,
     'step_min': None, 'step_max': None,
-    'window_start': '', 'window_end': '',
+    'window_start': '', 'window_end': '', 'windows': [],
     'school': '', 'campus': '',
     # True means: if the operator has never configured rules, the UI may fill
     # them from the server.  Explicitly saving an empty form sets it False so
@@ -177,8 +178,25 @@ def normalize_rules(raw: dict) -> tuple[dict, list[str]]:
                              integer=True)
     out['step_min'] = _num(raw.get('step_min'), '步频下限', errors)
     out['step_max'] = _num(raw.get('step_max'), '步频上限', errors)
-    out['window_start'] = _clock(raw.get('window_start'), '时间窗开始', errors)
-    out['window_end'] = _clock(raw.get('window_end'), '时间窗结束', errors)
+
+    # Canonical multi-band field.  Older files only have one pair; migrate
+    # that pair into the list so the evaluation path is the same for both.
+    windows = safety.normalize_windows(raw.get('windows'))
+    legacy_start = _clock(raw.get('window_start'), '时间窗开始', errors)
+    legacy_end = _clock(raw.get('window_end'), '时间窗结束', errors)
+    if not windows and legacy_start and legacy_end:
+        windows = safety.normalize_windows(
+            [{'start': legacy_start, 'end': legacy_end}])
+    if windows:
+        out['windows'] = windows
+        env_start, env_end = safety.windows_envelope(windows)
+        # Keep the legacy pair as an outer envelope for v0.1.x clients.
+        out['window_start'] = env_start
+        out['window_end'] = env_end
+    else:
+        out['windows'] = []
+        out['window_start'] = legacy_start
+        out['window_end'] = legacy_end
 
     for key, label in (
         ('min_km', '最低距离'), ('max_km', '最高距离'),
@@ -212,11 +230,16 @@ def is_configured(rules: dict | None) -> bool:
     """Any non-empty rule enables the model; blank fields are “未要求”."""
     if not isinstance(rules, dict):
         return False
-    return any(
-        rules.get(key) is not None
-        and not (isinstance(rules.get(key), str) and not rules.get(key).strip())
-        for key in RULE_KEYS
-    )
+    for key in RULE_KEYS:
+        value = rules.get(key)
+        if key == 'windows':
+            if safety.normalize_windows(value):
+                return True
+            continue
+        if value is not None and not (
+                isinstance(value, str) and not value.strip()):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +420,17 @@ def evaluate(run: dict, rules: dict, checkpoints: list | None = None,
         add('duration', '时长', 'pass' if time_ok else 'fail',
             '%.0f 分' % m['minutes'], detail, True)
 
+    windows = safety.normalize_windows(rules.get('windows'))
     ws, we = rules['window_start'], rules['window_end']
-    if not ws and not we:
+    if windows:
+        if not m['start_hhmm']:
+            window_ok = False
+        else:
+            window_ok = safety.in_windows(m['start_hhmm'], windows)
+        detail = '要求 ' + safety.format_windows(windows)
+        add('window', '开始时间', 'pass' if window_ok else 'fail',
+            m['start_hhmm'] or '—', detail, True)
+    elif not ws and not we:
         add('window', '开始时间', 'skip', '—', '学校未填写时间窗要求')
     else:
         if not m['start_hhmm']:
@@ -608,6 +640,45 @@ def self_test() -> list[tuple[str, bool, str]]:
                         for c in partial_model['checks'])
                 and any(c['status'] == 'skip' for c in partial_model['checks']),
                 partial_model['summary']))
+
+    # ---- multiple validTime bands ------------------------------------
+    bands = [
+        {'start': '06:00', 'end': '07:59'},
+        {'start': '09:01', 'end': '11:59'},
+        {'start': '13:01', 'end': '13:59'},
+        {'start': '15:01', 'end': '22:00'},
+    ]
+    multi = {'min_km': 2.0, 'windows': bands}
+    today_bj = safety.to_beijing(safety.now_ms()).replace(
+        second=0, microsecond=0) - _dt.timedelta(days=1)
+    late = today_bj.replace(hour=18, minute=0)
+    late_run = rundata.generate_run_data(
+        2.5, 6.0, 150, center_lat=22.4108, center_lng=112.9408,
+        start_ms=int(late.timestamp() * 1000))
+    late_model = evaluate(late_run, multi, daily_runs=0)
+    late_check = [c for c in late_model['checks'] if c['id'] == 'window']
+    out.append(('18:00 passes a later validTime band',
+                late_model['verdict'] != 'fail' and late_check
+                and late_check[0]['status'] == 'pass',
+                late_check[:1]))
+    gap = today_bj.replace(hour=8, minute=30)
+    gap_run = rundata.generate_run_data(
+        2.5, 6.0, 150, center_lat=22.4108, center_lng=112.9408,
+        start_ms=int(gap.timestamp() * 1000))
+    gap_model = evaluate(gap_run, multi, daily_runs=0)
+    gap_check = [c for c in gap_model['checks'] if c['id'] == 'window']
+    out.append(('08:30 fails between bands',
+                gap_model['verdict'] == 'fail' and gap_check
+                and gap_check[0]['status'] == 'fail'
+                and '15:01–22:00' in gap_check[0]['detail'],
+                gap_check[:1]))
+    migrated, migrated_errors = normalize_rules(
+        {'window_start': '06:00', 'window_end': '07:59'})
+    out.append(('legacy single window migrates to windows',
+                not migrated_errors
+                and migrated.get('windows') == [
+                    {'start': '06:00', 'end': '07:59'}],
+                migrated.get('windows')))
 
     # ---- backfill date + daily cap -----------------------------------
     day_ok = evaluate(run, rules, daily_runs=1, daily_source='server')

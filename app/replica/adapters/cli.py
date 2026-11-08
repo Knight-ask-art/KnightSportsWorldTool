@@ -688,7 +688,8 @@ def main(argv=None, client_factory=None):
                        help='补跑日期：0=今天，1=昨天，最多 3 天前（北京时间）；'
                             '不填且不给 --time 时保持“以当前时间倒推”的旧行为')
     run_g.add_argument('--time', default=None, metavar='HH:MM',
-                       help='开始时间，必须在 09:00–22:00；不填则在该窗口内随机')
+                       help='开始时间；必须在学校有效时段内，未配置时按 '
+                            '09:00–22:00；不填则在这些时段内随机')
     run_g.add_argument('--policy', type=int, default=1)
 
     route = ap.add_argument_group('路线')
@@ -1011,11 +1012,16 @@ def main(argv=None, client_factory=None):
     # ---- backfill start time (optional) --------------------------------
     # With neither --days-ago nor --time the tool keeps its historical
     # behaviour: the run ends 1-5 s before "now".  Supplying either one opts
-    # into the 09:00-22:00 window (today .. 3 days ago).
+    # into the school's validTime bands (today .. 3 days ago); if no bands are
+    # configured, the historical 09:00-22:00 default is used.
     explicit_day = args.days_ago is not None
     explicit_time = args.time is not None and str(args.time).strip() != ''
     backfill = explicit_day or explicit_time
     resolved_start = None
+    from ..application import qualification as Q
+    from ..application import policy as POL
+    rules = Q.load_rules()
+    rules, _ = POL.merge_rules(rules, pol)
     if backfill:
         days_ago = 0 if args.days_ago is None else int(args.days_ago)
         try:
@@ -1030,7 +1036,8 @@ def main(argv=None, client_factory=None):
             int(duration_s))
         try:
             resolved_start = safety.resolve_start_ms(
-                days_ago, args.time, duration_s)
+                days_ago, args.time, duration_s,
+                windows=rules.get('windows'))
         except ValueError as e:
             return _fail('开始时间无效: %s' % e, 1)
         chosen['start_ms'] = resolved_start
@@ -1094,10 +1101,11 @@ def main(argv=None, client_factory=None):
         return 0 if report['summary']['ok'] else 2
 
     # ---- user-defined school rules -> qualification model --------------
+    # `rules` was loaded and merged with the fresh policy before the start
+    # timestamp was resolved, so the model and the timestamp share one band.
     from ..application import qualification as Q
     from ..application import limits as L
     from ..application import readonly as RO
-    rules = Q.load_rules()
     run_start = int(run['locPoints'][0]['flag'])
     run_bj = safety.to_beijing(run_start)
     day_key = run_bj.strftime('%Y-%m-%d')

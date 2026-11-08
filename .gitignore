@@ -38,6 +38,10 @@ reverse-engineering/
 third_party/
 *.apk
 
+# ---- 截图 / 浏览器调试 ----
+.playwright-cli/
+output/playwright/
+
 # ---- 编辑器 / 系统 ----
 .vscode/
 .idea/

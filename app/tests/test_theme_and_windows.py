@@ -1,0 +1,175 @@
+"""Multi-band school windows (issue #11) and the appearance skin contract."""
+
+import datetime as dt
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from replica.adapters import http_server
+from replica.adapters.bridge_api import ReplicaApi
+from replica.application import policy, qualification
+from replica.domain import safety
+
+BEIJING = dt.timezone(dt.timedelta(hours=8))
+BANDS = [
+    {'start': '06:00', 'end': '07:59'},
+    {'start': '09:01', 'end': '11:59'},
+    {'start': '13:01', 'end': '13:59'},
+    {'start': '15:01', 'end': '22:00'},
+]
+
+
+def _now():
+    return int(dt.datetime(2026, 11, 8, 20, 0, tzinfo=BEIJING).timestamp() * 1000)
+
+
+def _day_ago_key():
+    return (dt.datetime(2026, 11, 8, tzinfo=BEIJING)
+            - dt.timedelta(days=1)).strftime('%Y-%m-%d')
+
+
+def test_normalize_windows_accepts_server_shapes():
+    assert safety.normalize_windows(
+        [{'start': '06:00:00', 'end': '07:59:00'}]) == [
+        {'start': '06:00', 'end': '07:59'}]
+    assert safety.normalize_windows(
+        '06:00-07:59, 09:01-11:59') == BANDS[:2]
+    assert safety.normalize_windows(json.dumps(BANDS)) == BANDS
+    assert safety.normalize_windows([['15:01', '22:00']]) == [BANDS[-1]]
+
+
+def test_policy_maps_every_band_and_writes_an_envelope():
+    mapped = policy.rules_from_policy(
+        {'runRuleModel': {'validTime': [
+            {'start': '06:00:00', 'end': '07:59:00'},
+            {'start': '09:01:00', 'end': '11:59:00'},
+            {'start': '13:01:00', 'end': '13:59:00'},
+            {'start': '15:01:00', 'end': '22:00:00'},
+        ]}})
+    rules = mapped['rules']
+    assert rules['windows'] == BANDS
+    # Old clients only understand one pair; the envelope accepts all bands.
+    assert rules['window_start'] == '06:00'
+    assert rules['window_end'] == '22:00'
+    assert mapped['meta']['window_count'] == 4
+
+
+def test_qualification_accepts_a_later_band():
+    rules = {'min_km': 2.0, 'windows': BANDS}
+    run = {
+        'juli': 2500, 'sportTime': 900, 'total_steps': 1300,
+        'locPoints': [{'flag': int(dt.datetime(
+            2026, 11, 7, 18, 0, tzinfo=BEIJING).timestamp() * 1000)}],
+        'fivePoint': [],
+    }
+    model = qualification.evaluate(run, rules, daily_runs=0)
+    check = [c for c in model['checks'] if c['id'] == 'window'][0]
+    assert check['status'] == 'pass', check
+
+    run['locPoints'][0]['flag'] = int(dt.datetime(
+        2026, 11, 7, 8, 30, tzinfo=BEIJING).timestamp() * 1000)
+    model = qualification.evaluate(run, rules, daily_runs=0)
+    check = [c for c in model['checks'] if c['id'] == 'window'][0]
+    assert check['status'] == 'fail'
+    assert '15:01–22:00' in check['detail']
+
+
+def test_resolve_start_uses_windows_and_rejects_gaps():
+    now = _now()
+    start = safety.resolve_start_ms(date=_day_ago_key(), hhmm='18:00',
+                                    duration_s=1200, now=now,
+                                    windows=BANDS)
+    local = safety.to_beijing(start)
+    assert (local.hour, local.minute) == (18, 0)
+    try:
+        safety.resolve_start_ms(date=_day_ago_key(), hhmm='08:30',
+                                duration_s=1200, now=now, windows=BANDS)
+    except ValueError as e:
+        assert '有效时段' in str(e)
+    else:
+        raise AssertionError('08:30 should be rejected between bands')
+
+
+def test_empty_random_stays_inside_a_band():
+    now = _now()
+    for _ in range(40):
+        start = safety.resolve_start_ms(date=_day_ago_key(), duration_s=600,
+                                        now=now, windows=BANDS)
+        hhmm = safety.to_beijing(start).strftime('%H:%M')
+        assert safety.in_windows(hhmm, BANDS), hhmm
+
+
+def test_rules_roundtrip_keeps_windows(tmp_path, monkeypatch):
+    monkeypatch.setenv('JHP_DATA_DIR', str(tmp_path))
+    saved = qualification.save_rules({
+        'min_km': 2.0, 'windows': BANDS,
+        'auto_fetch': True,
+    })
+    assert saved['windows'] == BANDS
+    assert saved['window_start'] == '06:00'
+    assert saved['window_end'] == '22:00'
+    assert qualification.load_rules()['windows'] == BANDS
+
+
+def test_ui_state_skin_roundtrip(tmp_path):
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    assert api.real_get_ui_state()['data']['skin'] == 'paper'
+    assert api.real_set_ui_state(skin='poster')['code'] == 200
+    assert api.real_get_ui_state()['data']['skin'] == 'poster'
+    assert api.real_set_ui_state(skin='not-a-skin')['code'] != 200
+    assert api.real_get_ui_state()['data']['skin'] == 'poster'
+
+
+def test_theme_boot_reads_ui_state(tmp_path):
+    with open(tmp_path / 'ui_state.json', 'w', encoding='utf-8') as fh:
+        json.dump({'skin': 'archive'}, fh)
+    script = http_server.theme_boot_js(str(tmp_path))
+    assert "data-skin','archive'" in script
+
+
+def test_index_loads_skin_system_before_styles():
+    with open(os.path.join(ROOT, 'frontend', 'index.html'),
+              encoding='utf-8') as fh:
+        index = fh.read()
+    assert '/theme-boot.js' in index
+    assert index.index('/theme-boot.js') < index.index('css/app.css')
+    assert 'css/skins.css' in index
+    assert 'id="skinGrid"' in index
+    assert 'id="windowRows"' in index
+
+
+def _luminance(hex_color):
+    text = hex_color.lstrip('#')
+    channels = [int(text[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    def linear(c):
+        return c / 12.92 if c <= .03928 else ((c + .055) / 1.055) ** 2.4
+    return (0.2126 * linear(channels[0]) +
+            0.7152 * linear(channels[1]) +
+            0.0722 * linear(channels[2]))
+
+
+def _contrast(a, b):
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + .05) / (lo + .05)
+
+
+def test_new_skins_keep_small_text_above_aa_contrast():
+    with open(os.path.join(ROOT, 'frontend', 'css', 'skins.css'),
+              encoding='utf-8') as fh:
+        css = fh.read()
+    blocks = dict(re.findall(r'\[data-skin="([a-z]+)"\]\{(.*?)\}',
+                             css, re.S))
+    for skin in ('poster', 'minimal', 'archive'):
+        block = blocks[skin]
+        def token(name):
+            match = re.search(r'--%s:\s*(#[0-9A-Fa-f]{6})' % name, block)
+            assert match, (skin, name)
+            return match.group(1)
+        assert _contrast(token('faint'), token('paper-2')) >= 4.5, skin
+        assert _contrast(token('sidebar-muted'), token('sidebar-bg')) >= 4.5, skin
+        assert _contrast(token('amber'), token('paper-2')) >= 4.5, skin

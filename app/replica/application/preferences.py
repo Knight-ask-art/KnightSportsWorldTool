@@ -8,6 +8,16 @@ import tempfile
 
 FILENAME = 'settings.json'
 
+#: Curated, whole-application visual skins.  These are not dark/light modes:
+#: each one changes type, shape, texture and accents together.
+SKINS = ('paper', 'poster', 'minimal', 'archive')
+DEFAULT_SKIN = 'paper'
+
+
+def normalize_skin(value) -> str:
+    text = str(value or '').strip().lower()
+    return text if text in SKINS else DEFAULT_SKIN
+
 
 def path(store_dir: str) -> str:
     return os.path.join(store_dir, FILENAME)

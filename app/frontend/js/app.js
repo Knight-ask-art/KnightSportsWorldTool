@@ -1,5 +1,15 @@
 /* ---------- tiny helpers ---------- */
 const $ = s => document.querySelector(s);
+/* Read a skin token for Leaflet/canvas, which cannot use CSS variables
+   directly.  A missing token falls back to the paper palette so a partially
+   loaded stylesheet never leaves an invisible route line. */
+function themeColor(name, fallback){
+  try{
+    const value = getComputedStyle(document.documentElement)
+      .getPropertyValue(name).trim();
+    return value || fallback;
+  }catch(e){ return fallback; }
+}
 /* Keyboard events dispatched on document (tests, extensions) have no
    Element target; calling closest() there is an uncaught TypeError. */
 const eventTargetEl = ev => {
@@ -145,8 +155,8 @@ const satellite = L.tileLayer(
 
 /* live map layers: filled from /bridge/real_fetch_points; real checkpoints only */
 let fenceLayer = L.polygon([], {
-  color: '#B6483C', weight: 1.8, dashArray: '6 5',
-  fillColor: '#B6483C', fillOpacity: .035
+  color: themeColor('--stamp', '#B6483C'), weight: 1.8, dashArray: '6 5',
+  fillColor: themeColor('--stamp', '#B6483C'), fillOpacity: .035
 }).addTo(map).bindTooltip('跑步围栏', {sticky: true, className: 'pt-tip'});
 let extraFenceLayers = [];
 let fenceBounds = L.latLngBounds([]);
@@ -264,8 +274,8 @@ function setFences(polygons, name, opts){
   fenceLayer.setLatLngs(first);
   rings.slice(1).forEach(ring => {
     const layer = L.polygon(ring, {
-      color: '#B6483C', weight: 1.8, dashArray: '6 5',
-      fillColor: '#B6483C', fillOpacity: .035
+      color: themeColor('--stamp', '#B6483C'), weight: 1.8, dashArray: '6 5',
+      fillColor: themeColor('--stamp', '#B6483C'), fillOpacity: .035
     }).addTo(map).bindTooltip('跑步围栏', {sticky: true, className: 'pt-tip'});
     extraFenceLayers.push(layer);
   });
@@ -279,8 +289,8 @@ function setFences(polygons, name, opts){
     routeFenceExtra = [];
     rings.slice(1).forEach(ring => {
       const layer = L.polygon(ring, {
-        color: '#B6483C', weight: 1.6, dashArray: '6 5',
-        fillColor: '#B6483C', fillOpacity: .03
+        color: themeColor('--stamp', '#B6483C'), weight: 1.6, dashArray: '6 5',
+        fillColor: themeColor('--stamp', '#B6483C'), fillOpacity: .03
       }).addTo(routeMap);
       routeFenceExtra.push(layer);
     });
@@ -309,10 +319,10 @@ function fenceRingsFromData(d){
 
 let route = [];
 
-const hi = L.polyline([], {color: '#F2D25C', weight: 15, opacity: .5, lineCap: 'round', lineJoin: 'round'}).addTo(map);
-const ink = L.polyline([], {color: '#2E4A7D', weight: 3.1, opacity: .96, lineCap: 'round', lineJoin: 'round'}).addTo(map);
+const hi = L.polyline([], {color: themeColor('--highlighter', '#F2D25C'), weight: 15, opacity: .5, lineCap: 'round', lineJoin: 'round'}).addTo(map);
+const ink = L.polyline([], {color: themeColor('--ink-blue', '#2E4A7D'), weight: 3.1, opacity: .96, lineCap: 'round', lineJoin: 'round'}).addTo(map);
 
-const start = L.circleMarker([0, 0], {radius: 5, color: '#FBF8F0', weight: 2, fillColor: '#2E4A7D', fillOpacity: 1})
+const start = L.circleMarker([0, 0], {radius: 5, color: themeColor('--paper-2', '#FBF8F0'), weight: 2, fillColor: themeColor('--ink-blue', '#2E4A7D'), fillOpacity: 1})
   .bindTooltip('起点', {permanent: true, direction: 'top', offset: [0, -6], className: 'pt-tip'});
 
 function runMapPadding(){
@@ -342,14 +352,14 @@ L.tileLayer(
   'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
   {subdomains: '1234', maxNativeZoom: 18, maxZoom: 19, attribution: '高德卫星'}).addTo(routeMap);
 let routeFenceLayer = L.polygon([], {
-  color: '#B6483C', weight: 1.6, dashArray: '6 5',
-  fillColor: '#B6483C', fillOpacity: .03
+  color: themeColor('--stamp', '#B6483C'), weight: 1.6, dashArray: '6 5',
+  fillColor: themeColor('--stamp', '#B6483C'), fillOpacity: .03
 }).addTo(routeMap);
 let routeFenceExtra = [];
 
-const routeHi = L.polyline([], {color: '#F2D25C', weight: 13, opacity: .45, lineCap: 'round'}).addTo(routeMap);
-const routeInk = L.polyline([], {color: '#2E4A7D', weight: 3, opacity: .95, lineCap: 'round'}).addTo(routeMap);
-const routeStart = L.circleMarker([0, 0], {radius: 5, color: '#FBF8F0', weight: 2, fillColor: '#2E4A7D', fillOpacity: 1});
+const routeHi = L.polyline([], {color: themeColor('--highlighter', '#F2D25C'), weight: 13, opacity: .45, lineCap: 'round'}).addTo(routeMap);
+const routeInk = L.polyline([], {color: themeColor('--ink-blue', '#2E4A7D'), weight: 3, opacity: .95, lineCap: 'round'}).addTo(routeMap);
+const routeStart = L.circleMarker([0, 0], {radius: 5, color: themeColor('--paper-2', '#FBF8F0'), weight: 2, fillColor: themeColor('--ink-blue', '#2E4A7D'), fillOpacity: 1});
 
 /* ---------- draw: click to add, smooth curve ---------- */
 let pen = false, smoothOn = true, routeClosed = false;
@@ -522,13 +532,14 @@ function displayPath(){
 }
 function routeDotStyle(i){
   if(i === selRoutePoint){
-    return {radius: 7, color: '#B6483C', weight: 2.2,
-            fillColor: '#F2D25C', fillOpacity: 1};
+    return {radius: 7, color: themeColor('--stamp', '#B6483C'), weight: 2.2,
+            fillColor: themeColor('--highlighter', '#F2D25C'), fillOpacity: 1};
   }
   return {
     radius: i === 0 ? 5 : 3.5,
-    color: '#2E4A7D', weight: 1.3,
-    fillColor: i === 0 ? '#2E4A7D' : '#FBF8F0', fillOpacity: 1
+    color: themeColor('--ink-blue', '#2E4A7D'), weight: 1.3,
+    fillColor: i === 0 ? themeColor('--ink-blue', '#2E4A7D')
+                       : themeColor('--paper-2', '#FBF8F0'), fillOpacity: 1
   };
 }
 function paintDots(){
@@ -2351,9 +2362,24 @@ function replayResize(canvas){
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   return {ctx, w: cssW, h: cssH};
 }
-const REPLAY_COLORS = {track: '#2E4A7D', done: '#B6483C', ink: '#24231F',
-                       faint: '#938B79', rule: '#D8D1BF', hi: '#F2D25C',
-                       green: '#4E7657', paper: '#FBF8F0'};
+const REPLAY_COLORS = {track: themeColor('--ink-blue', '#2E4A7D'),
+                       done: themeColor('--stamp', '#B6483C'),
+                       ink: themeColor('--ink', '#24231F'),
+                       faint: themeColor('--faint', '#938B79'),
+                       rule: themeColor('--rule', '#D8D1BF'),
+                       hi: themeColor('--highlighter', '#F2D25C'),
+                       green: themeColor('--green', '#4E7657'),
+                       paper: themeColor('--paper-2', '#FBF8F0')};
+function refreshReplayColors(){
+  REPLAY_COLORS.track = themeColor('--ink-blue', '#2E4A7D');
+  REPLAY_COLORS.done = themeColor('--stamp', '#B6483C');
+  REPLAY_COLORS.ink = themeColor('--ink', '#24231F');
+  REPLAY_COLORS.faint = themeColor('--faint', '#938B79');
+  REPLAY_COLORS.rule = themeColor('--rule', '#D8D1BF');
+  REPLAY_COLORS.hi = themeColor('--highlighter', '#F2D25C');
+  REPLAY_COLORS.green = themeColor('--green', '#4E7657');
+  REPLAY_COLORS.paper = themeColor('--paper-2', '#FBF8F0');
+}
 function drawReplayTrack(model, t){
   const c = replayResize($('#replayCanvas'));
   if(!c) return;
@@ -2595,6 +2621,13 @@ function go(page){
         _pointsAutoAt = Date.now();
         loadPoints(false, {quiet: true});
       }
+      // A school can change validTime between releases.  Refresh in the
+      // background (throttled) so the time picker does not keep an old band.
+      if(hasSession() && LIVE.rules && LIVE.rules.configured &&
+         LIVE.rules.rules && LIVE.rules.rules.auto_fetch !== false &&
+         Date.now() - (LIVE.rulesSyncedAt || 0) > 5 * 60 * 1000){
+        syncSchoolRulesQuiet();
+      }
       // Presets are a local list; one read when the page is first opened.
       // No polling: a save/delete refreshes explicitly.
       if(!LIVE.presetsLoaded && !methodMissing('real_presets')) loadPresets();
@@ -2736,7 +2769,7 @@ const LIVE = {
   freezeSeconds: 0, faceRequired: false, faceReason: '',
   records: [], recordsLoaded: false, recordsLoading: false, recordFilter: 'all',
   routes: [], selectedRoute: -1,
-  routeFilter: 'all', rules: null, model: null, plan: null,
+  routeFilter: 'all', rules: null, rulesSyncedAt: 0, model: null, plan: null,
   modelWarnings: [],
   runDate: null, daily: null, dailyCounts: {}, dailyCountsAt: 0,
   dailyCountsUid: null,
@@ -2749,6 +2782,7 @@ const LIVE = {
   tokenUpdatedAt: null,
   log: [], submitting: false, lastSubmit: null, submitResult: null,
   loginCover: '', coverBusy: false,
+  skin: 'paper',
   // v0.1.8 feature pack (P0–P2).  All of it is opt-in: nothing here is
   // fetched or sent until the operator clicks.
   loginUserId: '',
@@ -2762,6 +2796,100 @@ const LIVE = {
   replay: null,
   logSel: -1
 };
+
+/* ---------------- appearance skins ---------------- */
+const SKIN_META = {
+  paper:   {name: '纸感手账', hint: '暖纸 · 手写 · 荧光笔'},
+  poster:  {name: '赛场海报', hint: '粗体 · 硬边 · 信号红'},
+  minimal: {name: '极简白',   hint: '留白 · 细线 · 单强调色'},
+  archive: {name: '复古档案', hint: '牛皮纸 · 打字机 · 红章'}
+};
+const SKIN_KEY = 'hxp_skin';
+function normalizeSkin(skin){
+  return SKIN_META[skin] ? skin : 'paper';
+}
+function currentSkin(){
+  return normalizeSkin(document.documentElement.getAttribute('data-skin'));
+}
+function renderSkinCards(){
+  const id = currentSkin();
+  document.querySelectorAll('.skin-card').forEach(card => {
+    const on = card.dataset.skin === id;
+    card.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  if($('#skinStatus')){
+    $('#skinStatus').textContent = SKIN_META[id].name + ' · 已应用';
+    $('#skinStatus').className = 'mini ok';
+  }
+  if($('#skinHint')){
+    $('#skinHint').textContent = '当前：' + SKIN_META[id].name + ' · ' +
+      SKIN_META[id].hint + '。切换后立即生效，自动保存在本机。';
+  }
+}
+function refreshMapTheme(){
+  const stamp = themeColor('--stamp', '#B6483C');
+  const highlight = themeColor('--highlighter', '#F2D25C');
+  const blue = themeColor('--ink-blue', '#2E4A7D');
+  const paper = themeColor('--paper-2', '#FBF8F0');
+  const green = themeColor('--green', '#4E7657');
+  try{
+    fenceLayer.setStyle({color: stamp, fillColor: stamp});
+    extraFenceLayers.forEach(layer => layer.setStyle({color: stamp, fillColor: stamp}));
+    hi.setStyle({color: highlight});
+    ink.setStyle({color: blue});
+    start.setStyle({color: paper, fillColor: blue});
+    routeHi.setStyle({color: highlight});
+    routeInk.setStyle({color: blue});
+    routeStart.setStyle({color: paper, fillColor: blue});
+    routeFenceLayer.setStyle({color: stamp, fillColor: stamp});
+    routeFenceExtra.forEach(layer => layer.setStyle({color: stamp, fillColor: stamp}));
+  }catch(e){}
+  try{
+    if(rdTrackGlow) rdTrackGlow.setStyle({color: highlight});
+    if(rdTrackLine) rdTrackLine.setStyle({color: blue});
+    if(rdStart) rdStart.setStyle({color: paper, fillColor: blue});
+    if(rdEnd) rdEnd.setStyle({color: paper, fillColor: stamp});
+  }catch(e){}
+  refreshReplayColors();
+  if(LIVE.replay && $('#replayModal') && !$('#replayModal').hidden){
+    try{ replayDraw(); }catch(e){}
+  }
+}
+function applySkin(skin, opts){
+  opts = opts || {};
+  const id = normalizeSkin(skin);
+  LIVE.skin = id;
+  document.documentElement.setAttribute('data-skin', id);
+  try{ localStorage.setItem(SKIN_KEY, id); }catch(e){}
+  renderSkinCards();
+  refreshMapTheme();
+  if(opts.refresh !== false && typeof refreshModelPreview === 'function'
+     && hasSession()){
+    refreshModelPreview().catch(() => {});
+  }
+  if(opts.save){
+    liveApi('real_set_ui_state', {skin: id}, 8000).then(j => {
+      if(!liveOk(j)) liveLog('外观保存失败', j.message || '', 'warn');
+    }).catch(() => {});
+  }
+  if(opts.toast) toast('已切换外观：' + SKIN_META[id].name);
+}
+function wireSkinCards(){
+  document.querySelectorAll('.skin-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const id = normalizeSkin(card.dataset.skin);
+      if(id === currentSkin()) return;
+      applySkin(id, {save: true, toast: true});
+      liveLog('外观已切换', SKIN_META[id].name, 'ok');
+    });
+  });
+  if($('#skinReset')){
+    $('#skinReset').addEventListener('click', () => {
+      applySkin('paper', {save: true, toast: true});
+      liveLog('外观已恢复默认', '纸感手账', 'ok');
+    });
+  }
+}
 
 /* The bridge answers an unknown method with HTTP 404 + this message.  A
    missing method must show up as "未接入" on the card, never as a page error:
@@ -3389,7 +3517,7 @@ async function finishLogin(profile, user, pass){
   }
   await loadRules();
   ensureKeepalive();
-  fetchSchoolRules({silent: true});
+  syncSchoolRulesQuiet();
   setLoginStatus('已登录，正在进入工作台…', 'ok');
   setLoginButton('正在进入…', true);
   LOGIN.busy = true;
@@ -4139,7 +4267,7 @@ async function bootAuth(){
   if(res && res.state === 'app'){
     enterApp(false);
     ensureKeepalive();
-    fetchSchoolRules({silent: true});
+    syncSchoolRulesQuiet();
   }else{
     showLoginGate((res && res.message) || '请输入手机号和密码登录。');
   }
@@ -4242,7 +4370,7 @@ async function liveLogin(){
     await loadRules();
     ensureKeepalive();
     enterApp(false);
-    fetchSchoolRules({silent: true});
+    syncSchoolRulesQuiet();
     toast(remembered ? '登录成功' : '登录成功；本地保存密码失败');
   }catch(e){
     const msg = prettyLoginError(e && e.message ? e.message : e);
@@ -4926,6 +5054,7 @@ async function loadUiPrefs(){
     if(liveOk(j) && j.data){
       const prefs = j.data.run_area_choice;
       LIVE.runAreaPrefs = (prefs && typeof prefs === 'object') ? prefs : {};
+      if(j.data.skin) applySkin(j.data.skin, {save: false, refresh: false});
     }
   }catch(e){}
 }
@@ -5750,9 +5879,11 @@ function ensureRecordMap(){
   L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
     {subdomains: '1234', maxNativeZoom: 18, maxZoom: 19,
      attribution: '高德卫星'}).addTo(rdMap);
-  rdTrackGlow = L.polyline([], {color: '#F2D25C', weight: 9, opacity: .45,
+  rdTrackGlow = L.polyline([], {color: themeColor('--highlighter', '#F2D25C'),
+                                weight: 9, opacity: .45,
                                 lineCap: 'round'}).addTo(rdMap);
-  rdTrackLine = L.polyline([], {color: '#2E4A7D', weight: 2.6, opacity: .95,
+  rdTrackLine = L.polyline([], {color: themeColor('--ink-blue', '#2E4A7D'),
+                                weight: 2.6, opacity: .95,
                                 lineCap: 'round'}).addTo(rdMap);
   rdPtLayer = L.layerGroup().addTo(rdMap);
   return rdMap;
@@ -5803,17 +5934,23 @@ function renderRecordMap(detail){
   rdPtLayer.clearLayers();
   if(rdStart && rdMap.hasLayer(rdStart)) rdMap.removeLayer(rdStart);
   if(rdEnd && rdMap.hasLayer(rdEnd)) rdMap.removeLayer(rdEnd);
-  rdStart = L.circleMarker(line[0], {radius: 5, color: '#FBF8F0', weight: 2,
-    fillColor: '#2E4A7D', fillOpacity: 1}).addTo(rdMap).bindTooltip('起点');
-  rdEnd = L.circleMarker(line[line.length - 1], {radius: 5, color: '#FBF8F0', weight: 2,
-    fillColor: '#B6483C', fillOpacity: 1}).addTo(rdMap).bindTooltip('终点');
+  rdStart = L.circleMarker(line[0], {
+    radius: 5, color: themeColor('--paper-2', '#FBF8F0'), weight: 2,
+    fillColor: themeColor('--ink-blue', '#2E4A7D'), fillOpacity: 1
+  }).addTo(rdMap).bindTooltip('起点');
+  rdEnd = L.circleMarker(line[line.length - 1], {
+    radius: 5, color: themeColor('--paper-2', '#FBF8F0'), weight: 2,
+    fillColor: themeColor('--stamp', '#B6483C'), fillOpacity: 1
+  }).addTo(rdMap).bindTooltip('终点');
   five.forEach((p, i) => {
     const lat = +(p.glat ?? p.gLat ?? p.lat);
     const lng = +(p.glon ?? p.gLng ?? p.lng ?? p.lon);
     if(!isFinite(lat) || !isFinite(lng)) return;
     const ok = !!(p.isPass ?? p.is_pass ?? p.pass);
-    L.circleMarker([lat, lng], {radius: 6, color: '#FBF8F0', weight: 2,
-      fillColor: ok ? '#3F7A4B' : '#B6483C', fillOpacity: .95})
+    L.circleMarker([lat, lng], {
+      radius: 6, color: themeColor('--paper-2', '#FBF8F0'), weight: 2,
+      fillColor: ok ? themeColor('--green', '#3F7A4B')
+                    : themeColor('--stamp', '#B6483C'), fillOpacity: .95})
       .addTo(rdPtLayer)
       .bindTooltip(esc(p.pointName || p.name || ('点位 ' + (i + 1))) + (ok ? ' · 已通过' : ' · 未通过'));
   });
@@ -6335,15 +6472,99 @@ const RULE_FIELDS = [
   ['rPaceMin', 'pace_min'], ['rPaceMax', 'pace_max'],
   ['rMinMin', 'min_minutes'], ['rMaxMin', 'max_minutes'],
   ['rMaxDay', 'max_per_day'],
-  ['rStepMin', 'step_min'], ['rStepMax', 'step_max'],
-  ['rWinStart', 'window_start'], ['rWinEnd', 'window_end']
+  ['rStepMin', 'step_min'], ['rStepMax', 'step_max']
 ];
 function ruleCount(r){
   r = r || {};
-  return RULE_FIELDS.filter(([, key]) => {
+  const fields = RULE_FIELDS.filter(([, key]) => {
     const v = r[key];
     return v !== null && v !== undefined && String(v).trim() !== '';
   }).length;
+  return fields + readWindowRowsFrom(r).length;
+}
+function normaliseWindow(raw){
+  if(!raw) return null;
+  let start = '', end = '';
+  if(typeof raw === 'string'){
+    const text = raw.replace(/[–—]/g, '-').trim();
+    if(text.indexOf('-') < 0) return null;
+    const parts = text.split('-', 2);
+    start = parts[0].trim(); end = parts[1].trim();
+  }else if(Array.isArray(raw) && raw.length >= 2){
+    start = String(raw[0] || '').trim(); end = String(raw[1] || '').trim();
+  }else if(typeof raw === 'object'){
+    start = String(raw.start != null ? raw.start : (raw.startTime || '')).trim();
+    end = String(raw.end != null ? raw.end : (raw.endTime || '')).trim();
+  }
+  const toMin = s => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim());
+    if(!m) return null;
+    const h = +m[1], min = +m[2];
+    if(min > 59 || h > 24 || (h === 24 && min !== 0)) return null;
+    return h * 60 + min;
+  };
+  const a = toMin(start), b = toMin(end);
+  if(a === null || b === null || b <= a) return null;
+  return {start: start.padStart(5, '0'), end: end.padStart(5, '0')};
+}
+function windowRowsInvalid(){
+  const wrap = $('#windowRows');
+  if(!wrap) return false;
+  for(const row of wrap.querySelectorAll('.window-row')){
+    const start = (row.querySelector('.window-start') || {}).value || '';
+    const end = (row.querySelector('.window-end') || {}).value || '';
+    if(!start.trim() && !end.trim()) continue;   // an unused blank row
+    if(!normaliseWindow({start: start, end: end})) return true;
+  }
+  return false;
+}
+function readWindowRowsFrom(r){
+  r = r || {};
+  let list = Array.isArray(r.windows) ? r.windows : [];
+  if(!list.length && r.window_start && r.window_end){
+    list = [{start: r.window_start, end: r.window_end}];
+  }
+  return list.map(normaliseWindow).filter(Boolean);
+}
+function readWindowRows(){
+  const wrap = $('#windowRows');
+  if(!wrap) return [];
+  return [...wrap.querySelectorAll('.window-row')].map(row => ({
+    start: (row.querySelector('.window-start') || {}).value || '',
+    end: (row.querySelector('.window-end') || {}).value || ''
+  })).map(normaliseWindow).filter(Boolean);
+}
+function addWindowRow(start, end){
+  const wrap = $('#windowRows');
+  if(!wrap) return;
+  const row = document.createElement('div');
+  row.className = 'window-row';
+  row.innerHTML = '<input class="window-start" inputmode="numeric" maxlength="5" ' +
+    'placeholder="06:00" aria-label="时段开始"><span class="window-sep">–</span>' +
+    '<input class="window-end" inputmode="numeric" maxlength="5" placeholder="07:59" ' +
+    'aria-label="时段结束"><button type="button" class="window-del" aria-label="删除这个时段">×</button>';
+  row.querySelector('.window-start').value = start || '';
+  row.querySelector('.window-end').value = end || '';
+  row.querySelector('.window-del').addEventListener('click', () => {
+    row.remove();
+    if(!wrap.querySelector('.window-row')) renderWindowRows([]);
+  });
+  wrap.appendChild(row);
+}
+function renderWindowRows(list){
+  const wrap = $('#windowRows');
+  if(!wrap) return;
+  const rows = (list || []).map(normaliseWindow).filter(Boolean);
+  wrap.innerHTML = '';
+  if(!rows.length){
+    wrap.innerHTML = '<div class="window-empty">未填写 = 学校没有时间窗要求；也可以点下面添加。</div>';
+    return;
+  }
+  rows.forEach(w => addWindowRow(w.start, w.end));
+}
+function windowsText(list){
+  const rows = (list || []).map(normaliseWindow).filter(Boolean);
+  return rows.map(w => w.start + '–' + w.end).join('、');
 }
 async function loadNetworkConfig(){
   if(!$('#netStatus')) return;
@@ -6404,7 +6625,8 @@ const RULE_LABELS = {
   min_minutes: '最短时长', max_minutes: '最长时长',
   max_per_day: '每日次数',
   step_min: '步频下限', step_max: '步频上限',
-  window_start: '时间窗开始', window_end: '时间窗结束'
+  window_start: '时间窗开始', window_end: '时间窗结束',
+  windows: '有效时段'
 };
 function applyRulesToForm(r){
   r = r || {};
@@ -6412,6 +6634,7 @@ function applyRulesToForm(r){
     const el = $('#' + id);
     if(el) el.value = (r[key] === null || r[key] === undefined) ? '' : r[key];
   });
+  renderWindowRows(readWindowRowsFrom(r));
 }
 function collectRulesForm(){
   const rules = {};
@@ -6419,9 +6642,11 @@ function collectRulesForm(){
     const el = $('#' + id);
     if(el) rules[key] = el.value.trim();
   });
+  rules.windows = readWindowRows();
   return rules;
 }
 function rulesFormHasValues(){
+  if(readWindowRows().length) return true;
   return RULE_FIELDS.some(([id]) => {
     const el = $('#' + id);
     return !!(el && el.value.trim());
@@ -6444,6 +6669,7 @@ function renderRulesStatus(d, rules, hint){
   refreshParams();
   refreshModelPreview();
   refreshChecks();
+  if(typeof updateRunDateLabel === 'function') updateRunDateLabel();
   if($('#datePop') && !$('#datePop').hidden) renderDatePop();
 }
 async function persistRules(rules, opts){
@@ -6534,8 +6760,13 @@ async function loadRules(){
 async function saveRules(){
   if(accountBusy){ toast('正在登录，请稍候'); return; }
   if(LIVE.submitting){ toast('提交进行中，完成后再修改学校要求'); return; }
+  if(windowRowsInvalid()){
+    toast('有效时段格式不对：要写成 HH:MM，结束要晚于开始');
+    return;
+  }
   const rules = collectRulesForm();
-  const filled = RULE_FIELDS.filter(([id]) => $('#' + id) && $('#' + id).value.trim()).length;
+  const filled = RULE_FIELDS.filter(([id]) => $('#' + id) && $('#' + id).value.trim()).length +
+    (rules.windows || []).length;
   if(!filled && !confirm('所有项都留空，保存后会关闭模型并停止自动读取。继续？')) return;
   // Empty save is an explicit "model off"; do not auto-fetch it back later.
   rules.auto_fetch = !!filled;
@@ -6586,9 +6817,9 @@ async function fetchSchoolRules(opts){
     applyRulesToForm(merged);
     const meta = d.meta || {};
     const notes = [];
-    if(meta.window_count > 1){
-      const ws = (meta.windows || []).join('、');
-      notes.push('服务器时段 ' + (ws || meta.window_count + ' 个') + '，表单填第一个');
+    const mappedWindows = readWindowRowsFrom(mapped);
+    if(mappedWindows.length > 1){
+      notes.push('服务器返回 ' + mappedWindows.length + ' 个时段，已全部填入');
     }
     if(meta.day_goal_m) notes.push('服务器每日目标 ' + (meta.day_goal_m / 1000).toFixed(1) + ' km（未映射）');
     const labels = keys.map(k => RULE_LABELS[k] || k);
@@ -6601,6 +6832,7 @@ async function fetchSchoolRules(opts){
       if(!opts.silent) toast('规则已填入但保存失败');
       return false;
     }
+    LIVE.rulesSyncedAt = Date.now();
     liveLog('学校规则已从服务器填入',
       'runMode ' + d.run_mode + ' · ' + labels.join('、') +
       (notes.length ? ' · ' + notes.join('；') : ''), 'ok');
@@ -6609,6 +6841,38 @@ async function fetchSchoolRules(opts){
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = '从服务器读取'; }
   }
+}
+
+/* Refresh the cached rules without the settings form's "already configured"
+   early return.  This is what makes an upgraded v0.1.x profile (single old
+   window) pick up the server's real multi-band validTime before the run page
+   decides whether 18:00 is allowed. */
+async function syncSchoolRulesQuiet(){
+  if(!hasSession() || LIVE.submitting) return false;
+  const current = LIVE.rules && LIVE.rules.rules;
+  if(current && current.auto_fetch === false) return false;
+  if(document.querySelector('#page-settings.active') && rulesFormHasValues())
+    return false;      // never overwrite an unsaved edit
+  if(!(LIVE.rules && LIVE.rules.configured)){
+    LIVE.rulesSyncedAt = Date.now();
+    return fetchSchoolRules({silent: true});
+  }
+  LIVE.rulesSyncedAt = Date.now();
+  const j = await liveApi('real_fetch_school_rules', {run_mode: 1}, 60000);
+  if(!liveOk(j)) return false;
+  const mapped = (j.data && j.data.rules) || {};
+  if(!Object.keys(mapped).length) return false;
+  const merged = Object.assign({}, current || {}, mapped);
+  merged.auto_fetch = true;
+  const saved = await liveApi('save_school_rules', {rules: merged});
+  if(!liveOk(saved)) return false;
+  LIVE.rules = {
+    rules: (saved.data && saved.data.rules) || merged,
+    configured: !!(saved.data && saved.data.configured)
+  };
+  LIVE.rulesSyncedAt = Date.now();
+  try{ await loadRules(); }catch(e){ /* keep the merged copy */ }
+  return true;
 }
 
 /* ---------------- backfill date / time ---------------- */
@@ -6679,6 +6943,10 @@ function initRunDate(){
   LIVE.runDate = defaultRunDateKey();
   syncDateButton();
 }
+function schoolWindows(){
+  const rules = (LIVE.rules && LIVE.rules.configured) ? LIVE.rules.rules : null;
+  return readWindowRowsFrom(rules);
+}
 function selectedTimeInfo(){
   const key = LIVE.runDate || beijingTodayKey();
   const daysAgo = dateToDaysAgo(key);
@@ -6688,8 +6956,13 @@ function selectedTimeInfo(){
   const km = +$('#inKm').value || 0;
   const pace = +$('#inPace').value || 6;
   const durMin = km * pace;
+  const configured = schoolWindows();
+  const usingSchool = configured.length > 0;
+  const windows = usingSchool ? configured
+    : [{start: '09:00', end: '22:00'}];
+  const label = windowsText(windows) || '09:00–22:00';
   const out = {
-    date: key, daysAgo, raw, time: null, durMin,
+    date: key, daysAgo, raw, time: null, durMin, windows,
     dateOk: true, dateNote: dateDisplay(key),
     timeOk: true, timeNote: '', ok: true, note: ''
   };
@@ -6706,25 +6979,35 @@ function selectedTimeInfo(){
     const t = Math.max(0, Math.round(m));
     return pad2(Math.floor(t / 60)) + ':' + pad2(t % 60);
   };
+  const toMin = t => {
+    const p = String(t || '').split(':');
+    return (+p[0] || 0) * 60 + (+p[1] || 0);
+  };
   const now = beijingNowDate();
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const latest = daysAgo === 0 ? Math.min(22 * 60, nowMin) : 22 * 60;
   const fail = note => {
     out.timeOk = false; out.ok = false; out.timeNote = note; out.note = note;
     return out;
   };
-  if(daysAgo === 0 && !raw && nowMin < 9 * 60){
-    return fail('今天还没到 09:00，换一天或等 09:00 后再试');
-  }
-  if(latest - durMin < 9 * 60){
-    return fail(daysAgo === 0
-      ? '今天剩余时间放不下这次跑步，换一天或缩短距离'
-      : '这次跑步太长，放不进 09:00–22:00');
+  // A slot is usable only when the whole run fits and (for today) ends by now.
+  const slots = [];
+  windows.forEach(w => {
+    const a = toMin(w.start), b = toMin(w.end);
+    if(b <= a) return;
+    const latestEnd = daysAgo === 0 ? Math.min(b, nowMin) : b;
+    const latestStart = latestEnd - durMin;
+    if(latestStart >= a) slots.push({start: a, end: b, latestStart});
+  });
+  if(!slots.length){
+    if(daysAgo === 0){
+      return fail('今天剩余时间放不下这次跑步（有效时段：' + label +
+                  '），换一天或缩短距离');
+    }
+    return fail('这次跑步太长，放不进有效时段：' + label);
   }
   if(!raw){
-    out.timeNote = daysAgo === 0
-      ? '留空 · 今天 09:00–' + clock(latest - durMin) + ' 内随机'
-      : '留空 · 09:00–22:00 内随机';
+    out.timeNote = '留空 · 在 ' + label + ' 内随机' +
+      (daysAgo === 0 ? '（今天不能晚于现在）' : '');
     out.note = out.timeNote;
     return out;
   }
@@ -6733,13 +7016,25 @@ function selectedTimeInfo(){
   const hh = +m[1], mm = +m[2];
   if(hh > 23 || mm > 59) return fail('时间不存在');
   const mins = hh * 60 + mm;
-  if(mins < 9 * 60) return fail('不能早于 09:00');
-  if(mins > 22 * 60) return fail('不能晚于 22:00');
-  if(mins + durMin > latest){
-    return fail(daysAgo === 0
-      ? (mins > nowMin ? '今天这个时间还没到（现在 ' + clock(nowMin) + '）'
-                       : '这个时间结束时已经超过现在（现在 ' + clock(nowMin) + '）')
-      : '按当前距离/配速，结束会超过 22:00，请提前开始');
+  if(usingSchool && !windows.some(w => mins >= toMin(w.start) && mins <= toMin(w.end))){
+    return fail('不在学校有效时段内；可用：' + label);
+  }
+  if(!usingSchool){
+    if(mins < 9 * 60) return fail('不能早于 09:00');
+    if(mins > 22 * 60) return fail('不能晚于 22:00');
+  }
+  const slot = slots.find(s => mins >= s.start && mins <= s.latestStart);
+  if(!slot){
+    if(daysAgo === 0 && mins > nowMin){
+      return fail('今天这个时间还没到（现在 ' + clock(nowMin) + '）');
+    }
+    if(daysAgo === 0){
+      return fail('这个时间结束时已经超过现在（现在 ' + clock(nowMin) + '）');
+    }
+    if(usingSchool){
+      return fail('按当前距离/配速，结束会超过有效时段（' + label + '），请提前开始');
+    }
+    return fail('按当前距离/配速，结束会超过 22:00，请提前开始');
   }
   out.time = pad2(hh) + ':' + pad2(mm);
   out.timeNote = dateDisplay(key) + ' ' + out.time + ' 开始 · 约 ' +
@@ -6810,22 +7105,11 @@ function updateRunDateLabel(){
       const r = dateRange();
       const range = (r.min.getMonth() + 1) + ' 月 ' + r.min.getDate() + ' 日 – ' +
                     (r.max.getMonth() + 1) + ' 月 ' + r.max.getDate() + ' 日';
-      let randomHint = '开始时间留空则在 09:00–22:00 内随机';
-      if(ti.daysAgo === 0){
-        // Today's random window stops at ``now - duration``, not at 22:00;
-        // the old hint promised a slot the backend would refuse.
-        const now = beijingNowDate();
-        const nowMin = now.getHours() * 60 + now.getMinutes();
-        const latestStart = Math.max(9 * 60,
-          Math.min(22 * 60, nowMin) - ti.durMin);
-        const hm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' +
-                        String(Math.round(m) % 60).padStart(2, '0');
-        randomHint = '开始时间留空则在 09:00–' + hm(latestStart) +
-          ' 内随机（不能晚于现在）';
-      }
+      const windowNote = ti.time && ti.windows && ti.windows.length
+        ? ('；有效时段：' + windowsText(ti.windows)) : '';
       $('#timeHint').textContent = '可选 ' + range + '（北京时间）；' +
         (ti.time ? ti.time + ' 开始，约 ' + Math.round(ti.durMin) + ' 分钟'
-                 : randomHint) + '；结束也要在 22:00 前。';
+                 : ti.timeNote) + windowNote + '。';
     }else{
       $('#timeHint').textContent = '⚠ ' + (ti.dateOk ? '开始时间：' : '') + ti.note;
     }
@@ -8842,6 +9126,14 @@ function liveWire(){
     if(e.key === 'Enter'){ e.preventDefault(); saveSemesterGoal(); }
   }));
   $('#rulesFetch').addEventListener('click', () => fetchSchoolRules({force: true}));
+  if($('#addWindow')) $('#addWindow').addEventListener('click', () => {
+    const wrap = $('#windowRows');
+    if(wrap && wrap.querySelector('.window-empty')) wrap.innerHTML = '';
+    addWindowRow('', '');
+    const rows = wrap ? wrap.querySelectorAll('.window-row') : [];
+    const last = rows[rows.length - 1];
+    if(last) last.querySelector('.window-start').focus();
+  });
   $('#netSave').addEventListener('click', saveNetworkConfig);
   $('#netClear').addEventListener('click', clearNetworkConfig);
   ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => $('#' + id).addEventListener('input', () => {
@@ -9007,6 +9299,11 @@ function liveWire(){
 /* v0.1.8: every new control is bound here, next to liveWire's own handlers.
    Each one only acts on a click; nothing below runs on page load or a timer. */
 function featureWire(){
+  // settings: appearance skins
+  wireSkinCards();
+  renderSkinCards();
+  if($('#windowRows') && !$('#windowRows').children.length) renderWindowRows([]);
+
   // settings: OBS key + realism
   if($('#setRealismSave')) $('#setRealismSave').addEventListener('click', saveRealism);
   if($('#setRealismReset')) $('#setRealismReset').addEventListener('click', resetRealismForm);

@@ -25,14 +25,23 @@ DEFAULT_DIST = APP_ROOT / 'dist'
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
 #: single source of truth, this only keeps standalone runs usable.
-DEFAULT_VERSION = '0.1.9'
+DEFAULT_VERSION = '0.2.0'
 DEFAULT_MIN_VERSION = '0.1.4'
-DEFAULT_ROLLBACK_VERSION = '0.1.6'
+DEFAULT_ROLLBACK_VERSION = '0.1.9'
 DEFAULT_ENTRY = '好想跑.exe'
 
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.2.0': [
+        '修复学校把一天拆成多段有效时间时，模型只认第一段、18:00 被误判不合格',
+        '有效时段改为可添加多行：06:00–07:59、09:01–11:59 等会全部保存并逐段校验',
+        '开始时间留空时只在学校有效时段内随机，不再落进 08:30 / 12:30 这类空档',
+        '提交前会用服务器最新的 runModePolicy 刷新时段，升级后不必手动重填',
+        '设置新增整套外观皮肤：纸感手账、赛场海报、极简白、复古档案',
+        '皮肤同时更换字体、卡片、纹理、按钮和强调色；启动页、登录页、工作台一起生效',
+        '主题只保存在本机 data/ui_state.json，不上传，不影响账号、数据或提交',
+    ],
     '0.1.9': [
         '修复旧版共享设备指纹：不再让命中的老用户共用同一 DeviceId / x86_64 / isRoot=1',
         '旧指纹启动时一次性迁移为唯一、自洽的新指纹，先备份，并强制重新登录',

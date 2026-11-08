@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-from ..domain import coords
+from ..domain import coords, safety
 
 PATH = 'api/v70103/runModePolicy'
 
@@ -442,41 +442,19 @@ def rules_from_policy(data) -> dict:
     if step_max is not None:
         rules['step_max'] = int(round(step_max))
 
-    windows = model.get('validTime')
-    if isinstance(windows, str):
-        try:
-            windows = json.loads(windows)
-        except Exception:  # noqa: BLE001
-            windows = []
-    if isinstance(windows, dict):
-        windows = [windows]
-    if not isinstance(windows, list):
-        windows = []
-    window_count = 0
-    window_list = []
-    for w in windows:
-        if isinstance(w, str):
-            # tolerate "06:30-22:00"
-            parts = w.split('-', 1)
-            start = _hhmm(parts[0]) if len(parts) == 2 else ''
-            end = _hhmm(parts[1]) if len(parts) == 2 else ''
-        elif isinstance(w, dict):
-            start = _hhmm(w.get('start') or w.get('startTime'))
-            end = _hhmm(w.get('end') or w.get('endTime'))
-        elif isinstance(w, (list, tuple)) and len(w) >= 2:
-            start, end = _hhmm(w[0]), _hhmm(w[1])
-        else:
-            continue
-        if not (start and end):
-            continue
-        window_count += 1
-        window_list.append(start + '–' + end)
-        if 'window_start' not in rules:
-            rules['window_start'] = start
-            rules['window_end'] = end
+    # A school may publish several disjoint bands.  Keep all of them; the old
+    # single pair is written only as an outer envelope for downgrade
+    # compatibility, never as the value the new evaluator uses.
+    windows = safety.normalize_windows(model.get('validTime'))
+    if windows:
+        rules['windows'] = windows
+        env_start, env_end = safety.windows_envelope(windows)
+        rules['window_start'] = env_start
+        rules['window_end'] = env_end
+    window_list = ['%s–%s' % (w['start'], w['end']) for w in windows]
 
     meta = {
-        'window_count': window_count,
+        'window_count': len(windows),
         'windows': window_list,
         'day_goal_m': _positive_number(model.get('dayGoal')),
         'week_count_goal': _positive_number(model.get('weekCountGoal')),
@@ -607,10 +585,14 @@ def self_test() -> list[tuple[str, bool, str]]:
                 and mapped['rules'].get('pace_max') == 8.0,
                 str((mapped['rules'].get('pace_min'),
                      mapped['rules'].get('pace_max')))))
-    out.append(('first validTime window maps to form',
-                mapped['rules'].get('window_start') == '06:30'
+    out.append(('all validTime windows map to form',
+                mapped['rules'].get('windows') == [
+                    {'start': '06:30', 'end': '22:00'},
+                    {'start': '12:00', 'end': '13:00'}]
+                and mapped['rules'].get('window_start') == '06:30'
                 and mapped['rules'].get('window_end') == '22:00',
-                str((mapped['rules'].get('window_start'),
+                str((mapped['rules'].get('windows'),
+                     mapped['rules'].get('window_start'),
                      mapped['rules'].get('window_end')))))
     out.append(('step range maps to cadence bounds',
                 mapped['rules'].get('step_min') == 150

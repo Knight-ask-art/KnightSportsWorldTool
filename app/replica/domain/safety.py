@@ -140,6 +140,12 @@ BACKFILL_DAYS = 3
 SELECT_START = '09:00'
 SELECT_END = '22:00'
 
+#: The server's validTime list is a *list* of windows.  A school can split the
+#: day into several disjoint bands (06:00-07:59, 09:01-11:59, ...), so a single
+#: start/end pair is not enough.  Keep the cap small: a malformed policy reply
+#: must not create an unbounded list.
+MAX_WINDOWS = 12
+
 
 def _clock_minutes(text: str) -> int:
     """'HH:MM' -> minutes since midnight.  Raises ValueError on bad input."""
@@ -154,6 +160,169 @@ def _clock_minutes(text: str) -> int:
     if not (0 <= hh <= 23 and 0 <= mm <= 59):
         raise ValueError('开始时间要写成 HH:MM（例如 10:30）')
     return hh * 60 + mm
+
+
+def _window_minutes(text) -> int | None:
+    """Parse a window clock, including ``24:00`` as an end-of-day marker."""
+    raw = str(text or '').strip()
+    if not raw:
+        return None
+    parts = raw.split(':')
+    if len(parts) not in (2, 3):
+        return None
+    try:
+        hh = int(parts[0])
+        mm = int(parts[1])
+        ss = int(parts[2]) if len(parts) == 3 else 0
+    except (TypeError, ValueError):
+        return None
+    if hh == 24 and mm == 0 and ss == 0:
+        return 24 * 60
+    if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
+        return None
+    return hh * 60 + mm
+
+
+def _fmt_window_minutes(minutes: int) -> str:
+    if minutes >= 24 * 60:
+        return '24:00'
+    return '%02d:%02d' % (minutes // 60, minutes % 60)
+
+
+def _window_pairs(raw) -> list[tuple[int, int]]:
+    """Turn every accepted server/UI shape into ``(start, end)`` minutes.
+
+    The parser is deliberately flat: server replies have used dicts, 2-item
+    lists, ``"06:00-07:59"`` strings and JSON-encoded strings.  A recursive
+    tuple handler here used to loop forever on a plain tuple.
+    """
+    import json as _json
+
+    out: list[tuple[int, int]] = []
+
+    def add(a, b):
+        start_min = _window_minutes(a)
+        end_min = _window_minutes(b)
+        if start_min is None or end_min is None:
+            return
+        if start_min >= 24 * 60 or end_min <= start_min:
+            return
+        out.append((start_min, end_min))
+
+    def walk(value):
+        if value is None or len(out) >= MAX_WINDOWS * 2:
+            return
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return
+            try:
+                parsed = _json.loads(text)
+            except Exception:  # noqa: BLE001
+                parsed = None
+            if isinstance(parsed, (list, dict)):
+                walk(parsed)
+                return
+            text = text.replace('–', '-').replace('—', '-')
+            text = text.replace('；', ',').replace(';', ',').replace('、', ',')
+            text = text.replace('\n', ',')
+            for piece in text.split(','):
+                if '-' not in piece:
+                    continue
+                a, b = piece.split('-', 1)
+                add(a, b)
+            return
+        if isinstance(value, dict):
+            if 'windows' in value:
+                walk(value.get('windows'))
+                return
+            add(value.get('start', value.get('startTime')),
+                value.get('end', value.get('endTime')))
+            return
+        if isinstance(value, (list, tuple)):
+            # A flat ["06:00", "07:59"] is one pair, not two strings.
+            if (len(value) == 2 and all(isinstance(v, str) and ':' in v
+                                        for v in value)):
+                add(value[0], value[1])
+                return
+            for item in value:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    add(item[0], item[1])
+                elif isinstance(item, dict):
+                    add(item.get('start', item.get('startTime')),
+                        item.get('end', item.get('endTime')))
+                elif isinstance(item, str):
+                    walk(item)
+                if len(out) >= MAX_WINDOWS * 2:
+                    break
+
+    walk(raw)
+    return out
+
+
+def normalize_windows(raw) -> list[dict]:
+    """Return a stable, de-duplicated ``[{start, end}]`` list.
+
+    Same-day windows are the normal case.  A window whose end is earlier than
+    its start is treated as malformed and ignored; the reference client's
+    validTime bands are same-day, and a malformed reply must not create a
+    confusing overnight slot.
+    """
+    pairs = list(_window_pairs(raw))
+    seen = set()
+    out = []
+    for a, b in sorted(pairs):
+        key = (a, b)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({'start': _fmt_window_minutes(a),
+                    'end': _fmt_window_minutes(b)})
+        if len(out) >= MAX_WINDOWS:
+            break
+    return out
+
+
+def in_windows(hhmm: str, windows) -> bool:
+    """True when ``hhmm`` is inside any configured window (inclusive end)."""
+    try:
+        minute = _clock_minutes(hhmm)
+    except ValueError:
+        return False
+    for w in normalize_windows(windows):
+        a = _window_minutes(w['start'])
+        b = _window_minutes(w['end'])
+        if a is None or b is None:
+            continue
+        if b <= a:  # overnight band
+            if minute >= a or minute < b:
+                return True
+        elif a <= minute <= b:
+            return True
+    return False
+
+
+def format_windows(windows, sep: str = '、') -> str:
+    return sep.join('%s–%s' % (w['start'], w['end'])
+                    for w in normalize_windows(windows))
+
+
+def windows_envelope(windows) -> tuple[str, str]:
+    """Outer bounds for the legacy single-window fields.
+
+    Old builds only understand one pair.  Writing the envelope (instead of the
+    first band) means a downgrade still accepts every time the school allows,
+    instead of falsely rejecting the later bands.
+    """
+    items = normalize_windows(windows)
+    if not items:
+        return '', ''
+    starts = [_window_minutes(w['start']) for w in items]
+    ends = [_window_minutes(w['end']) for w in items]
+    if any(v is None for v in starts + ends):
+        return '', ''
+    return (_fmt_window_minutes(min(starts)),
+            _fmt_window_minutes(max(ends)).replace('24:00', '23:59'))
 
 
 def resolve_backfill_date(date: str | None = None, days_ago: int = 0,
@@ -190,17 +359,21 @@ def resolve_backfill_date(date: str | None = None, days_ago: int = 0,
 def resolve_start_ms(days_ago: int = 0, hhmm: str | None = None,
                      duration_s: float = 0,
                      now: int | None = None,
-                     date: str | None = None) -> int:
+                     date: str | None = None,
+                     windows=None) -> int:
     """Resolve a backfill start timestamp in Beijing time.
 
     ``date`` (``YYYY-MM-DD``) is what the UI sends; ``days_ago`` is the CLI
-    shorthand.  ``hhmm`` is ``HH:MM`` inside 09:00-22:00; ``None``/empty picks
-    a random start in that window.
+    shorthand.  ``hhmm`` is ``HH:MM``; ``None``/empty picks a random start.
+    ``windows`` is the school's ``validTime`` list.  When omitted the historical
+    09:00-22:00 default is used.
 
-    Both ends are enforced: the start must be >= 09:00 and the run must end by
-    22:00 (the server's ``runModePolicy.validTime`` ends at 22:00).  For today
-    the run must also end by ``now`` -- a start in the future is refused rather
-    than silently clamped, because the operator explicitly asked for it.
+    Every band is a *start-and-finish* band: a run is placed only when the
+    whole run fits in one band.  That is conservative, but a school that splits
+    the day into four bands did so for a reason; starting at 07:50 for a 30 min
+    run would finish outside the 06:00-07:59 band.  For today the run must also
+    end by ``now`` -- a start in the future is refused rather than silently
+    clamped.
 
     The returned timestamp keeps sub-minute precision.  A whole-minute start
     (``:00.000``) is what the old implementation produced, and it bled into
@@ -214,45 +387,96 @@ def resolve_start_ms(days_ago: int = 0, hhmm: str | None = None,
     today = now_bj.date()
     day = resolve_backfill_date(date, days_ago, now_val)
     n = (today - day).days
-
-    lo = _dt.datetime.combine(day, _dt.time(9, 0), tzinfo=BEIJING)
-    hi = _dt.datetime.combine(day, _dt.time(22, 0), tzinfo=BEIJING)
-    latest = min(hi, now_bj)                    # a run may not end in the future
     duration_ms = max(0, int(round(float(duration_s or 0) * 1000)))
-    latest_start = latest - _dt.timedelta(milliseconds=duration_ms)
+    duration = _dt.timedelta(milliseconds=duration_ms)
 
-    if latest_start < lo:
+    school_windows = normalize_windows(windows)
+    using_school = bool(school_windows)
+    if not school_windows:
+        school_windows = [{'start': SELECT_START, 'end': SELECT_END}]
+    label = format_windows(school_windows) or '09:00–22:00'
+
+    # Build the actually usable slots for this date.  A slot ends at the band
+    # end, or at "now" for today, minus the run duration.
+    slots = []
+    for w in school_windows:
+        a = _window_minutes(w['start'])
+        b = _window_minutes(w['end'])
+        if a is None or b is None or b <= a:
+            continue
+        lo = _dt.datetime.combine(
+            day, _dt.time(a // 60, a % 60), tzinfo=BEIJING)
+        if b >= 24 * 60:
+            hi = _dt.datetime.combine(
+                day + _dt.timedelta(days=1), _dt.time(0, 0),
+                tzinfo=BEIJING)
+        else:
+            hi = _dt.datetime.combine(
+                day, _dt.time(b // 60, b % 60), tzinfo=BEIJING)
+        latest = min(hi, now_bj) if n == 0 else hi
+        latest_start = latest - duration
+        if latest_start >= lo:
+            slots.append((lo, latest_start))
+
+    if not slots:
         if n == 0:
             raise ValueError(
-                '今天 09:00–22:00 已经放不下这次跑步（约 %d 分钟）；'
-                '请改选昨天或更早' % max(1, int(round(duration_ms / 60000.0))))
-        raise ValueError('这次跑步太长，放不进 09:00–22:00')
+                '今天已经放不下这次跑步（约 %d 分钟）；有效时段：%s。'
+                '请改选昨天或更早'
+                % (max(1, int(round(duration_ms / 60000.0))), label))
+        raise ValueError('这次跑步太长，放不进有效时段：%s' % label)
 
     if hhmm is not None and str(hhmm).strip():
-        minutes = _clock_minutes(hhmm)
-        if minutes < 9 * 60 or minutes > 22 * 60:
-            raise ValueError('开始时间必须在 09:00–22:00 之间（当前 %s）'
-                             % str(hhmm).strip())
+        raw = str(hhmm).strip()
+        minutes = _clock_minutes(raw)
         start = _dt.datetime.combine(
             day, _dt.time(minutes // 60, minutes % 60), tzinfo=BEIJING)
-        if start > latest_start:
+        if using_school and not in_windows(raw, school_windows):
+            raise ValueError('开始时间必须在学校的有效时段内（当前 %s；'
+                             '可用：%s）' % (raw, label))
+        if not using_school and (minutes < 9 * 60 or minutes > 22 * 60):
+            raise ValueError('开始时间必须在 09:00–22:00 之间（当前 %s）'
+                             % raw)
+        chosen = None
+        for lo, latest_start in slots:
+            if lo <= start <= latest_start:
+                chosen = latest_start
+                break
+        if chosen is None:
             if n == 0 and start > now_bj:
                 raise ValueError('今天 %s 还没到（现在 %s）'
-                                 % (str(hhmm).strip(),
-                                    now_bj.strftime('%H:%M')))
-            if n == 0:
+                                 % (raw, now_bj.strftime('%H:%M')))
+            if n == 0 and start + duration > now_bj:
                 raise ValueError('这个时间结束时已经超过现在（现在 %s），'
                                  '请提前开始' % now_bj.strftime('%H:%M'))
+            if using_school:
+                raise ValueError('这个时间结束会超过学校的有效时段（%s），'
+                                 '请提前开始或换一个时段' % label)
             raise ValueError('这个时间结束会超过 22:00，请提前开始')
         start_ms = int(start.timestamp() * 1000)
-        return _jittered_start(start_ms, latest_start, duration_ms)
+        return _jittered_start(start_ms, chosen, duration_ms)
 
-    lo_s = int(lo.timestamp())
-    hi_s = int(latest_start.timestamp())
-    if hi_s < lo_s:
-        raise ValueError('今天 09:00–22:00 已经放不下这次跑步')
-    picked = random.randint(lo_s, hi_s)
-    return _jittered_start(picked * 1000, latest_start, duration_ms)
+    # Pick a slot weighted by its usable seconds so long bands are not
+    # under-sampled.  The +1 keeps a zero-width slot selectable when the run
+    # ends exactly at "now".
+    spans = []
+    total = 0
+    for lo, latest_start in slots:
+        span = max(1, int((latest_start - lo).total_seconds()))
+        spans.append((lo, span))
+        total += span
+    pick = random.randint(0, total - 1)
+    chosen_lo = spans[-1][0]
+    chosen_latest = slots[-1][1]
+    for (lo, span), (_, latest_start) in zip(spans, slots):
+        if pick < span:
+            chosen_lo, chosen_latest = lo, latest_start
+            break
+        pick -= span
+    picked = chosen_lo + _dt.timedelta(seconds=random.randint(
+        0, max(0, int((chosen_latest - chosen_lo).total_seconds()))))
+    return _jittered_start(int(picked.timestamp() * 1000),
+                           chosen_latest, duration_ms)
 
 
 def _jittered_start(start_ms: int, latest_start, duration_ms: int) -> int:

@@ -171,7 +171,7 @@
       const y=H-4-(H-8)*((v-lo)/span);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).filter(Boolean).join(' ');
-    el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline fill="none" stroke="#D57E2A" stroke-width="2" points="${pts}"/></svg>`;
+    el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline fill="none" stroke="var(--stamp)" stroke-width="2" points="${pts}"/></svg>`;
     el.hidden=false;
   }
   window.HXPCharts={lineChart,barChart,spark,fmtPace,fmtClock,fmtNum};
