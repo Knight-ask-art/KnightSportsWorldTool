@@ -298,6 +298,21 @@ def _contrast(a, b):
     return (hi + .05) / (lo + .05)
 
 
+def test_altitude_chart_autofits_instead_of_starting_at_zero():
+    # Issue #12: a 97-110 m trace on a 0-117 m axis reads as a flat line.
+    # The altitude chart must frame the run's own band, like the official app.
+    with open(os.path.join(ROOT, 'frontend', 'js', 'charts.js'),
+              encoding='utf-8') as fh:
+        charts = fh.read()
+    assert 'opts.tight' in charts
+    branch = charts.split('opts.tight', 1)[1]
+    assert 'lo=Math.min(0, lo)' in branch.split('}else{', 1)[-1]
+    with open(os.path.join(ROOT, 'frontend', 'js', 'app.js'),
+              encoding='utf-8') as fh:
+        app = fh.read()
+    assert "tight:true, minSpan:4" in app
+
+
 def test_new_skins_keep_small_text_above_aa_contrast():
     with open(os.path.join(ROOT, 'frontend', 'css', 'skins.css'),
               encoding='utf-8') as fh:

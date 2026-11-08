@@ -84,6 +84,23 @@
       if(median != null && pHi != null) pHi = Math.min(pHi, median * 1.5);
       lo = Math.max(0.5, (pLo == null ? lo : pLo) * 0.92);
       hi = Math.max(lo + 1, (pHi == null ? hi : pHi) * 1.08);
+    }else if(opts.tight){
+      // Altitude is an absolute value, not a quantity that starts at zero.
+      // A 97-110 m trace on a 0-117 m axis looks like a flat line; the
+      // official app frames the run's own band instead.  Keep a small margin
+      // so the first/last points are not glued to the border, and enforce a
+      // minimum span so "fixed 25 m" still gets readable ticks.
+      const span = hi - lo;
+      const minSpan = Math.max(0.5, +opts.minSpan || 0);
+      if(span < minSpan){
+        const mid = (hi + lo) / 2;
+        lo = mid - minSpan / 2;
+        hi = mid + minSpan / 2;
+      }else{
+        const pad = Math.max(0.6, span * 0.12);
+        lo -= pad;
+        hi += pad;
+      }
     }else{
       lo=Math.min(0, lo);
       hi=hi + (hi-lo)*0.06;

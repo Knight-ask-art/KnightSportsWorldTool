@@ -8054,8 +8054,11 @@ function renderDataPreview(data, mode, pending, errorText){
       band:cadBand, bandNote:cadBand ? ('下限 ' + Math.round(cadBand[0])) : ''
     });
     HXPCharts.barChart($('#dpStride'), series, {key:'stride', clamp:[40,200], formatY:v=>Math.round(v)});
+    // Altitude must auto-fit the run's own band.  A zero-based axis turned
+    // every 10-20 m trace into a flat line at the top of the chart.
     HXPCharts.lineChart($('#dpAltitude'), series, {
-      key:'alt', area:true, lineClass:'dp-alt-line', formatY:v=>Math.round(v)
+      key:'alt', area:true, lineClass:'dp-alt-line', tight:true, minSpan:4,
+      formatY:v=>Math.round(v)
     });
   }
   const rows = Array.isArray(d.splits) ? d.splits : [];
