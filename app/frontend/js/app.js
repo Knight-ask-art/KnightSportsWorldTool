@@ -2849,6 +2849,12 @@ function refreshMapTheme(){
     if(rdTrackLine) rdTrackLine.setStyle({color: blue});
     if(rdStart) rdStart.setStyle({color: paper, fillColor: blue});
     if(rdEnd) rdEnd.setStyle({color: paper, fillColor: stamp});
+    if(rdPtLayer) rdPtLayer.eachLayer(layer => {
+      if(layer && layer.setStyle){
+        layer.setStyle({color: paper,
+                        fillColor: layer.__pass ? green : stamp});
+      }
+    });
   }catch(e){}
   refreshReplayColors();
   if(LIVE.replay && $('#replayModal') && !$('#replayModal').hidden){
@@ -2863,10 +2869,10 @@ function applySkin(skin, opts){
   try{ localStorage.setItem(SKIN_KEY, id); }catch(e){}
   renderSkinCards();
   refreshMapTheme();
-  if(opts.refresh !== false && typeof refreshModelPreview === 'function'
-     && hasSession()){
-    refreshModelPreview().catch(() => {});
-  }
+  // A skin only changes presentation; do not fire a model-preview network
+  // request just because the operator picked a color.
+  if(typeof renderModel === 'function') renderModel();
+  if(typeof refreshChecks === 'function') refreshChecks();
   if(opts.save){
     liveApi('real_set_ui_state', {skin: id}, 8000).then(j => {
       if(!liveOk(j)) liveLog('外观保存失败', j.message || '', 'warn');
@@ -5947,11 +5953,13 @@ function renderRecordMap(detail){
     const lng = +(p.glon ?? p.gLng ?? p.lng ?? p.lon);
     if(!isFinite(lat) || !isFinite(lng)) return;
     const ok = !!(p.isPass ?? p.is_pass ?? p.pass);
-    L.circleMarker([lat, lng], {
+    const marker = L.circleMarker([lat, lng], {
       radius: 6, color: themeColor('--paper-2', '#FBF8F0'), weight: 2,
       fillColor: ok ? themeColor('--green', '#3F7A4B')
-                    : themeColor('--stamp', '#B6483C'), fillOpacity: .95})
-      .addTo(rdPtLayer)
+                    : themeColor('--stamp', '#B6483C'), fillOpacity: .95
+    });
+    marker.__pass = ok;
+    marker.addTo(rdPtLayer)
       .bindTooltip(esc(p.pointName || p.name || ('点位 ' + (i + 1))) + (ok ? ' · 已通过' : ' · 未通过'));
   });
   rdMap.fitBounds(L.latLngBounds(line).pad(.18));
@@ -6518,13 +6526,34 @@ function windowRowsInvalid(){
   }
   return false;
 }
-function readWindowRowsFrom(r){
+function rawWindowRowsFrom(r){
   r = r || {};
   let list = Array.isArray(r.windows) ? r.windows : [];
-  if(!list.length && r.window_start && r.window_end){
+  if(!list.length && (r.window_start || r.window_end)){
     list = [{start: r.window_start, end: r.window_end}];
   }
-  return list.map(normaliseWindow).filter(Boolean);
+  return list.map(raw => {
+    let start = '', end = '';
+    if(typeof raw === 'string'){
+      const text = raw.replace(/[–—－]/g, '-').replace(/：/g, ':').trim();
+      if(text.indexOf('-') >= 0){
+        const parts = text.split('-', 2);
+        start = parts[0].trim(); end = parts[1].trim();
+      }else{
+        start = text;
+      }
+    }else if(Array.isArray(raw) && raw.length >= 2){
+      start = String(raw[0] || '').trim();
+      end = String(raw[1] || '').trim();
+    }else if(raw && typeof raw === 'object'){
+      start = String(raw.start != null ? raw.start : (raw.startTime || '')).trim();
+      end = String(raw.end != null ? raw.end : (raw.endTime || '')).trim();
+    }
+    return {start, end};
+  }).filter(row => row.start || row.end);
+}
+function readWindowRowsFrom(r){
+  return rawWindowRowsFrom(r).map(normaliseWindow).filter(Boolean);
 }
 function readWindowRows(){
   const wrap = $('#windowRows');
@@ -6551,10 +6580,13 @@ function addWindowRow(start, end){
   });
   wrap.appendChild(row);
 }
-function renderWindowRows(list){
+function renderWindowRows(list, opts){
   const wrap = $('#windowRows');
   if(!wrap) return;
-  const rows = (list || []).map(normaliseWindow).filter(Boolean);
+  const rows = (list || []).map(w => {
+    if(opts && opts.raw) return {start: String(w.start || ''), end: String(w.end || '')};
+    return normaliseWindow(w);
+  }).filter(w => w && (w.start || w.end));
   wrap.innerHTML = '';
   if(!rows.length){
     wrap.innerHTML = '<div class="window-empty">未填写 = 学校没有时间窗要求；也可以点下面添加。</div>';
@@ -6634,7 +6666,9 @@ function applyRulesToForm(r){
     const el = $('#' + id);
     if(el) el.value = (r[key] === null || r[key] === undefined) ? '' : r[key];
   });
-  renderWindowRows(readWindowRowsFrom(r));
+  // Keep malformed old rows visible instead of silently deleting them; the
+  // save button will then refuse with a concrete message.
+  renderWindowRows(rawWindowRowsFrom(r), {raw: true});
 }
 function collectRulesForm(){
   const rules = {};
@@ -6768,12 +6802,18 @@ async function saveRules(){
   const filled = RULE_FIELDS.filter(([id]) => $('#' + id) && $('#' + id).value.trim()).length +
     (rules.windows || []).length;
   if(!filled && !confirm('所有项都留空，保存后会关闭模型并停止自动读取。继续？')) return;
-  // Empty save is an explicit "model off"; do not auto-fetch it back later.
-  rules.auto_fetch = !!filled;
+  // A manual save is the operator's source of truth.  Stop the background
+  // server refresh so it cannot silently overwrite hand-edited bands; the
+  // explicit「从服务器读取」button turns auto_fetch back on.
+  rules.auto_fetch = false;
   const btn = $('#saveRules');
   if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
   try{
-    await persistRules(rules);
+    await persistRules(rules, {
+      hint: filled
+        ? '已保存；不再自动覆盖你填的规则。点「从服务器读取」可恢复自动刷新。'
+        : '模型已关闭；自动读取已停止。'
+    });
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '保存要求'; }
   }
@@ -9301,6 +9341,15 @@ function liveWire(){
 function featureWire(){
   // settings: appearance skins
   wireSkinCards();
+  // If /theme-boot.js was blocked, fall back to the last local choice.  When
+  // the server route worked it marks the source, so a stale localStorage value
+  // never overrides the authoritative data/ui_state.json.
+  if(document.documentElement.getAttribute('data-skin-source') !== 'server'){
+    try{
+      const cached = normalizeSkin(localStorage.getItem(SKIN_KEY));
+      if(cached && cached !== currentSkin()) applySkin(cached, {save: false, refresh: false});
+    }catch(e){}
+  }
   renderSkinCards();
   if($('#windowRows') && !$('#windowRows').children.length) renderWindowRows([]);
 

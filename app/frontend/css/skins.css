@@ -322,6 +322,14 @@ html[data-skin="poster"] .login-submit:active:not(:disabled){transform:translate
 
 /* Boot splash follows the same skin so a night-time poster user does not get
    a white flash before the login gate. */
+[data-skin="paper"] .boot{
+  --boot-ink:#24231f;
+  --boot-paper-2:#ffffff;
+  --boot-stamp:#b6483c;
+  --boot-rule:rgba(36,35,31,.16);
+  --boot-faint:#6f6a5d;
+  background:#ffffff;
+}
 html[data-skin="poster"] .boot{
   --boot-ink:#11110f;
   --boot-paper-2:#fbf6ea;
@@ -338,7 +346,7 @@ html[data-skin="poster"] .boot{
   --paper-3:#F2F3F5;
   --ink:#111113;
   --pencil:#5B5F66;
-  --faint:#667085;
+  --faint:#5F6B7A;
   --rule:#E4E5E8;
   --ink-blue:#4F46E5;
   --highlighter:#EEF0FF;
@@ -357,7 +365,7 @@ html[data-skin="poster"] .boot{
   --card-line:var(--rule);
   --sidebar-bg:#FAFAFB;
   --sidebar-ink:#3F4248;
-  --sidebar-muted:#667085;
+  --sidebar-muted:#5F6B7A;
   --sidebar-line:#E4E5E8;
   --sidebar-hover:#F2F3F5;
   --nav-active:#EEF0FF;
@@ -537,6 +545,9 @@ html[data-skin="minimal"] .dp-canvas .dp-dot{fill:var(--accent)}
 html[data-skin="minimal"] .dp-canvas .dp-axis{fill:var(--faint)}
 html[data-skin="minimal"] .dp-canvas .dp-area{fill:rgba(79,70,229,.1)}
 
+html[data-skin="minimal"] .login-gate::before{
+  background:linear-gradient(90deg,rgba(9,12,18,.48) 0%,rgba(9,12,18,.18) 42%,rgba(9,12,18,.56) 100%);
+}
 html[data-skin="minimal"] .login-card{
   background:#fff;border:1px solid var(--rule);border-radius:12px;
   box-shadow:0 28px 70px rgba(0,0,0,.2);backdrop-filter:blur(10px);
@@ -783,6 +794,9 @@ html[data-skin="archive"] .dp-canvas .dp-dot{fill:var(--ink-blue)}
 html[data-skin="archive"] .dp-canvas .dp-axis{fill:var(--faint)}
 html[data-skin="archive"] .dp-canvas .dp-area{fill:rgba(166,64,47,.12)}
 
+html[data-skin="archive"] .login-gate::before{
+  background:linear-gradient(90deg,rgba(42,37,32,.48) 0%,rgba(42,37,32,.18) 42%,rgba(42,37,32,.58) 100%);
+}
 html[data-skin="archive"] .login-card{
   background:var(--paper-2);border:1px solid var(--ink);border-radius:2px;
   box-shadow:10px 10px 0 rgba(0,0,0,.3);backdrop-filter:none;

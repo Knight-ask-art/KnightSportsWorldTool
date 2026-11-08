@@ -24,11 +24,11 @@ BANDS = [
 
 
 def _now():
-    return int(dt.datetime(2026, 11, 8, 20, 0, tzinfo=BEIJING).timestamp() * 1000)
+    return int(dt.datetime.now(BEIJING).timestamp() * 1000)
 
 
 def _day_ago_key():
-    return (dt.datetime(2026, 11, 8, tzinfo=BEIJING)
+    return (dt.datetime.now(BEIJING)
             - dt.timedelta(days=1)).strftime('%Y-%m-%d')
 
 
@@ -40,6 +40,11 @@ def test_normalize_windows_accepts_server_shapes():
         '06:00-07:59, 09:01-11:59') == BANDS[:2]
     assert safety.normalize_windows(json.dumps(BANDS)) == BANDS
     assert safety.normalize_windows([['15:01', '22:00']]) == [BANDS[-1]]
+    assert safety.normalize_windows(
+        ['06:00-07:59', '09:01-11:59']) == BANDS[:2]
+    assert safety.normalize_windows(
+        ['06:00', '07:59', '09:01', '11:59']) == BANDS[:2]
+    assert safety.normalize_windows(['06：00-07：59']) == [BANDS[0]]
 
 
 def test_policy_maps_every_band_and_writes_an_envelope():
@@ -58,24 +63,44 @@ def test_policy_maps_every_band_and_writes_an_envelope():
     assert mapped['meta']['window_count'] == 4
 
 
+def test_manual_rules_are_not_overwritten_by_a_single_server_band():
+    cached = {'auto_fetch': False, 'windows': BANDS, 'min_km': 2.0}
+    merged, changed = policy.merge_rules(
+        cached, {'runRuleModel': {'validTime': [
+            {'start': '15:01:00', 'end': '22:00:00'}]}})
+    assert changed is False
+    assert merged['windows'] == BANDS
+
+
 def test_qualification_accepts_a_later_band():
     rules = {'min_km': 2.0, 'windows': BANDS}
+    yesterday = dt.datetime.now(BEIJING) - dt.timedelta(days=1)
+    late = yesterday.replace(hour=18, minute=0, second=0, microsecond=0)
     run = {
         'juli': 2500, 'sportTime': 900, 'total_steps': 1300,
-        'locPoints': [{'flag': int(dt.datetime(
-            2026, 11, 7, 18, 0, tzinfo=BEIJING).timestamp() * 1000)}],
+        'locPoints': [{'flag': int(late.timestamp() * 1000)}],
         'fivePoint': [],
     }
     model = qualification.evaluate(run, rules, daily_runs=0)
     check = [c for c in model['checks'] if c['id'] == 'window'][0]
     assert check['status'] == 'pass', check
 
-    run['locPoints'][0]['flag'] = int(dt.datetime(
-        2026, 11, 7, 8, 30, tzinfo=BEIJING).timestamp() * 1000)
+    gap = yesterday.replace(hour=8, minute=30, second=0, microsecond=0)
+    run['locPoints'][0]['flag'] = int(gap.timestamp() * 1000)
     model = qualification.evaluate(run, rules, daily_runs=0)
     check = [c for c in model['checks'] if c['id'] == 'window'][0]
     assert check['status'] == 'fail'
     assert '15:01–22:00' in check['detail']
+
+    # The backend requires the whole run inside one band; the model must not
+    # say "pass" for a start that leaves only 10 minutes in 15:01-22:00.
+    late = yesterday.replace(hour=21, minute=50, second=0, microsecond=0)
+    run['locPoints'][0]['flag'] = int(late.timestamp() * 1000)
+    run['sportTime'] = 40 * 60
+    model = qualification.evaluate(run, rules, daily_runs=0)
+    check = [c for c in model['checks'] if c['id'] == 'window'][0]
+    assert check['status'] == 'fail'
+    assert '放不进' in check['detail']
 
 
 def test_resolve_start_uses_windows_and_rejects_gaps():
@@ -129,7 +154,8 @@ def test_theme_boot_reads_ui_state(tmp_path):
     with open(tmp_path / 'ui_state.json', 'w', encoding='utf-8') as fh:
         json.dump({'skin': 'archive'}, fh)
     script = http_server.theme_boot_js(str(tmp_path))
-    assert "data-skin','archive'" in script
+    assert 'data-skin' in script and '"archive"' in script
+    assert "data-skin-source" in script
 
 
 def test_index_loads_skin_system_before_styles():

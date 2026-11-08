@@ -103,8 +103,10 @@ def theme_boot_js(store_dir: str | None = None) -> str:
             skin = P.normalize_skin(data.get('skin'))
     except (OSError, ValueError):
         pass
-    return ("(function(){try{document.documentElement.setAttribute("
-            "'data-skin','%s');}catch(e){}})();\n" % skin)
+    return ("(function(){try{var r=document.documentElement;"
+            "r.setAttribute('data-skin',%s);"
+            "r.setAttribute('data-skin-source','server');"
+            "}catch(e){}})();\n" % json.dumps(skin))
 
 
 #: The bridge is loopback-only.  A Host/Origin from any other name is a

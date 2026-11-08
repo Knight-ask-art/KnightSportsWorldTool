@@ -164,7 +164,7 @@ def _clock_minutes(text: str) -> int:
 
 def _window_minutes(text) -> int | None:
     """Parse a window clock, including ``24:00`` as an end-of-day marker."""
-    raw = str(text or '').strip()
+    raw = str(text or '').strip().replace('：', ':')
     if not raw:
         return None
     parts = raw.split(':')
@@ -223,8 +223,9 @@ def _window_pairs(raw) -> list[tuple[int, int]]:
             if isinstance(parsed, (list, dict)):
                 walk(parsed)
                 return
-            text = text.replace('–', '-').replace('—', '-')
+            text = text.replace('–', '-').replace('—', '-').replace('－', '-')
             text = text.replace('；', ',').replace(';', ',').replace('、', ',')
+            text = text.replace('：', ':')
             text = text.replace('\n', ',')
             for piece in text.split(','):
                 if '-' not in piece:
@@ -240,10 +241,16 @@ def _window_pairs(raw) -> list[tuple[int, int]]:
                 value.get('end', value.get('endTime')))
             return
         if isinstance(value, (list, tuple)):
-            # A flat ["06:00", "07:59"] is one pair, not two strings.
-            if (len(value) == 2 and all(isinstance(v, str) and ':' in v
-                                        for v in value)):
-                add(value[0], value[1])
+            # A flat list of clocks is paired in order: ["06:00", "07:59"] or
+            # ["06:00", "07:59", "09:01", "11:59"].  Range strings such as
+            # "06:00-07:59" are not clocks and fall through to walk().
+            if value and all(
+                    isinstance(v, str)
+                    and re.search(r'\d{1,2}[:：]\d{2}', v)
+                    and not re.search(r'[-–—－]', v)
+                    for v in value):
+                for i in range(0, len(value) - 1, 2):
+                    add(value[i], value[i + 1])
                 return
             for item in value:
                 if isinstance(item, (list, tuple)) and len(item) >= 2:
@@ -294,10 +301,32 @@ def in_windows(hhmm: str, windows) -> bool:
         b = _window_minutes(w['end'])
         if a is None or b is None:
             continue
-        if b <= a:  # overnight band
-            if minute >= a or minute < b:
-                return True
-        elif a <= minute <= b:
+        if a <= minute <= b:
+            return True
+    return False
+
+
+def run_fits_window(hhmm: str, duration_minutes: float, windows) -> bool:
+    """True only when the whole run fits inside one same-day band.
+
+    The submit path (``resolve_start_ms``) uses this rule, so the qualification
+    model must use it too; otherwise the UI says "合格" and the submit fails a
+    second later with "结束会超过有效时段".
+    """
+    try:
+        minute = _clock_minutes(hhmm)
+    except ValueError:
+        return False
+    try:
+        duration = max(0.0, float(duration_minutes or 0))
+    except (TypeError, ValueError):
+        duration = 0.0
+    for w in normalize_windows(windows):
+        a = _window_minutes(w['start'])
+        b = _window_minutes(w['end'])
+        if a is None or b is None:
+            continue
+        if a <= minute and minute + duration <= b:
             return True
     return False
 

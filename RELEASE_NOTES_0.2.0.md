@@ -53,7 +53,7 @@ v0.2.0 改为：
 
 ## 测试
 
-- `pytest app/tests -q`：675 passed
+- `pytest app/tests -q`：676 passed
 - `python -m replica.selfcheck`：28/28 模块通过
 - JS 语法检查通过
 - 外观四套皮肤在 1440×1000 下逐页截图检查

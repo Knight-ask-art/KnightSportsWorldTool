@@ -426,8 +426,12 @@ def evaluate(run: dict, rules: dict, checkpoints: list | None = None,
         if not m['start_hhmm']:
             window_ok = False
         else:
-            window_ok = safety.in_windows(m['start_hhmm'], windows)
+            window_ok = safety.run_fits_window(
+                m['start_hhmm'], m['minutes'], windows)
         detail = '要求 ' + safety.format_windows(windows)
+        if (not window_ok and m['start_hhmm']
+                and safety.in_windows(m['start_hhmm'], windows)):
+            detail += '；当前 %.0f 分钟放不进这个时段' % m['minutes']
         add('window', '开始时间', 'pass' if window_ok else 'fail',
             m['start_hhmm'] or '—', detail, True)
     elif not ws and not we:
