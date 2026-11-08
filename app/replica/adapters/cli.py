@@ -1029,8 +1029,12 @@ def main(argv=None, client_factory=None):
                 getattr(args, 'pause', None))
         except ValueError as e:
             return _fail(str(e), 1)
-        from ..domain.rundata import estimate_pause_seconds
-        duration_s = args.km * args.pace * 60.0
+        from ..domain.rundata import (estimate_pause_seconds,
+                                      planned_active_seconds)
+        raw_kt = str(getattr(args, 'km_times', '') or '').strip()
+        km_times = ([float(x) for x in raw_kt.split(',') if x.strip()]
+                    if raw_kt else None)
+        duration_s = planned_active_seconds(args.km, args.pace, km_times)
         duration_s += estimate_pause_seconds(
             getattr(args, 'pause_profile', 'none'), pauses_for_estimate,
             int(duration_s))

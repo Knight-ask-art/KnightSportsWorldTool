@@ -3649,8 +3649,9 @@ class ReplicaApi:
                 if not wps:
                     return _fail('尚未解析校区坐标，请先加载围栏/点位')
                 lat, lng = wps[0]
-            from ..domain.rundata import estimate_pause_seconds
-            duration_s = float(km) * float(pace) * 60.0
+            from ..domain.rundata import (estimate_pause_seconds,
+                                          planned_active_seconds)
+            duration_s = planned_active_seconds(km, pace, km_times)
             duration_s += estimate_pause_seconds(
                 pause_profile, None, int(duration_s))
             rules = Q.load_rules()
@@ -4016,7 +4017,8 @@ class ReplicaApi:
         # validTime bands decide the allowed starts; merge the policy fetched
         # above so a stale school_rules.json cannot reject a valid 18:00 run.
         from ..domain import safety as S
-        from ..domain.rundata import estimate_pause_seconds
+        from ..domain.rundata import (estimate_pause_seconds,
+                                      planned_active_seconds)
         from ..application import qualification as Q
         from ..application import policy as POL
         rules = Q.load_rules()
@@ -4026,7 +4028,7 @@ class ReplicaApi:
                 Q.save_rules(rules)
             except Exception:  # noqa: BLE001
                 pass
-        duration_s = float(km) * float(pace) * 60.0
+        duration_s = planned_active_seconds(km, pace, km_times)
         duration_s += estimate_pause_seconds(
             pause_profile, None, int(duration_s))
         try:

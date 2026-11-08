@@ -1025,6 +1025,28 @@ def _terrain_factors(altitude_profile, seg_m: list[float]) -> list[float] | None
     return out
 
 
+def planned_active_seconds(distance_km: float, pace_min_per_km: float,
+                           km_times=None) -> float:
+    """Active seconds the submit gate should reserve before generation.
+
+    With manual per-km splits the generated ``sportTime`` is the sum of those
+    splits, not ``km * pace``.  The start-slot reservation must use the same
+    number or the model and the submit path disagree at a band boundary.
+    """
+    if km_times:
+        vals = []
+        for value in km_times:
+            try:
+                seconds = float(value)
+            except (TypeError, ValueError):
+                continue
+            if seconds > 0:
+                vals.append(seconds)
+        if vals:
+            return sum(vals)
+    return float(distance_km) * float(pace_min_per_km) * 60.0
+
+
 def estimate_pause_seconds(profile: str, manual: list | None = None,
                            total_seconds: int = 0) -> int:
     """Upper bound for start-slot reservation before generation.

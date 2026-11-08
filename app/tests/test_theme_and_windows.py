@@ -63,6 +63,12 @@ def test_policy_maps_every_band_and_writes_an_envelope():
     assert mapped['meta']['window_count'] == 4
 
 
+def test_manual_split_duration_replaces_km_times_pace_estimate():
+    from replica.domain import rundata
+    assert rundata.planned_active_seconds(2.0, 6.0, [300, 420]) == 720
+    assert rundata.planned_active_seconds(2.0, 6.0, None) == 720
+
+
 def test_pause_reserve_is_included_in_the_window_fit():
     from replica.domain import rundata
     yesterday = dt.datetime.now(BEIJING) - dt.timedelta(days=1)

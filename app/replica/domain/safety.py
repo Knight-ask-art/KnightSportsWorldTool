@@ -245,6 +245,9 @@ def _window_pairs(raw, errors: list | None = None) -> list[tuple[int, int]]:
             text = text.replace('；', ',').replace(';', ',').replace('、', ',')
             text = text.replace('：', ':')
             text = text.replace('\n', ',')
+            if ':' not in text and '-' not in text:
+                record('时段格式不对：%s' % text)
+                return
             for piece in text.split(','):
                 if '-' not in piece:
                     if ':' in piece:
@@ -284,6 +287,9 @@ def _window_pairs(raw, errors: list | None = None) -> list[tuple[int, int]]:
                     walk(item)
                 if len(out) >= MAX_WINDOWS * 2:
                     break
+            return
+        if errors is not None and value is not None:
+            record('时段格式不对：%r' % (value,))
 
     walk(raw)
     return out
