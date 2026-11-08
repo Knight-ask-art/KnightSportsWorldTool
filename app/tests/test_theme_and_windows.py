@@ -63,6 +63,23 @@ def test_policy_maps_every_band_and_writes_an_envelope():
     assert mapped['meta']['window_count'] == 4
 
 
+def test_pause_reserve_is_included_in_the_window_fit():
+    from replica.domain import rundata
+    yesterday = dt.datetime.now(BEIJING) - dt.timedelta(days=1)
+    start = yesterday.replace(hour=21, minute=45, second=0, microsecond=0)
+    run = rundata.generate_run_data(
+        2.5, 6.0, 150, center_lat=22.4108, center_lng=112.9408,
+        start_ms=int(start.timestamp() * 1000), pause_profile='auto')
+    assert run['pause_reserve_s'] == 180
+    model = qualification.evaluate(
+        run, {'min_km': 2.0, 'windows': BANDS}, daily_runs=0)
+    check = [c for c in model['checks'] if c['id'] == 'window'][0]
+    # 15 min active fits 21:45-22:00, but the submit path reserves 18 min
+    # (15 active + up to 3 min pause), which ends at 22:03.
+    assert check['status'] == 'fail'
+    assert '预留' in check['detail']
+
+
 def test_manual_rules_are_not_overwritten_by_a_single_server_band():
     cached = {'auto_fetch': False, 'windows': BANDS, 'min_km': 2.0}
     merged, changed = policy.merge_rules(
@@ -126,6 +143,16 @@ def test_empty_random_stays_inside_a_band():
                                         now=now, windows=BANDS)
         hhmm = safety.to_beijing(start).strftime('%H:%M')
         assert safety.in_windows(hhmm, BANDS), hhmm
+
+
+def test_bad_window_rows_are_rejected_not_silently_deleted():
+    rules, errors = qualification.normalize_rules({
+        'windows': [{'start': '06:00'}, {'start': '09:01', 'end': '11:59'}]
+    })
+    assert errors
+    assert '缺少结束时间' in '；'.join(errors)
+    # The valid row is still parsed for preview, but save_rules must refuse.
+    assert rules['windows'] == [{'start': '09:01', 'end': '11:59'}]
 
 
 def test_rules_roundtrip_keeps_windows(tmp_path, monkeypatch):

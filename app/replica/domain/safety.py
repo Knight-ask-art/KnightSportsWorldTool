@@ -189,23 +189,41 @@ def _fmt_window_minutes(minutes: int) -> str:
     return '%02d:%02d' % (minutes // 60, minutes % 60)
 
 
-def _window_pairs(raw) -> list[tuple[int, int]]:
+def _window_pairs(raw, errors: list | None = None) -> list[tuple[int, int]]:
     """Turn every accepted server/UI shape into ``(start, end)`` minutes.
 
     The parser is deliberately flat: server replies have used dicts, 2-item
     lists, ``"06:00-07:59"`` strings and JSON-encoded strings.  A recursive
     tuple handler here used to loop forever on a plain tuple.
+
+    ``errors`` is optional.  The settings save path passes a list so malformed
+    rows are rejected instead of being silently deleted; policy parsing leaves
+    it ``None`` and simply ignores bad server entries.
     """
     import json as _json
 
     out: list[tuple[int, int]] = []
 
+    def record(message):
+        if errors is not None:
+            errors.append(message)
+
     def add(a, b):
         start_min = _window_minutes(a)
         end_min = _window_minutes(b)
         if start_min is None or end_min is None:
+            has_a = bool(str(a or '').strip())
+            has_b = bool(str(b or '').strip())
+            if has_a and not has_b:
+                record('时段缺少结束时间：%s' % a)
+            elif has_b and not has_a:
+                record('时段缺少开始时间：%s' % b)
+            elif has_a or has_b:
+                record('时段格式不对：%s–%s（要写成 HH:MM）' % (a, b))
             return
         if start_min >= 24 * 60 or end_min <= start_min:
+            record('时段结束要晚于开始：%s–%s' % (_fmt_window_minutes(start_min),
+                                                _fmt_window_minutes(end_min)))
             return
         out.append((start_min, end_min))
 
@@ -229,6 +247,8 @@ def _window_pairs(raw) -> list[tuple[int, int]]:
             text = text.replace('\n', ',')
             for piece in text.split(','):
                 if '-' not in piece:
+                    if ':' in piece:
+                        record('时段缺少结束时间：%s' % piece.strip())
                     continue
                 a, b = piece.split('-', 1)
                 add(a, b)
@@ -251,6 +271,8 @@ def _window_pairs(raw) -> list[tuple[int, int]]:
                     for v in value):
                 for i in range(0, len(value) - 1, 2):
                     add(value[i], value[i + 1])
+                if len(value) % 2:
+                    record('时段缺少结束时间：%s' % value[-1])
                 return
             for item in value:
                 if isinstance(item, (list, tuple)) and len(item) >= 2:
@@ -267,15 +289,16 @@ def _window_pairs(raw) -> list[tuple[int, int]]:
     return out
 
 
-def normalize_windows(raw) -> list[dict]:
+def normalize_windows(raw, errors: list | None = None) -> list[dict]:
     """Return a stable, de-duplicated ``[{start, end}]`` list.
 
     Same-day windows are the normal case.  A window whose end is earlier than
     its start is treated as malformed and ignored; the reference client's
     validTime bands are same-day, and a malformed reply must not create a
-    confusing overnight slot.
+    confusing overnight slot.  Pass ``errors`` to collect malformed rows for
+    the settings save path.
     """
-    pairs = list(_window_pairs(raw))
+    pairs = list(_window_pairs(raw, errors))
     seen = set()
     out = []
     for a, b in sorted(pairs):

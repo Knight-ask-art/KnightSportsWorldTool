@@ -6863,7 +6863,8 @@ async function fetchSchoolRules(opts){
     }
     if(meta.day_goal_m) notes.push('服务器每日目标 ' + (meta.day_goal_m / 1000).toFixed(1) + ' km（未映射）');
     const labels = keys.map(k => RULE_LABELS[k] || k);
-    const hint = '已从服务器自动填入 ' + labels.join('、') + '；可修改后保存。' +
+    const hint = '已从服务器自动填入并保存 ' + labels.join('、') +
+      '；可修改后再次保存。' +
       (notes.length ? ' ' + notes.join('；') + '。' : '');
     const saved = await persistRules(merged, {silent: true, hint});
     if(!saved){
@@ -6876,7 +6877,7 @@ async function fetchSchoolRules(opts){
     liveLog('学校规则已从服务器填入',
       'runMode ' + d.run_mode + ' · ' + labels.join('、') +
       (notes.length ? ' · ' + notes.join('；') : ''), 'ok');
-    if(!opts.silent) toast('已填入服务器规则，请确认后保存');
+    if(!opts.silent) toast('已填入服务器规则并保存');
     return true;
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = '从服务器读取'; }

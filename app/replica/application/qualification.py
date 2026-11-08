@@ -181,7 +181,9 @@ def normalize_rules(raw: dict) -> tuple[dict, list[str]]:
 
     # Canonical multi-band field.  Older files only have one pair; migrate
     # that pair into the list so the evaluation path is the same for both.
-    windows = safety.normalize_windows(raw.get('windows'))
+    window_errors = []
+    windows = safety.normalize_windows(raw.get('windows'), window_errors)
+    errors.extend(window_errors)
     legacy_start = _clock(raw.get('window_start'), '时间窗开始', errors)
     legacy_end = _clock(raw.get('window_end'), '时间窗结束', errors)
     if not windows and legacy_start and legacy_end:
@@ -336,8 +338,11 @@ def metrics(run: dict) -> dict:
 
     five = run.get('fivePoint') or []
     passed = sum(1 for p in five if p.get('isPass'))
+    pause_reserve = float(run.get('pause_reserve_s') or 0)
+    elapsed_minutes = (seconds + pause_reserve) / 60.0
     return {
-        'km': km, 'seconds': seconds, 'minutes': minutes, 'pace': pace,
+        'km': km, 'seconds': seconds, 'minutes': minutes,
+        'elapsed_minutes': elapsed_minutes, 'pace': pace,
         'steps': steps, 'cadence': cadence, 'stride': stride,
         'speed_min': speed_min, 'speed_max': speed_max, 'pace_cv': pace_cv,
         'stop_share': stop_share,
@@ -427,11 +432,11 @@ def evaluate(run: dict, rules: dict, checkpoints: list | None = None,
             window_ok = False
         else:
             window_ok = safety.run_fits_window(
-                m['start_hhmm'], m['minutes'], windows)
+                m['start_hhmm'], m['elapsed_minutes'], windows)
         detail = '要求 ' + safety.format_windows(windows)
         if (not window_ok and m['start_hhmm']
                 and safety.in_windows(m['start_hhmm'], windows)):
-            detail += '；当前 %.0f 分钟放不进这个时段' % m['minutes']
+            detail += '；当前预留 %.0f 分钟放不进这个时段' % m['elapsed_minutes']
         add('window', '开始时间', 'pass' if window_ok else 'fail',
             m['start_hhmm'] or '—', detail, True)
     elif not ws and not we:
