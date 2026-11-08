@@ -155,6 +155,16 @@ def test_bad_window_rows_are_rejected_not_silently_deleted():
     assert rules['windows'] == [{'start': '09:01', 'end': '11:59'}]
 
 
+def test_save_rejects_bad_window_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv('JHP_DATA_DIR', str(tmp_path))
+    try:
+        qualification.save_rules({'windows': [{'start': '06:00'}]})
+    except ValueError as exc:
+        assert '缺少结束时间' in str(exc)
+    else:
+        raise AssertionError('malformed window row was saved silently')
+
+
 def test_rules_roundtrip_keeps_windows(tmp_path, monkeypatch):
     monkeypatch.setenv('JHP_DATA_DIR', str(tmp_path))
     saved = qualification.save_rules({

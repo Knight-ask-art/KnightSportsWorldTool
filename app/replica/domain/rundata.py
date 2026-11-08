@@ -1906,8 +1906,13 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         # The submit path reserves this upper bound before the RNG chooses
         # actual pauses; the qualification model must use the same number or
         # its "fits in the band" check is looser than the submit gate.
+        # Use the larger of generated and requested active time so a rounding
+        # difference at the 10-minute boundary cannot make the model reserve
+        # less than the submit path.
         'pause_reserve_s': estimate_pause_seconds(
-            pause_profile, pauses, total_seconds),
+            pause_profile, pauses,
+            max(int(total_seconds),
+                int(round(distance_km * pace_min_per_km * 60)))),
         'wall_stop_ms': t0 + total_seconds * 1000 + pause_total_s * 1000,
         'pause_windows': pause_windows,
         'gps_profile': str(gps_profile or 'urban').lower(),
