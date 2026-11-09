@@ -21,6 +21,17 @@ Invoke-RestMethod https://api.instabox.sh/v1/machines -Headers $h
 
 ## 2. 标准流水线
 
+### 2.0 参考项目
+
+协议/真实性相关改动前，先看两个上游有没有新东西：
+
+```powershell
+python scripts\check_references.py
+```
+
+返回 `NO CHANGES` 就继续；有变化时按 `docs/reference-projects.md` 的映射
+在 InstaBox 上拉取 diff，不要复制代码，只吸收字段、阈值和结论。
+
 ### 2.1 接单与复现
 
 1. 从 issue 或对话里写清楚：现象、期望、复现命令、影响版本。
@@ -198,6 +209,8 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 - 本地：687 passed；云 Linux：668 passed + 19 skipped。
 - 云机器：`agent-browser-yrbo`（Linux，OpenCode/Claude/Codex/Docker）、
   `b`（Android 14，adb 在线）。
+- 参考项目：`docs/reference-projects.md`；检查脚本 `scripts/check_references.py`，
+  基线状态在 `output/reference-state.json`（不提交）。
 - 已知坑：`installer.nsi` 必须 UTF-8 BOM；`origin/main` 是发布孤儿分支；
   `pyproject.toml` 版本容易漏改；GitHub 直链 HEAD 偶尔 504，实际 GET 可成功。
 
