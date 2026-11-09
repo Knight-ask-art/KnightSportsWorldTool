@@ -182,6 +182,8 @@ Copy-Item dist\latest.json ..\github-release\latest.json -Force
 4. 发布分支是**独立的 release 线**（`origin/main` 只有 README / assets /
    latest.json，与源码 `master` 没有共同祖先）。把 `github-release/` 的内容
    提交到 `main`，打 tag `v<version>`，再推 `main` 和 tag。
+   **tag 不带源码**，所以「回滚」指下载 `latest.json` 里 `rollback` 指向的
+   旧二进制覆盖安装，不是从 tag 重建源码。
 5. 上传 5 个资产到同一个 Release：
    `setup.exe`、`setup.sha256`、`zip`、`zip.sha256`、`latest.json`。
 6. 重新下载 Release 资产，核对 SHA256；确认 raw `main/latest.json` 和 jsDelivr
@@ -192,8 +194,8 @@ Copy-Item dist\latest.json ..\github-release\latest.json -Force
 
 | 环境 | 命令 | 期望 |
 |---|---|---|
-| Windows 本地 | `pytest tests -q` | 689 passed |
-| InstaBox Linux | `python scripts/cloud_test.py` | 670 passed, 19 skipped |
+| Windows 本地 | `pytest tests -q` | 691 passed |
+| InstaBox Linux | `python scripts/cloud_test.py` | 672 passed, 19 skipped |
 | Windows 冻结包 | `好想跑.exe --check` | exit 0 |
 | Windows HTTP | `--no-window --port` + 登录页 | 200 |
 | 自检 | `python -m replica.selfcheck` | 28/28 |
@@ -214,7 +216,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 ## 5. 当前基线（2026-11-09）
 
 - 产品版本：`0.2.1`（源码已改，**尚未打包/发布**）；回滚版本 `0.1.9`。
-- 本地：689 passed；云 Linux：670 passed + 19 skipped。
+- 本地：691 passed；云 Linux：672 passed + 19 skipped。
 - 云机器：`agent-browser-yrbo`（Linux，OpenCode/Claude/Codex/Docker）、
   `b`（Android 14，adb 在线）。
 - 参考项目：`docs/reference-projects.md`；检查脚本 `scripts/check_references.py`，
@@ -230,8 +232,8 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 |---|---|---|
 | 参考项目 | `python scripts\check_references.py` | `NO CHANGES` |
 | 版本/BOM 预检 | `python scripts\release_check.py --source-only` | PASS，0 warning |
-| 本地测试 | `cd app; python -m pytest tests -q` | 689 passed |
-| 云 Linux | `python scripts\cloud_test.py` | 670 passed, 19 skipped |
+| 本地测试 | `cd app; python -m pytest tests -q` | 691 passed |
+| 云 Linux | `python scripts\cloud_test.py` | 672 passed, 19 skipped |
 | Claude 审查 | `scripts\claude_review.ps1 -Round 1 -WithTests` | 见 `output/reviews/0.2.1/round-1.md` |
 
 发现并修掉的工作流问题：
@@ -248,4 +250,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 5. **版本预检漏掉发布说明和更新器文案**：`release_check.py` 现在会检查
    `RELEASE_NOTES_<version>.md` 是否存在，以及 `make_latest.py` 里有没有
    对应的 `RELEASE_NOTES['<version>']` 和 `DEFAULT_VERSION`。
+6. **OBS 的 220 spm 上限会截断步数窗**：UI 允许 260 spm，旧上限让 OBS 与
+   提交体在 240 spm 时差 351 步。删除上限，窗口步数完全以 `rundata` 为准，
+   并加 240 spm 回归。
 

@@ -27,7 +27,8 @@ v0.2.1 改为：
 
 提交体的 `speedPerTenSec` / `stepsPerTenSec` 和 OBS 的 `speed_json` /
 `step_freq_json` 现在读同一份窗口数组；OBS 的距离精度从 2 位统一到 4 位，
-不再出现“同一条记录两个载荷差几毫米”的情况。
+不再出现“同一条记录两个载荷差几毫米”的情况。OBS 也不再按 220 spm 截断
+步数窗，240 spm 的高步频记录同样逐项相等。
 
 回归：`test_run_realism.py::test_obs_and_submit_read_the_same_windows_and_points`。
 
@@ -50,3 +51,9 @@ v0.2.1 改为：
 - 27 键来自 7.4.0 FridaDump 的 `MyLocation`（`im/mp/ra` 只有 `@Column`）与
   10-26 真机抓包；
 - 以上只证明“形状与已知证据一致”，不证明服务端一定接受。
+
+## 6. 回滚
+
+回滚版本是 v0.1.9：下载 v0.1.9 的安装包覆盖安装即可，`data/` 会保留。
+发布 tag 在独立的 release 分支上，只带 `README.md`、`assets/`、`latest.json`，
+不含源码；回滚指二进制回滚，不是从 tag 重建。

@@ -284,9 +284,6 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
     id_base = (int(start_ms) // 1000) % 100000
     for i, v in enumerate(values):
         d = dict(v)
-        b = int(d.get('beginTime', start_ms))
-        e = int(d.get('endTime', start_ms))
-        window_s = max(0.001, (e - b) / 1000.0)
         if d.get('distance') is not None:
             # Keep the same precision as the submission body.  Rounding OBS
             # to 2 decimals made the two payloads disagree by a few millimetres
@@ -294,11 +291,12 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
             # can use against us (reference project K).
             d['distance'] = round(float(d['distance']), 4)
         if d.get('stepsNum') is not None:
-            # Guard against an impossible cadence, but keep the total steps:
-            # the source already allocated only what fits in this window.
-            max_steps = int(math.ceil(220.0 * window_s / 60.0))
-            d['stepsNum'] = max(0, min(
-                max_steps, int(round(float(d['stepsNum'])))))
+            # The source allocated the steps for this exact window.  Capping
+            # here (the old 220 spm guard) silently changed the total and made
+            # OBS disagree with the submission body whenever the UI's cadence
+            # exceeded 204 spm.  Keep the value; the generator/audit own the
+            # plausibility checks.
+            d['stepsNum'] = max(0, int(round(float(d['stepsNum']))))
         d['id'] = id_base + i
         # A real 7.2/7.3 record advances the batch every three 10 s windows
         # (0,0,0,1,1,1,...), matching the point column's 30 s queue.

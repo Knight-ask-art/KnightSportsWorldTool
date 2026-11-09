@@ -267,3 +267,15 @@ def test_obs_backfills_step_distance_for_legacy_wire_points():
     assert [p['stepDistance'] for p in pts] == [
         p['stepDistance'] for p in run['locPoints']]
     assert pts[-1]['stepDistance'] == pytest.approx(run['juli'], abs=1.0)
+
+
+def test_obs_windows_keep_high_cadence_totals():
+    # The UI allows up to 260 spm.  The old 220 spm guard in `_obs_windows`
+    # silently dropped steps and made OBS disagree with the submission body.
+    run = generate_run_data(2.5, 6.0, 240, waypoints=WAYPOINTS, closed=True,
+                            rng=random.Random(2))
+    obj = OBS.build_obs_object(run, 1333336474, 'UUID-CAD240', 99999999)
+    st = json.loads(gzip.decompress(base64.b64decode(obj['step_freq_json'])))
+    assert [w['stepsNum'] for w in st] == [
+        w['stepsNum'] for w in run['step_freq_json']]
+    assert sum(w['stepsNum'] for w in st) == run['total_steps']
