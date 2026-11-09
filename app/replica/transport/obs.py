@@ -151,13 +151,12 @@ def _cumulative(run: dict):
 
 
 def conv_point(loc, start_ms, cum_d, cum_t, cum_s, prev,
-               stride: float = 0.0) -> dict:
+               step_distance: float = 0.0) -> dict:
     """One 27-key 7.4.0 OBS point (no `steps`; `speed` is pace).
 
-    ``stride`` is the run-wide metres-per-step estimate.  `stepDistance` is a
-    cumulative pedometer distance, so the point's cumulative step count is
-    multiplied by it; leaving the column at 0.0 is the tell the reference
-    project calls out.
+    ``step_distance`` is the cumulative pedometer distance.  Callers should
+    pass ``locPoints[*]['stepDistance']`` so the submission body and OBS read
+    the same column; the default only exists for hand-built legacy payloads.
     """
     if CONVERT_BD:
         glat, glng = bd09_to_gcj02(loc['lat'], loc['lng'])
@@ -190,7 +189,7 @@ def conv_point(loc, start_ms, cum_d, cum_t, cum_s, prev,
         'radius': 5.0,
         'speed': round(pace, 2),
         'state': 1,
-        'stepDistance': round(cum_s * stride, 3) if stride > 0 else 0.0,
+        'stepDistance': round(step_distance, 3),
         'totalDis': round(cum_d, 4),
         'totalTime': int(round(cum_t)),
         'type': 0,
@@ -319,19 +318,32 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
     pts = run.get('wire_points')
     if not pts:
         cum_d, cum_t, cum_s = _cumulative(run)
-        stride = (float(run['juli'])
-                  / max(1, int(run.get('total_steps') or 0)))
+        total_steps = int(run.get('total_steps') or 0)
+        stride = (float(run['juli']) / total_steps
+                  if total_steps > 0 else 0.0)
+        loc_points = run.get('locPoints') or []
         pts = []
         prev = (0.0, 0.0)
         for i, loc in enumerate(run['allLocJson']):
+            step_distance = (
+                loc_points[i].get('stepDistance', 0.0)
+                if i < len(loc_points) else cum_s[i] * stride)
             p = conv_point(loc, start_ms, cum_d[i], cum_t[i], cum_s[i], prev,
-                           stride=stride)
+                           step_distance=step_distance)
             prev = (cum_d[i], cum_t[i])
             pts.append(p)
         # upstream: the first point takes the first non-zero speed
         if len(pts) > 1:
             for k in ('speed', 'avgSpeed', 'bdS'):
                 pts[0][k] = pts[1][k]
+
+    # `locPoints` is the single source of truth for the cumulative pedometer
+    # column.  A legacy/hand-built `wire_points` list may predate it; copy the
+    # value in so OBS and the submission body cannot drift.
+    loc_points = run.get('locPoints') or []
+    if pts and len(pts) == len(loc_points):
+        for dst, src in zip(pts, loc_points):
+            dst['stepDistance'] = src.get('stepDistance', 0.0)
 
     run_wrap = {
         'allLocJson': json.dumps(pts, ensure_ascii=False, separators=(',', ':')),

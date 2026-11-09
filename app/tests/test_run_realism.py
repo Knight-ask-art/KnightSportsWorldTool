@@ -224,7 +224,7 @@ def test_step_distance_is_cumulative_not_zero():
         assert values[0] == 0.0, (seed, values[:3])
         assert all(b + 1e-6 >= a for a, b in zip(values, values[1:])), seed
         assert values[-1] > 0.9 * run['juli'], (seed, values[-1], run['juli'])
-        assert abs(values[-1] - run['juli']) <= max(10.0, run['juli'] * 0.1)
+        assert abs(values[-1] - run['juli']) <= max(5.0, run['juli'] * 0.01)
         # It must be its own cumulative column, not another `totalDis` copy.
         assert any(abs(a - b) > 1.0
                    for a, b in zip(values, [p['totalDis']
@@ -251,3 +251,19 @@ def test_obs_and_submit_read_the_same_windows_and_points():
         run['sportTime'] * 1000)
     assert sum(w['endTime'] - w['beginTime'] for w in st) == (
         run['sportTime'] * 1000)
+
+
+def test_obs_backfills_step_distance_for_legacy_wire_points():
+    run = _run(2)
+    legacy = [dict(p) for p in run['wire_points']]
+    for point in legacy:
+        point.pop('stepDistance', None)
+    run = dict(run)
+    run['wire_points'] = legacy
+
+    obj = OBS.build_obs_object(run, 1333336473, 'UUID-LEGACY', 99999999)
+    wrap = json.loads(gzip.decompress(base64.b64decode(obj['run_data'])))
+    pts = json.loads(wrap['allLocJson'])
+    assert [p['stepDistance'] for p in pts] == [
+        p['stepDistance'] for p in run['locPoints']]
+    assert pts[-1]['stepDistance'] == pytest.approx(run['juli'], abs=1.0)
