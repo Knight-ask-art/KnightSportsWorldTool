@@ -669,3 +669,12 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 不补 `accuracy` / `hasAltitude` / `steps` | 7.4.0 dex 的 `MyLocation` 确有 30 个字段，但 `im/mp/ra` 只有 `@Column`、没有 `@SerializedName`，Gson 实际只发 27 键；10-26 抓包 103/103 点也是 27 键。repo 2 的 `wire.rs` 把 DB 字段也算进了线上载荷 | 保持 27 键；如果未来拿到 7.4.x 真机载荷明确带这 3 键，再按证据加 |
 | OBS 与提交体共用 10 s 窗口，距离精度统一 4 位 | 参考项目 K 项：两处各算一遍或精度不同，服务端把两个载荷对起来就能看见矛盾 | OBS `_obs_windows` 不再把 `distance` 降到 2 位；回归逐项比较提交体与 OBS 的 `distance` / `stepsNum` 和窗时长合计 |
 | 点结构继续由 `application.audit` 自检 | 27 键、`stepDistance` 累计、窗口守恒都是离线可验证的形状约束 | 只证明与已知证据一致，不证明服务端接受 |
+
+## 24. v0.2.1：公告改为数据驱动模块（2026-11-09）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| 公告内容放 `application/announcements.py` | 以后换文案、换二维码、加第二条公告只改一个 catalog，不碰 `index.html` / `app.js` | 公告只是本地 UI，不影响协议、账号或提交 |
+| 前端 `js/announcements.js` 只做通用渲染 | 图片、正文、群号、复制按钮、已读状态都可以由数据描述 | 不把远端 HTML 直接插入页面，文案用 `textContent`；图片只接受 `assets/<file>` |
+| 已读状态按 id 存 `announcement_seen` | 同一条公告只弹一次；改内容时把 `version` 加 1 即可再次提示 | 存在 `data/ui_state.json`，不依赖随机端口上的 localStorage |
+| 设置 → 关于保留入口 | 用户关掉后仍能主动打开，不靠“再弹一次” | 入口用 `data-announcement-id` 绑定，公告 id 变化时同步改按钮 |

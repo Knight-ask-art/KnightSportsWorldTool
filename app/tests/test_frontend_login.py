@@ -61,6 +61,22 @@ def test_login_requires_the_disclaimer_acknowledgement():
     assert "liveApi('real_logout', {local_only: true}" in JS
 
 
+def test_announcements_are_data_driven_and_use_the_bundled_qr():
+    ann_js = (FRONTEND / 'js' / 'announcements.js').read_text(encoding='utf-8')
+    catalog = (ROOT / 'replica' / 'application' / 'announcements.py').read_text(
+        encoding='utf-8')
+    assert '<script src="js/announcements.js"></script>' in HTML
+    assert 'data-announcement-id="qq-group-2026-11"' in HTML
+    assert 'Announcements.maybeShow' in JS
+    assert 'announcement_seen' in ann_js
+    assert 'real_get_announcements' in ann_js
+    assert 'real_set_ui_state' in ann_js
+    assert "'id': 'qq-group-2026-11'" in catalog
+    assert "'image': 'assets/qq-group.jpg'" in catalog
+    assert '1125996019' in catalog
+    assert (FRONTEND / 'assets' / 'qq-group.jpg').is_file()
+
+
 def test_login_remembers_password_only_through_the_encrypted_bridge():
     assert 'id="loginRemember"' in HTML
     assert '使用系统加密' in HTML

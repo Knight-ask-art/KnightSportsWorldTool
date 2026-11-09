@@ -37,14 +37,22 @@ v0.2.1 改为：
 海拔预览图原来强制 Y 轴从 0 开始，几十米的海拔变化被压成一条平线。现在按本次
 数据的最小值/最大值自动缩放，并保留 `minSpan` 防止纯平数据把噪声放大。
 
-## 4. 没有采纳的参考项
+## 4. QQ 群公告
+
+启动后弹一次 QQ 群公告：群号 `1125996019`，可以直接扫码进群。公告内容是
+数据驱动的，放在 `app/replica/application/announcements.py`；以后改文案、换
+二维码图片或加第二条公告，只改这个文件和 `app/frontend/assets/`，不需要动
+`index.html` / `app.js`。已读状态按公告 id 存在 `data/ui_state.json` 的
+`announcement_seen` 里；设置 → 关于里随时可以重新打开。
+
+## 5. 没有采纳的参考项
 
 参考项目 `nekohy/DemaciaSportsWorldTool` 的 `wire.rs` 会输出 `accuracy` /
 `hasAltitude` / `steps`，共 30 键。但 7.4.0 dex 的 `MyLocation` 里这三个字段
 并不在 Gson 序列化结果中（`im/mp/ra` 只有 `@Column`，没有 `@SerializedName`），
 10-26 抓包的 103 个点也都是 27 键。v0.2.1 保持 27 键，不凭 7.3.x 的形状加字段。
 
-## 5. 证据边界
+## 6. 证据边界
 
 - `stepDistance` 的语义来自参考项目对官方客户端的反编译结论；7.4.0 dex 的
   `MyLocation` 确认该字段存在且是 `double`；
@@ -52,7 +60,7 @@ v0.2.1 改为：
   10-26 真机抓包；
 - 以上只证明“形状与已知证据一致”，不证明服务端一定接受。
 
-## 6. 回滚
+## 7. 回滚
 
 回滚版本是 v0.1.9：下载 v0.1.9 的安装包覆盖安装即可，`data/` 会保留。
 发布 tag 在独立的 release 分支上，只带 `README.md`、`assets/`、`latest.json`，

@@ -194,8 +194,8 @@ Copy-Item dist\latest.json ..\github-release\latest.json -Force
 
 | 环境 | 命令 | 期望 |
 |---|---|---|
-| Windows 本地 | `pytest tests -q` | 691 passed |
-| InstaBox Linux | `python scripts/cloud_test.py` | 672 passed, 19 skipped |
+| Windows 本地 | `pytest tests -q` | 694 passed |
+| InstaBox Linux | `python scripts/cloud_test.py` | 675 passed, 19 skipped |
 | Windows 冻结包 | `好想跑.exe --check` | exit 0 |
 | Windows HTTP | `--no-window --port` + 登录页 | 200 |
 | 自检 | `python -m replica.selfcheck` | 28/28 |
@@ -216,7 +216,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 ## 5. 当前基线（2026-11-09）
 
 - 产品版本：`0.2.1`（源码已改，**尚未打包/发布**）；回滚版本 `0.1.9`。
-- 本地：691 passed；云 Linux：672 passed + 19 skipped。
+- 本地：694 passed；云 Linux：675 passed + 19 skipped。
 - 云机器：`agent-browser-yrbo`（Linux，OpenCode/Claude/Codex/Docker）、
   `b`（Android 14，adb 在线）。
 - 参考项目：`docs/reference-projects.md`；检查脚本 `scripts/check_references.py`，
@@ -232,8 +232,8 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 |---|---|---|
 | 参考项目 | `python scripts\check_references.py` | `NO CHANGES` |
 | 版本/BOM 预检 | `python scripts\release_check.py --source-only` | PASS，0 warning |
-| 本地测试 | `cd app; python -m pytest tests -q` | 691 passed |
-| 云 Linux | `python scripts\cloud_test.py` | 672 passed, 19 skipped |
+| 本地测试 | `cd app; python -m pytest tests -q` | 694 passed |
+| 云 Linux | `python scripts\cloud_test.py` | 675 passed, 19 skipped |
 | Claude 审查 | `scripts\claude_review.ps1 -Round N -WithTests` | round 1 发现阻塞 → 修复 → round 2 PASS → round 3 PASS（`output/reviews/0.2.1/`） |
 
 发现并修掉的工作流问题：
@@ -256,4 +256,36 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 7. **回滚说明与 release tag 不一致**：说明里的“保留为回滚版本”容易读成
    v0.2.0；实际 `latest.json` 回滚到 v0.1.9。文档已明确 tag 在独立发布分支、
    不含源码，回滚指旧二进制覆盖安装。
+8. **公告写死在 `index.html` / `app.js`**：改为 `announcements.py` 数据目录 +
+   `js/announcements.js` 通用渲染。以后换文案、换二维码、加第二条公告只改
+   catalog；已读状态按 id 存 `announcement_seen`。
+
+## 7. 公告怎么发
+
+公告内容不再写死在 `index.html` / `app.js`，只改一个目录：
+
+| 要改什么 | 改哪里 |
+|---|---|
+| 文案、群号、按钮文字、显示顺序 | `app/replica/application/announcements.py` 的 `ANNOUNCEMENTS` |
+| 二维码/配图 | 放到 `app/frontend/assets/`，在 catalog 里写 `assets/<文件名>` |
+| 同一条公告改完想再弹一次 | 把该条的 `version` 加 1 |
+| 新增一条公告 | 在 `ANNOUNCEMENTS` 里追加一个 dict，`id` 唯一 |
+| 暂时下线 | 该条 `enabled` 设为 `False` |
+
+已读状态按 id 存在 `data/ui_state.json`：
+
+```json
+{"announcement_seen": {"qq-group-2026-11": 1}}
+```
+
+前端 `app/frontend/js/announcements.js` 只负责通用渲染、图片、复制按钮和
+“下次不再自动显示”，正常加公告不需要改它。设置 → 关于里的「加入 QQ 群」
+按钮用 `data-announcement-id` 打开指定公告。
+
+验证：
+
+```powershell
+cd app
+python -m pytest tests\test_v017_security.py tests\test_frontend_login.py -q
+```
 

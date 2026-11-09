@@ -1958,6 +1958,26 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
   .onboard-body h2{font-size:22px}
 }
 
+/* ---------- in-app announcements ---------- */
+.announcement-card{width:min(430px,100%);text-align:center}
+.announcement-card .onboard-head{text-align:left}
+.announcement-body h2{margin-bottom:6px}
+.announcement-body p{margin-bottom:0}
+.announcement-image-wrap{
+  width:min(300px,100%);margin:14px auto 10px;padding:10px;
+  background:#17171c;border:1.5px solid var(--ink);border-radius:12px;
+  box-shadow:4px 5px 0 rgba(36,35,31,.16);
+}
+.announcement-image-wrap img{display:block;width:100%;height:auto;border-radius:7px}
+.announcement-meta-row{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  margin:0 0 2px;font-size:12px;color:var(--pencil);
+}
+.announcement-meta-row #announcementMeta{
+  font:600 15px/1 var(--mono);letter-spacing:.08em;color:var(--ink);
+}
+.announcement-meta-row .mini-link{padding:2px 6px}
+
 /* ---------- official-style data preview ---------- */
 .data-preview,.post-submit{
   position:fixed;inset:0;z-index:1000;display:flex;

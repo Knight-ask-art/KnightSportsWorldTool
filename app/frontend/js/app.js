@@ -3437,6 +3437,9 @@ function enterApp(resetPage){
   // acknowledgement lives in data/ui_state.json, not localStorage, because
   // app.py picks a fresh port on every launch.
   setTimeout(maybeShowOnboard, 900);
+  setTimeout(() => {
+    if(window.Announcements) Announcements.maybeShow();
+  }, 1500);
   setTimeout(checkLastUpdateResult, 1200);
 }
 async function requestLogin(username, password){
@@ -8440,6 +8443,10 @@ function closeOnboard(remember){
     liveApi('real_set_ui_state', {onboard_done: keep}, 8000).catch(() => {});
   }
   if(keep) toast('已关闭自动显示；可在「设置 → 关于」重看');
+  // The announcement waits while the first-run guide is open.
+  setTimeout(() => {
+    if(window.Announcements) Announcements.maybeShow();
+  }, 500);
   if(onboardFocus && onboardFocus.focus){
     try{ onboardFocus.focus(); }catch(e){}
   }
@@ -9116,6 +9123,7 @@ function liveWire(){
       }
     });
   }
+  if(window.Announcements) Announcements.wire();
   const updateBtn = $('#updateBtn');
   if(updateBtn){
     updateBtn.addEventListener('click', () => {

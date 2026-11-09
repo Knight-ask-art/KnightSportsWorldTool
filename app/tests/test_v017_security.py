@@ -83,6 +83,46 @@ def test_ui_state_keeps_disclaimer_acceptance(tmp_path):
     assert api.real_set_ui_state(disclaimer_version=True)['code'] != 200
 
 
+def test_ui_state_keeps_announcement_seen(tmp_path):
+    api = _api(tmp_path)
+    assert api.real_get_ui_state()['data']['announcement_seen'] == {}
+
+    assert api.real_set_ui_state(
+        announcement_seen={'qq-group-2026-11': 1})['code'] == 200
+    assert api.real_get_ui_state()['data']['announcement_seen'] == {
+        'qq-group-2026-11': 1}
+
+    # Removing one notice must not clear the others.
+    api.real_set_ui_state(announcement_seen={'other': 2})
+    api.real_set_ui_state(announcement_seen={'qq-group-2026-11': 0})
+    assert api.real_get_ui_state()['data']['announcement_seen'] == {'other': 2}
+
+    assert api.real_set_ui_state(announcement_seen='bad')['code'] != 200
+    assert api.real_set_ui_state(
+        announcement_seen={'x': True})['code'] != 200
+    assert api.real_set_ui_state(
+        announcement_seen={'x': -1})['code'] != 200
+
+
+def test_announcements_catalog_and_bridge(tmp_path):
+    from replica.application import announcements as A
+
+    items = A.current()
+    qq = next(i for i in items if i['id'] == 'qq-group-2026-11')
+    assert qq['version'] == 1
+    assert qq['image'] == 'assets/qq-group.jpg'
+    assert qq['copy'] == '1125996019'
+    assert A.by_id('qq-group-2026-11')['title'] == qq['title']
+    assert A.by_id('missing') is None
+
+    api = _api(tmp_path)
+    payload = api.real_get_announcements()
+    assert payload['code'] == 200
+    assert payload['data']['seen'] == {}
+    assert any(i['id'] == 'qq-group-2026-11'
+               for i in payload['data']['items'])
+
+
 def test_ui_state_keeps_run_area_per_account(tmp_path):
     api = _api(tmp_path)
     res = api.real_set_ui_state(

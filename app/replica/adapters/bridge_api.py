@@ -3286,6 +3286,18 @@ class ReplicaApi:
             disclaimer_version = int(data.get('disclaimer_version') or 0)
         except (TypeError, ValueError, OverflowError):
             disclaimer_version = 0
+        seen = data.get('announcement_seen')
+        seen = seen if isinstance(seen, dict) else {}
+        announcement_seen = {}
+        for key, value in seen.items():
+            if isinstance(value, bool):
+                continue
+            try:
+                version = int(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if version > 0:
+                announcement_seen[str(key)] = version
         return _ok({
             'onboard_done': bool(data.get('onboard_done')),
             'post_submit_route_action': str(
@@ -3295,12 +3307,25 @@ class ReplicaApi:
             'disclaimer_version': disclaimer_version,
             'disclaimer_accepted_at': str(
                 data.get('disclaimer_accepted_at') or ''),
+            'announcement_seen': announcement_seen,
             'skin': P.normalize_skin(data.get('skin')),
         })
 
+    def real_get_announcements(self):
+        """Active notices plus the per-id seen versions.
+
+        The catalog lives in ``application/announcements.py``; the frontend
+        only renders what this method returns, so publishing a new notice is a
+        data change rather than a UI change.
+        """
+        from ..application import announcements as A
+        state = self.real_get_ui_state()
+        seen = (state.get('data') or {}).get('announcement_seen') or {}
+        return _ok({'items': A.current(), 'seen': seen})
+
     def real_set_ui_state(self, onboard_done=None, post_submit_route_action=None,
                           run_area_choice=None, disclaimer_version=None,
-                          skin=None):
+                          announcement_seen=None, skin=None):
         path = self._ui_state_path()
         raw = _read_json(path, {})
         data = raw if isinstance(raw, dict) else {}
@@ -3344,6 +3369,29 @@ class ReplicaApi:
                 data['disclaimer_version'] = version
                 data['disclaimer_accepted_at'] = time.strftime(
                     '%Y-%m-%d %H:%M:%S')
+        if announcement_seen is not None:
+            if not isinstance(announcement_seen, dict):
+                return _fail('announcement_seen 必须是 {id: version}')
+            stored = data.get('announcement_seen')
+            stored = dict(stored) if isinstance(stored, dict) else {}
+            for key, value in announcement_seen.items():
+                announcement_id = str(key)
+                if value in (None, '', 0, '0'):
+                    stored.pop(announcement_id, None)
+                    continue
+                if isinstance(value, bool):
+                    return _fail('announcement_seen 的 version 必须是整数')
+                try:
+                    version = int(value)
+                except (TypeError, ValueError, OverflowError):
+                    return _fail('announcement_seen 的 version 必须是整数')
+                if version < 0:
+                    return _fail('announcement_seen 的 version 不能为负数')
+                stored[announcement_id] = version
+            if stored:
+                data['announcement_seen'] = stored
+            else:
+                data.pop('announcement_seen', None)
         if skin is not None:
             from ..application import preferences as P
             value = str(skin or '').strip().lower()
