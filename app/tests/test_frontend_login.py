@@ -73,7 +73,7 @@ def test_announcements_are_data_driven_and_use_the_bundled_qr():
     assert 'real_set_ui_state' in ann_js
     assert "'id': 'qq-group-2026-11'" in catalog
     assert "'image': 'assets/qq-group.jpg'" in catalog
-    assert '1125996019' in catalog
+    assert '1125996019' not in catalog
     assert (FRONTEND / 'assets' / 'qq-group.jpg').is_file()
 
 

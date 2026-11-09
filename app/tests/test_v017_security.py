@@ -113,7 +113,7 @@ def test_announcements_catalog_and_bridge(tmp_path):
     qq = next(i for i in items if i['id'] == 'qq-group-2026-11')
     assert qq['version'] == 1
     assert qq['image'] == 'assets/qq-group.jpg'
-    assert qq['copy'] == '1125996019'
+    assert 'copy' not in qq and 'meta' not in qq
     assert A.by_id('qq-group-2026-11')['title'] == qq['title']
     assert A.by_id('missing') is None
 

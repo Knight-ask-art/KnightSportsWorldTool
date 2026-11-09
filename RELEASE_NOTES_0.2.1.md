@@ -39,7 +39,7 @@ v0.2.1 改为：
 
 ## 4. QQ 群公告
 
-启动后弹一次 QQ 群公告：群号 `1125996019`，可以直接扫码进群。公告内容是
+启动后弹一次 QQ 群公告，直接扫码进群。公告内容是
 数据驱动的，放在 `app/replica/application/announcements.py`；以后改文案、换
 二维码图片或加第二条公告，只改这个文件和 `app/frontend/assets/`，不需要动
 `index.html` / `app.js`。已读状态按公告 id 存在 `data/ui_state.json` 的

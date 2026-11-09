@@ -675,6 +675,6 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 决策 | 理由 | 边界 |
 |---|---|---|
 | 公告内容放 `application/announcements.py` | 以后换文案、换二维码、加第二条公告只改一个 catalog，不碰 `index.html` / `app.js` | 公告只是本地 UI，不影响协议、账号或提交 |
-| 前端 `js/announcements.js` 只做通用渲染 | 图片、正文、群号、复制按钮、已读状态都可以由数据描述 | 不把远端 HTML 直接插入页面，文案用 `textContent`；图片只接受 `assets/<file>` |
+| 前端 `js/announcements.js` 只做通用渲染 | 图片、正文、可选群号/复制按钮、已读状态都可以由数据描述 | 不把远端 HTML 直接插入页面，文案用 `textContent`；图片只接受 `assets/<file>` |
 | 已读状态按 id 存 `announcement_seen` | 同一条公告只弹一次；改内容时把 `version` 加 1 即可再次提示 | 存在 `data/ui_state.json`，不依赖随机端口上的 localStorage |
 | 设置 → 关于保留入口 | 用户关掉后仍能主动打开，不靠“再弹一次” | 入口用 `data-announcement-id` 绑定，公告 id 变化时同步改按钮 |

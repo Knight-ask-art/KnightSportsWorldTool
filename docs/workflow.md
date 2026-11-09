@@ -266,7 +266,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 
 | 要改什么 | 改哪里 |
 |---|---|
-| 文案、群号、按钮文字、显示顺序 | `app/replica/application/announcements.py` 的 `ANNOUNCEMENTS` |
+| 文案、二维码、按钮文字、显示顺序 | `app/replica/application/announcements.py` 的 `ANNOUNCEMENTS` |
 | 二维码/配图 | 放到 `app/frontend/assets/`，在 catalog 里写 `assets/<文件名>` |
 | 同一条公告改完想再弹一次 | 把该条的 `version` 加 1 |
 | 新增一条公告 | 在 `ANNOUNCEMENTS` 里追加一个 dict，`id` 唯一 |
