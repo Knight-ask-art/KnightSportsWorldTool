@@ -77,8 +77,29 @@ curl -s -X POST https://api.instabox.sh/v1/machines/b/exec `
 
 - 普通改动：1 轮自审 + 1 轮独立审查。
 - 高风险改动：10 轮，每轮限定范围，避免“泛泛而谈”。
-- 审查产物写到 `output/reviews/<version>/round-N.md`（`output/` 不入库）。
 - 审查者只读，不改代码；修复后重跑同一轮的复现命令。
+- 审查产物写到 `output/reviews/<version>/round-N.md`（`output/` 不入库）。
+
+Claude Code 审查（默认只读、只给 Read/Glob/Grep + git 工具）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\claude_review.ps1 `
+  -Scope "issue #12 海拔图缩放与 charts.js" -Round 1
+
+# 需要审查者自己跑测试时再加 -WithTests（会慢一些）
+powershell -ExecutionPolicy Bypass -File scripts\claude_review.ps1 `
+  -Scope "提交链时间窗" -Round 2 -WithTests
+
+# 只打印命令，不调用模型
+powershell -ExecutionPolicy Bypass -File scripts\claude_review.ps1 `
+  -Scope "release scripts" -Plan
+```
+
+Claude Code 也已接入同一个 `instabox` MCP，可以直接让 Claude Code 管理云机器：
+
+```powershell
+claude mcp list | Select-String instabox
+```
 
 ### 2.5 打包（仅 Windows）
 

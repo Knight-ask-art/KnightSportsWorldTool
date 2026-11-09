@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -67,6 +69,7 @@ mkdir -p /data/work
 rm -rf /data/work/hxp-src
 mkdir -p /data/work/hxp-src
 tar xzf /data/work/hxp-src.tar.gz -C /data/work/hxp-src
+rm -f /data/work/hxp-src.tar.gz
 if [ ! -x {DEFAULT_VENV}/bin/python ]; then
   if command -v uv >/dev/null 2>&1; then
     uv venv {DEFAULT_VENV} --python 3.11
@@ -83,7 +86,7 @@ if [ ! -f {DEFAULT_VENV}/.hxp-deps ]; then
   touch {DEFAULT_VENV}/.hxp-deps
 fi
 export PATH={DEFAULT_VENV}/bin:$PATH
-cd /data/work/hxp-src/{cwd}
+cd /data/work/hxp-src/{shlex.quote(cwd)}
 {command}
 {cleanup}'''
 
@@ -118,8 +121,8 @@ def main(argv=None) -> int:
     session.headers['X-API-Key'] = api_key
     machine_id = resolve_machine(session, args.machine)
 
-    with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as handle:
-        archive = Path(handle.name)
+    tmpdir = Path(tempfile.mkdtemp(prefix='hxp-cloud-'))
+    archive = tmpdir / 'src.tar.gz'
     try:
         subprocess.run(
             ['git', 'archive', '--format=tar.gz', '--output', str(archive),
@@ -136,7 +139,7 @@ def main(argv=None) -> int:
                 timeout=300)
         response.raise_for_status()
     finally:
-        archive.unlink(missing_ok=True)
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
     script = build_script(args.command, args.cwd, args.keep_source)
     response = session.post(
@@ -152,9 +155,13 @@ def main(argv=None) -> int:
         print(result['stderr'], end='', file=sys.stderr)
     if result.get('timedOut'):
         print('cloud test timed out', file=sys.stderr)
-    print(f"exit={result.get('exitCode')} "
-          f"machine={args.machine} commit={commit}")
-    return int(result.get('exitCode') or 0)
+        return 124
+    code = result.get('exitCode')
+    print(f"exit={code} machine={args.machine} commit={commit}")
+    if code is None:
+        print('cloud test returned no exit code', file=sys.stderr)
+        return 1
+    return int(code)
 
 
 if __name__ == '__main__':
