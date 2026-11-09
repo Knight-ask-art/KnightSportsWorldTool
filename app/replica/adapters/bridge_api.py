@@ -3376,11 +3376,11 @@ class ReplicaApi:
             stored = dict(stored) if isinstance(stored, dict) else {}
             for key, value in announcement_seen.items():
                 announcement_id = str(key)
+                if isinstance(value, bool):
+                    return _fail('announcement_seen 的 version 必须是整数')
                 if value in (None, '', 0, '0'):
                     stored.pop(announcement_id, None)
                     continue
-                if isinstance(value, bool):
-                    return _fail('announcement_seen 的 version 必须是整数')
                 try:
                     version = int(value)
                 except (TypeError, ValueError, OverflowError):

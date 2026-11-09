@@ -101,6 +101,8 @@ def test_ui_state_keeps_announcement_seen(tmp_path):
     assert api.real_set_ui_state(
         announcement_seen={'x': True})['code'] != 200
     assert api.real_set_ui_state(
+        announcement_seen={'x': False})['code'] != 200
+    assert api.real_set_ui_state(
         announcement_seen={'x': -1})['code'] != 200
 
 

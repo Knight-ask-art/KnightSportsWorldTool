@@ -3436,10 +3436,10 @@ function enterApp(resetPage){
   // First-run guide only makes sense after the login gate is gone.  The
   // acknowledgement lives in data/ui_state.json, not localStorage, because
   // app.py picks a fresh port on every launch.
-  setTimeout(maybeShowOnboard, 900);
-  setTimeout(() => {
-    if(window.Announcements) Announcements.maybeShow();
-  }, 1500);
+  setTimeout(async () => {
+    const guide = await maybeShowOnboard();
+    if(!guide && window.Announcements) Announcements.maybeShow();
+  }, 900);
   setTimeout(checkLastUpdateResult, 1200);
 }
 async function requestLogin(username, password){
@@ -8417,6 +8417,15 @@ function openOnboard(){
     }
     return;
   }
+  // Never stack two aria-modal dialogs.  If an announcement won the race,
+  // let it close first and retry; closeOnboard()/this timer will resume.
+  const announcement = $('#announcementModal');
+  if(announcement && !announcement.hidden){
+    if(!onboardWait){
+      onboardWait = setTimeout(() => { onboardWait = null; openOnboard(); }, 400);
+    }
+    return;
+  }
   onboardFocus = document.activeElement;
   onboardIndex = 0;
   renderOnboard();
@@ -8460,7 +8469,7 @@ function onboardPrev(){
   if(onboardIndex > 0){ onboardIndex--; renderOnboard(); }
 }
 async function maybeShowOnboard(){
-  if(!hasSession()) return;
+  if(!hasSession()) return false;
   let done = false;
   try{
     const j = await liveApi('real_get_ui_state', {}, 8000);
@@ -8469,8 +8478,9 @@ async function maybeShowOnboard(){
   if(!done){
     try{ done = localStorage.getItem(ONBOARD_KEY) === 'done'; }catch(e){}
   }
-  if(done) return;
+  if(done) return false;
   setTimeout(openOnboard, 650);
+  return true;
 }
 
 /* ---------------- version / build ---------------- */
