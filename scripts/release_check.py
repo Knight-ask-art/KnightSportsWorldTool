@@ -132,6 +132,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--deep', action='store_true',
                         help='re-hash dist assets against latest.json')
+    parser.add_argument('--source-only', action='store_true',
+                        help='skip manifests/tag checks (pre-build)')
     parser.add_argument('--allow-dirty', action='store_true',
                         help='do not fail on an uncommitted working tree')
     args = parser.parse_args(argv)
@@ -161,24 +163,27 @@ def main(argv=None) -> int:
     report.check(f'VERSION "{version}"' in nsi_text,
                  'installer.nsi version', version)
 
-    # 3. manifests that drive the updater
-    check_manifest(report, ROOT / 'github-release' / 'latest.json',
-                   version, 'github-release/latest.json')
-    dist_manifest = check_manifest(report, ROOT / 'app' / 'dist' / 'latest.json',
-                                   version, 'dist/latest.json')
-    if args.deep:
-        deep_assets(report, dist_manifest)
+    # 3. manifests that drive the updater (post-build only)
+    if not args.source_only:
+        check_manifest(report, ROOT / 'github-release' / 'latest.json',
+                       version, 'github-release/latest.json')
+        dist_manifest = check_manifest(
+            report, ROOT / 'app' / 'dist' / 'latest.json',
+            version, 'dist/latest.json')
+        if args.deep:
+            deep_assets(report, dist_manifest)
 
     # 4. release hygiene
     dirty = git('status', '--porcelain')
     report.warn(not dirty or args.allow_dirty, 'working tree clean',
                 'dirty' if dirty else 'clean')
-    tag_exists = subprocess.run(
-        ['git', 'rev-parse', '-q', '--verify', f'refs/tags/v{version}'],
-        cwd=ROOT, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL).returncode == 0
-    report.warn(not tag_exists, f'tag v{version} absent',
-                'already exists' if tag_exists else 'ok')
+    if not args.source_only:
+        tag_exists = subprocess.run(
+            ['git', 'rev-parse', '-q', '--verify', f'refs/tags/v{version}'],
+            cwd=ROOT, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL).returncode == 0
+        report.warn(not tag_exists, f'tag v{version} absent',
+                    'already exists' if tag_exists else 'ok')
 
     print()
     if report.errors:

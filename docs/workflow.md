@@ -82,6 +82,19 @@ curl -s -X POST https://api.instabox.sh/v1/machines/b/exec `
 
 ### 2.5 打包（仅 Windows）
 
+推荐用包装脚本，它会先做版本/BOM/工作区预检，再把四个镜像数组完整传进
+`build.ps1`（旧写法用 `-File` 传数组时，最后一个 URL 会被当成下一个参数）：
+
+```powershell
+# 先看参数，不编译
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.1 -Plan
+
+# 预检 + 本地测试 + 编译 + 深度校验
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.1
+```
+
+等价的手工命令：
+
 ```powershell
 cd app
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
