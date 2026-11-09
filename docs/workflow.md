@@ -83,7 +83,8 @@ curl -s -X POST https://api.instabox.sh/v1/machines/b/exec `
 ### 2.5 打包（仅 Windows）
 
 推荐用包装脚本，它会先做版本/BOM/工作区预检，再把四个镜像数组完整传进
-`build.ps1`（旧写法用 `-File` 传数组时，最后一个 URL 会被当成下一个参数）：
+`build.ps1`（旧写法用 `-File` 传数组时，最后一个 URL 会被当成下一个参数）。
+版本号改完要先提交，脚本默认拒绝在脏工作区上打正式包：
 
 ```powershell
 # 先看参数，不编译
