@@ -215,7 +215,8 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 
 ## 5. 当前基线（2026-11-09）
 
-- 产品版本：`0.2.1`（源码已改，**尚未打包/发布**）；回滚版本 `0.1.9`。
+- 产品版本：`0.2.1`（2026-11-10 已发布）；回滚版本 `0.1.9`。
+- Release：https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/tag/v0.2.1
 - 本地：694 passed；云 Linux：675 passed + 19 skipped。
 - 云机器：`agent-browser-yrbo`（Linux，OpenCode/Claude/Codex/Docker）、
   `b`（Android 14，adb 在线）。
@@ -226,7 +227,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 
 ## 6. 工作流自检记录（v0.2.1）
 
-这一轮用 v0.2.1 的源码把整条流水线走了一遍（**没有打包、没有发布**）：
+这一轮用 v0.2.1 的源码把整条流水线走了一遍，最后完成打包和发布：
 
 | 步骤 | 命令 | 结果 |
 |---|---|---|
@@ -234,7 +235,9 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 | 版本/BOM 预检 | `python scripts\release_check.py --source-only` | PASS，0 warning |
 | 本地测试 | `cd app; python -m pytest tests -q` | 694 passed |
 | 云 Linux | `python scripts\cloud_test.py` | 675 passed, 19 skipped |
-| Claude 审查 | `scripts\claude_review.ps1 -Round N -WithTests` | round 1 发现阻塞 → 修复 → round 2 PASS → round 3 PASS（`output/reviews/0.2.1/`） |
+| 打包 | `scripts\release.ps1 -Version 0.2.1` | 5/5，深哈希通过 |
+| 发布 | `gh release create v0.2.1 --latest` | 5 资产，latest，SHA256 复核通过 |
+| Claude 审查 | `scripts\claude_review.ps1 -Round N -WithTests` | round 1 发现阻塞 → 修复 → round 2/3/5 PASS（`output/reviews/0.2.1/`） |
 
 发现并修掉的工作流问题：
 
