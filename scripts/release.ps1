@@ -15,6 +15,7 @@ param(
     [string]$Repo = 'Knight-ask-art/KnightSportsWorldTool',
     [switch]$SkipTests,
     [switch]$NoDataMigration,
+    [switch]$AllowDirty,
     [switch]$Plan
 )
 
@@ -24,6 +25,10 @@ $BUILD = Join-Path $ROOT 'app\packaging\build.ps1'
 
 Push-Location $ROOT
 try {
+    $dirty = & git status --porcelain
+    if ($dirty -and -not $AllowDirty) {
+        throw 'working tree is dirty; commit the version bump (or pass -AllowDirty)'
+    }
     Write-Host '== preflight: version / BOM / working tree =='
     python scripts\release_check.py --source-only
     if ($LASTEXITCODE -ne 0) { throw 'release_check.py --source-only failed' }
