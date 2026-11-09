@@ -234,7 +234,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 | 版本/BOM 预检 | `python scripts\release_check.py --source-only` | PASS，0 warning |
 | 本地测试 | `cd app; python -m pytest tests -q` | 691 passed |
 | 云 Linux | `python scripts\cloud_test.py` | 672 passed, 19 skipped |
-| Claude 审查 | `scripts\claude_review.ps1 -Round 1 -WithTests` | 见 `output/reviews/0.2.1/round-1.md` |
+| Claude 审查 | `scripts\claude_review.ps1 -Round N -WithTests` | round 1 发现阻塞 → 修复 → round 2 PASS → round 3 PASS（`output/reviews/0.2.1/`） |
 
 发现并修掉的工作流问题：
 
@@ -253,4 +253,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 6. **OBS 的 220 spm 上限会截断步数窗**：UI 允许 260 spm，旧上限让 OBS 与
    提交体在 240 spm 时差 351 步。删除上限，窗口步数完全以 `rundata` 为准，
    并加 240 spm 回归。
+7. **回滚说明与 release tag 不一致**：说明里的“保留为回滚版本”容易读成
+   v0.2.0；实际 `latest.json` 回滚到 v0.1.9。文档已明确 tag 在独立发布分支、
+   不含源码，回滚指旧二进制覆盖安装。
 
