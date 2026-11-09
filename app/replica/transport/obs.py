@@ -291,11 +291,11 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
             # can use against us (reference project K).
             d['distance'] = round(float(d['distance']), 4)
         if d.get('stepsNum') is not None:
-            # The source allocated the steps for this exact window.  Capping
-            # here (the old 220 spm guard) silently changed the total and made
-            # OBS disagree with the submission body whenever the UI's cadence
-            # exceeded 204 spm.  Keep the value; the generator/audit own the
-            # plausibility checks.
+            # The source allocated the steps for this exact window.  The old
+            # 220 spm guard (ceil(220 * 10 / 60) = 37 steps on a full 10 s
+            # window) silently changed the total and made OBS disagree with
+            # the submission body once cadence rose above ~222 spm.  Keep the
+            # value; the generator/audit own the plausibility checks.
             d['stepsNum'] = max(0, int(round(float(d['stepsNum']))))
         d['id'] = id_base + i
         # A real 7.2/7.3 record advances the batch every three 10 s windows
@@ -340,9 +340,11 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
 
     # `locPoints` is the single source of truth for the cumulative pedometer
     # column.  A legacy/hand-built `wire_points` list may predate it; copy the
-    # value in so OBS and the submission body cannot drift.
+    # value in so OBS and the submission body cannot drift.  Only align when
+    # both lists describe the same points -- a partial zip would silently
+    # attach the wrong cumulative value.
     loc_points = run.get('locPoints') or []
-    if pts and loc_points:
+    if pts and len(pts) == len(loc_points):
         for dst, src in zip(pts, loc_points):
             dst['stepDistance'] = src.get('stepDistance', 0.0)
 
