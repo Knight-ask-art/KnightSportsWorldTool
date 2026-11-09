@@ -314,7 +314,10 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
     # totalTime, and using the same objects guarantees the replay and the
     # record agree.
     pts = run.get('wire_points')
-    if not pts:
+    if pts:
+        # Work on copies: the builder must not mutate the caller's run dict.
+        pts = [dict(p) for p in pts]
+    else:
         cum_d, cum_t, cum_s = _cumulative(run)
         total_steps = int(run.get('total_steps') or 0)
         stride = (float(run['juli']) / total_steps
@@ -339,7 +342,7 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
     # column.  A legacy/hand-built `wire_points` list may predate it; copy the
     # value in so OBS and the submission body cannot drift.
     loc_points = run.get('locPoints') or []
-    if pts and len(pts) == len(loc_points):
+    if pts and loc_points:
         for dst, src in zip(pts, loc_points):
             dst['stepDistance'] = src.get('stepDistance', 0.0)
 

@@ -154,8 +154,11 @@ def main(argv=None) -> int:
     notes = ROOT / f'RELEASE_NOTES_{version}.md'
     report.warn(notes.is_file(), 'release notes',
                 notes.name if notes.is_file() else f'{notes.name} missing')
-    make_latest = (ROOT / 'app' / 'packaging' / 'make_latest.py').read_text(
-        encoding='utf-8')
+    try:
+        make_latest = (ROOT / 'app' / 'packaging' / 'make_latest.py').read_text(
+            encoding='utf-8')
+    except OSError:
+        make_latest = ''
     report.check(f"'{version}': [" in make_latest, 'make_latest notes',
                  f"RELEASE_NOTES['{version}']")
     report.warn(f"DEFAULT_VERSION = '{version}'" in make_latest,

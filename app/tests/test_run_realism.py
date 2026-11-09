@@ -262,6 +262,7 @@ def test_obs_backfills_step_distance_for_legacy_wire_points():
     run['wire_points'] = legacy
 
     obj = OBS.build_obs_object(run, 1333336473, 'UUID-LEGACY', 99999999)
+    assert 'stepDistance' not in legacy[0], 'builder must not mutate the run'
     wrap = json.loads(gzip.decompress(base64.b64decode(obj['run_data'])))
     pts = json.loads(wrap['allLocJson'])
     assert [p['stepDistance'] for p in pts] == [
