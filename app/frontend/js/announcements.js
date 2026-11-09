@@ -210,6 +210,13 @@
     }
     const items = await load();
     if(!items) return;
+    // Re-check after the bridge await: onboarding or the legal gate may have
+    // opened while this request was in flight.
+    if(isBlocked()){
+      clearTimeout(state.retry);
+      state.retry = setTimeout(maybeShow, 800);
+      return;
+    }
     const item = items.find(unseen);
     if(item) open(item);
   }

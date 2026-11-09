@@ -8418,7 +8418,7 @@ function openOnboard(){
     return;
   }
   // Never stack two aria-modal dialogs.  If an announcement won the race,
-  // let it close first and retry; closeOnboard()/this timer will resume.
+  // let it close first; this timer retries after it is hidden.
   const announcement = $('#announcementModal');
   if(announcement && !announcement.hidden){
     if(!onboardWait){
