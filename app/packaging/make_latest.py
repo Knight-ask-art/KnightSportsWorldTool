@@ -25,7 +25,7 @@ DEFAULT_DIST = APP_ROOT / 'dist'
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
 #: single source of truth, this only keeps standalone runs usable.
-DEFAULT_VERSION = '0.2.0'
+DEFAULT_VERSION = '0.2.1'
 DEFAULT_MIN_VERSION = '0.1.4'
 DEFAULT_ROLLBACK_VERSION = '0.1.9'
 DEFAULT_ENTRY = '好想跑.exe'
@@ -33,6 +33,11 @@ DEFAULT_ENTRY = '好想跑.exe'
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.2.1': [
+        '轨迹点 stepDistance 改为累计步幅距离，不再整条记录都是 0',
+        'OBS 与提交体的 10 秒窗口使用同一份数据、同一精度，逐项对齐',
+        '修复海拔预览图 Y 轴强制从 0 开始导致的曲线过扁（issue #12）',
+    ],
     '0.2.0': [
         '修复学校把一天拆成多段有效时间时，模型只认第一段、18:00 被误判不合格',
         '有效时段改为可添加多行：06:00–07:59、09:01–11:59 等会全部保存并逐段校验',

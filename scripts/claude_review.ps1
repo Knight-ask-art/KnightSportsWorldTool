@@ -16,6 +16,7 @@ param(
     [int]$Round = 0,
     [string]$OutDir = 'output/reviews',
     [string]$Model = '',
+    [double]$MaxBudgetUsd = 0,
     [switch]$WithTests,
     [switch]$FailOnBlock,
     [switch]$Plan
@@ -44,7 +45,9 @@ try {
 2. 重点找：Windows/Linux 差异、data/ 凭据泄漏、发布清单与版本不一致、回滚/降级、
    测试是否真正覆盖、脚本参数绑定、路径/编码/BOM。
 3. 不要泛泛而谈，不要重复已经确认正常的项。
-4. 最后必须明确给 PASS 或 BLOCK，并列出阻塞项和非阻塞风险。
+4. 先运行 `git diff --stat HEAD~2..HEAD` 限定范围；最多读取 15 个文件，
+   不要递归扫描 output/、archive/、reverse-engineering/、third_party/。
+5. 最后必须明确给 PASS 或 BLOCK，并列出阻塞项和非阻塞风险。
 "@
 
     $allowed = @(
@@ -60,9 +63,12 @@ try {
     }
     $claudeArgs = @(
         '-p',
-        '--permission-mode', 'plan',
-        '--allowedTools'
-    ) + $allowed
+        '--permission-mode', 'plan'
+    )
+    if ($MaxBudgetUsd -gt 0) {
+        $claudeArgs += @('--max-budget-usd', $MaxBudgetUsd)
+    }
+    $claudeArgs += @('--allowedTools') + $allowed
     if ($Model) { $claudeArgs += @('--model', $Model) }
     $claudeArgs += @('--output-format', 'text', $prompt)
 
@@ -76,6 +82,10 @@ try {
     $text = & claude @claudeArgs 2>&1 | Tee-Object -FilePath $outFile
     $exit = $LASTEXITCODE
     if ($exit -ne 0) {
+        if (($text -join "`n") -match 'Exceeded USD budget') {
+            throw "Claude review hit -MaxBudgetUsd=$MaxBudgetUsd before finishing; " +
+                  "raise it or omit the parameter. See $outFile"
+        }
         throw "claude exited with $exit; see $outFile"
     }
     if ($FailOnBlock -and ($text -join "`n") -match '\bBLOCK\b') {

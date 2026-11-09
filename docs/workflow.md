@@ -48,8 +48,9 @@ python scripts\check_references.py
 - 分支从本地 `master` 切：`fix/<issue>-<slug>`。
 - 不把 `app/data/`、`app/dist/`、`private/`、`reverse-engineering/` 带进提交。
 - 版本号改动一次改全：`app/replica/build_info.py`、`app/frontend/index.html`、
-  `app/packaging/installer.nsi`、`app/packaging/USAGE.txt`、`app/pyproject.toml`。
-  用 `python scripts/release_check.py` 检查漏改。
+  `app/packaging/installer.nsi`、`app/packaging/USAGE.txt`、`app/pyproject.toml`、
+  `app/packaging/make_latest.py`（`DEFAULT_VERSION` + `RELEASE_NOTES`）。
+  用 `python scripts/release_check.py --source-only` 检查漏改。
 
 ### 2.3 验证
 
@@ -57,7 +58,7 @@ python scripts\check_references.py
 
 ```powershell
 cd app
-python -m pytest tests -q          # 687 passed
+python -m pytest tests -q          # 689 passed（v0.2.1 实测）
 python -m replica.selfcheck        # 28/28
 node --check frontend/js/app.js
 node --check frontend/js/charts.js
@@ -68,12 +69,14 @@ python app.py --check              # exit 0
 
 ```powershell
 python scripts\cloud_test.py
-# 668 passed, 19 skipped（DPAPI / 注册表 / updater 自动跳过）
+# 670 passed, 19 skipped（DPAPI / 注册表 / updater 自动跳过）
 ```
 
 脚本只上传 `git archive HEAD` 里的 tracked files，`data/`、`dist/`、`.git`
 不会离开本机；首次运行会在云机器建一个 Python 3.11 venv 并装
 pytest / requests / pycryptodome / numpy / opencv-python-headless。
+**先提交再跑**：工作区脏时脚本默认拒绝，因为未提交的测试不会被上传；
+确实只想验证 HEAD 时加 `--allow-dirty`。
 
 **Android（按需）**
 
@@ -104,6 +107,11 @@ powershell -ExecutionPolicy Bypass -File scripts\claude_review.ps1 `
 # 只打印命令，不调用模型
 powershell -ExecutionPolicy Bypass -File scripts\claude_review.ps1 `
   -Scope "release scripts" -Plan
+
+# 可选：给本轮设美元上限（默认 0 = 不设上限）
+# 上限太小会在读完文件前中止，脚本会明确报 Exceeded USD budget
+powershell -ExecutionPolicy Bypass -File scripts\claude_review.ps1 `
+  -Scope "提交链时间窗" -Round 3 -MaxBudgetUsd 5
 ```
 
 Claude Code 也已接入同一个 `instabox` MCP，可以直接让 Claude Code 管理云机器：
@@ -132,10 +140,10 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.1
 cd app
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
   -RollbackVersion 0.1.9 -NoDataMigration `
-  -DownloadBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0" `
-  -MirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0",
-                   "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0",
-                   "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0") `
+  -DownloadBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
+  -MirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1",
+                   "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1",
+                   "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1") `
   -RollbackBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
   -RollbackMirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
                            "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
@@ -158,11 +166,11 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
 
 ```powershell
 cd app
-python packaging\make_latest.py --dist dist --version 0.2.0 `
-  --base-url "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0" `
-  --mirror-base-url "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0" `
-  --mirror-base-url "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0" `
-  --mirror-base-url "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.0" `
+python packaging\make_latest.py --dist dist --version 0.2.1 `
+  --base-url "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
+  --mirror-base-url "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
+  --mirror-base-url "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
+  --mirror-base-url "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
   --rollback-version 0.1.9 `
   --rollback-base-url "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
   --rollback-mirror-base-url "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
@@ -184,8 +192,8 @@ Copy-Item dist\latest.json ..\github-release\latest.json -Force
 
 | 环境 | 命令 | 期望 |
 |---|---|---|
-| Windows 本地 | `pytest tests -q` | 687 passed |
-| InstaBox Linux | `python scripts/cloud_test.py` | 668 passed, 19 skipped |
+| Windows 本地 | `pytest tests -q` | 689 passed |
+| InstaBox Linux | `python scripts/cloud_test.py` | 670 passed, 19 skipped |
 | Windows 冻结包 | `好想跑.exe --check` | exit 0 |
 | Windows HTTP | `--no-window --port` + 登录页 | 200 |
 | 自检 | `python -m replica.selfcheck` | 28/28 |
@@ -205,12 +213,39 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 
 ## 5. 当前基线（2026-11-09）
 
-- 产品版本：`0.2.0`；回滚版本 `0.1.9`。
-- 本地：687 passed；云 Linux：668 passed + 19 skipped。
+- 产品版本：`0.2.1`（源码已改，**尚未打包/发布**）；回滚版本 `0.1.9`。
+- 本地：689 passed；云 Linux：670 passed + 19 skipped。
 - 云机器：`agent-browser-yrbo`（Linux，OpenCode/Claude/Codex/Docker）、
   `b`（Android 14，adb 在线）。
 - 参考项目：`docs/reference-projects.md`；检查脚本 `scripts/check_references.py`，
   基线状态在 `output/reference-state.json`（不提交）。
 - 已知坑：`installer.nsi` 必须 UTF-8 BOM；`origin/main` 是发布孤儿分支；
   `pyproject.toml` 版本容易漏改；GitHub 直链 HEAD 偶尔 504，实际 GET 可成功。
+
+## 6. 工作流自检记录（v0.2.1）
+
+这一轮用 v0.2.1 的源码把整条流水线走了一遍（**没有打包、没有发布**）：
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 参考项目 | `python scripts\check_references.py` | `NO CHANGES` |
+| 版本/BOM 预检 | `python scripts\release_check.py --source-only` | PASS，0 warning |
+| 本地测试 | `cd app; python -m pytest tests -q` | 689 passed |
+| 云 Linux | `python scripts\cloud_test.py` | 670 passed, 19 skipped |
+| Claude 审查 | `scripts\claude_review.ps1 -Round 1 -WithTests` | 见 `output/reviews/0.2.1/round-1.md` |
+
+发现并修掉的工作流问题：
+
+1. **OBS 窗口距离精度 2 位、提交体 4 位**：同一条记录两个载荷差几毫米。
+   OBS 统一到 4 位，并加逐项回归。
+2. **Claude 审查的美元上限默认值太小**：`--max-budget-usd 2` 在读完文件前
+   就中止，输出文件只有一行错误。默认改为 0（不限），需要限额时显式传
+   `-MaxBudgetUsd`，命中上限会给出明确报错。
+3. **审查范围太宽会跑很久**：提示词现在要求先 `git diff --stat HEAD~2..HEAD`，
+   最多读 15 个文件，不递归扫 `output/`、`archive/`、`reverse-engineering/`。
+4. **云测试必须先提交**：`git archive HEAD` 不会带未提交的测试；脚本默认拒绝
+   脏工作区，`--allow-dirty` 只用于明确要验证 HEAD 的场合。
+5. **版本预检漏掉发布说明和更新器文案**：`release_check.py` 现在会检查
+   `RELEASE_NOTES_<version>.md` 是否存在，以及 `make_latest.py` 里有没有
+   对应的 `RELEASE_NOTES['<version>']` 和 `DEFAULT_VERSION`。
 

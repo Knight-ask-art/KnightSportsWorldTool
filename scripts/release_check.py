@@ -151,6 +151,15 @@ def main(argv=None) -> int:
                  '' if actual == version else f'{actual} != {version}')
     usage = (ROOT / 'app' / 'packaging' / 'USAGE.txt').read_text(encoding='utf-8')
     report.check(f'v{version}' in usage, 'USAGE.txt version', f'v{version}')
+    notes = ROOT / f'RELEASE_NOTES_{version}.md'
+    report.warn(notes.is_file(), 'release notes',
+                notes.name if notes.is_file() else f'{notes.name} missing')
+    make_latest = (ROOT / 'app' / 'packaging' / 'make_latest.py').read_text(
+        encoding='utf-8')
+    report.check(f"'{version}': [" in make_latest, 'make_latest notes',
+                 f"RELEASE_NOTES['{version}']")
+    report.warn(f"DEFAULT_VERSION = '{version}'" in make_latest,
+                'make_latest fallback', version)
     index = (ROOT / 'app' / 'frontend' / 'index.html').read_text(encoding='utf-8')
     report.check(index.count(f'v{version}') >= 3, 'index.html version',
                  f'{index.count(f"v{version}")} occurrences')
