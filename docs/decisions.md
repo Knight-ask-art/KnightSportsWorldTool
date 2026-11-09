@@ -660,3 +660,12 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 迁移后强制退出本机登录 | 旧 token 是给旧设备签发的；换设备后继续用同一 token 会让服务端看到“同一 token 中途换机” | 只清本机 token，服务端注销尽力而为；重新登录后登录/提交/OBS 使用同一新指纹 |
 | 字段不自洽但 DeviceId 唯一的旧指纹只修字段、保留 DeviceId | 换 DeviceId 的信号比修 CPU/root/像素更大；能保留主身份就保留 | 只有共享常量或 `legacy-default` 才生成新 DeviceId |
 | 启动时检测并迁移，CLI/保活同样拒绝旧 token | GUI、CLI、保活共用一份 `data`；漏一条路径就会继续发旧环境 | 迁移通知写 `device_migration.json`，登录成功后清除 |
+
+## 23. v0.2.1：`stepDistance` 改为累计步幅距离（2026-11-09）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| 轨迹点 `stepDistance` 改为累计值 | 参考项目 `DemaciaSportsWorldTool` 的 L 项：官方 `MyLocation.stepDistance` 是累计步幅距离，客户端用相邻两点相减得到 10 s 窗口值；整条 4 km 记录全 0 是最容易被对拍的破绽 | 用 10 s `stepsNum` 窗口在活跃时钟上积分，再乘全程 `juli / total_steps` 的步幅估计；末点≈`juli`，逐点单调不减 |
+| 不补 `accuracy` / `hasAltitude` / `steps` | 7.4.0 dex 的 `MyLocation` 确有 30 个字段，但 `im/mp/ra` 只有 `@Column`、没有 `@SerializedName`，Gson 实际只发 27 键；10-26 抓包 103/103 点也是 27 键。repo 2 的 `wire.rs` 把 DB 字段也算进了线上载荷 | 保持 27 键；如果未来拿到 7.4.x 真机载荷明确带这 3 键，再按证据加 |
+| OBS 与提交体共用 10 s 窗口，距离精度统一 4 位 | 参考项目 K 项：两处各算一遍或精度不同，服务端把两个载荷对起来就能看见矛盾 | OBS `_obs_windows` 不再把 `distance` 降到 2 位；回归逐项比较提交体与 OBS 的 `distance` / `stepsNum` 和窗时长合计 |
+| 点结构继续由 `application.audit` 自检 | 27 键、`stepDistance` 累计、窗口守恒都是离线可验证的形状约束 | 只证明与已知证据一致，不证明服务端接受 |

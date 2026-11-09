@@ -150,8 +150,15 @@ def _cumulative(run: dict):
     return cum_d, cum_t, cum_s
 
 
-def conv_point(loc, start_ms, cum_d, cum_t, cum_s, prev) -> dict:
-    """One 27-key 7.4.0 OBS point (no `steps`; `speed` is pace)."""
+def conv_point(loc, start_ms, cum_d, cum_t, cum_s, prev,
+               stride: float = 0.0) -> dict:
+    """One 27-key 7.4.0 OBS point (no `steps`; `speed` is pace).
+
+    ``stride`` is the run-wide metres-per-step estimate.  `stepDistance` is a
+    cumulative pedometer distance, so the point's cumulative step count is
+    multiplied by it; leaving the column at 0.0 is the tell the reference
+    project calls out.
+    """
     if CONVERT_BD:
         glat, glng = bd09_to_gcj02(loc['lat'], loc['lng'])
     else:
@@ -183,7 +190,7 @@ def conv_point(loc, start_ms, cum_d, cum_t, cum_s, prev) -> dict:
         'radius': 5.0,
         'speed': round(pace, 2),
         'state': 1,
-        'stepDistance': 0.0,
+        'stepDistance': round(cum_s * stride, 3) if stride > 0 else 0.0,
         'totalDis': round(cum_d, 4),
         'totalTime': int(round(cum_t)),
         'type': 0,
@@ -282,7 +289,11 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
         e = int(d.get('endTime', start_ms))
         window_s = max(0.001, (e - b) / 1000.0)
         if d.get('distance') is not None:
-            d['distance'] = round(float(d['distance']), 2)
+            # Keep the same precision as the submission body.  Rounding OBS
+            # to 2 decimals made the two payloads disagree by a few millimetres
+            # per window, which is exactly the kind of cross-check the server
+            # can use against us (reference project K).
+            d['distance'] = round(float(d['distance']), 4)
         if d.get('stepsNum') is not None:
             # Guard against an impossible cadence, but keep the total steps:
             # the source already allocated only what fits in this window.
@@ -308,10 +319,13 @@ def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
     pts = run.get('wire_points')
     if not pts:
         cum_d, cum_t, cum_s = _cumulative(run)
+        stride = (float(run['juli'])
+                  / max(1, int(run.get('total_steps') or 0)))
         pts = []
         prev = (0.0, 0.0)
         for i, loc in enumerate(run['allLocJson']):
-            p = conv_point(loc, start_ms, cum_d[i], cum_t[i], cum_s[i], prev)
+            p = conv_point(loc, start_ms, cum_d[i], cum_t[i], cum_s[i], prev,
+                           stride=stride)
             prev = (cum_d[i], cum_t[i])
             pts.append(p)
         # upstream: the first point takes the first non-zero speed
@@ -562,6 +576,9 @@ def self_test() -> list[tuple[str, bool, str]]:
     out.append(('cumulative time matches',
                 abs(pts[-1]['totalTime'] - run['sportTime']) <= 1,
                 '%s vs %s' % (pts[-1]['totalTime'], run['sportTime'])))
+    out.append(('stepDistance ends at juli',
+                abs(pts[-1]['stepDistance'] - run['juli']) < 1.0,
+                '%.1f vs %s' % (pts[-1]['stepDistance'], run['juli'])))
 
     laps = json.loads(gzip.decompress(base64.b64decode(obj['laps_json'])))
     out.append(('laps cover the distance',

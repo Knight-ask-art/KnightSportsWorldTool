@@ -155,6 +155,15 @@ def audit_generated(run: dict, key_mode: str = 'single') -> dict:
                   and len(p['gainTime']) == 19 for p in points)
     _check(checks, 'points.gain-time', 'gainTime 是墙钟字符串', gain_ok,
            points[0].get('gainTime') if points else '')
+    step_dist = [_num(p.get('stepDistance')) for p in points]
+    step_ok = bool(step_dist) and step_dist[0] == 0.0 and all(
+        b + 1e-6 >= a for a, b in zip(step_dist, step_dist[1:]))
+    step_end_ok = bool(step_dist) and abs(
+        step_dist[-1] - total_dis) <= max(10.0, total_dis * 0.1)
+    _check(checks, 'points.step-distance',
+           'stepDistance 是累计步幅距离，末点≈juli',
+           step_ok and step_end_ok,
+           '%.1f / %.1f' % (step_dist[-1] if step_dist else 0.0, total_dis))
 
     # ---- 10 s windows ---------------------------------------------------
     want_win = max(1, int(math.ceil(sport_time / 10.0)))

@@ -1074,6 +1074,33 @@ def estimate_pause_seconds(profile: str, manual: list | None = None,
     return 0
 
 
+def _steps_done_at(windows: list, t_ms: int) -> float:
+    """Cumulative steps at wall time ``t_ms`` from the 10 s step windows.
+
+    The windows use the active clock anchored at the run's first point, which
+    is the same clock as ``MyLocation.totalTime``.  A time inside a window is
+    interpolated linearly; a time before the first window is zero.
+    """
+    done = 0.0
+    for window in windows or []:
+        try:
+            begin = int(window.get('beginTime') or 0)
+            end = int(window.get('endTime') or 0)
+            count = float(window.get('stepsNum') or 0.0)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if end <= begin:
+            continue
+        if t_ms >= end:
+            done += count
+        elif t_ms > begin:
+            done += count * (t_ms - begin) / (end - begin)
+            break
+        else:
+            break
+    return max(0.0, done)
+
+
 def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
                       cadence: int = 150, center_lat: float | None = None,
                       center_lng: float | None = None,
@@ -1875,6 +1902,23 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             p2['avgSpeed'] = round(min(6.0, max(1.8, p2['avgSpeed'])), 4)
             p2['speed'] = round(16.6667 / p2['avgSpeed'], 2)
             p2['bdS'] = round(p2['avgSpeed'] * rng.uniform(0.85, 1.05), 3)
+
+    # `MyLocation.stepDistance` is a CUMULATIVE pedometer distance, not a
+    # per-point value.  The official client subtracts two points to get the
+    # distance covered in a 10 s window; a 2 km record whose column stays at
+    # 0.0 is one of the easiest inconsistencies to spot.  Integrate the step
+    # windows on the same active clock as `totalTime`, then scale by the
+    # run-wide stride estimate.  The step distribution follows the distance
+    # profile, so the column drifts around `totalDis` instead of duplicating
+    # it point for point.
+    mean_stride = float(total_meters) / max(1, int(total_steps))
+    for point in loc_points:
+        point['stepDistance'] = round(
+            _steps_done_at(step_freq_json,
+                           t0 + int(point['totalTime']) * 1000) * mean_stride,
+            3)
+    if loc_points:
+        loc_points[0]['stepDistance'] = 0.0
 
     # Keep the domain closed.  The history page hands `type` straight to the
     # map SDK, and a value the client never emits (3, 7, 8, ...) falls through

@@ -13,6 +13,9 @@ The generator used to be a 5.0 s metronome with a window CV of 0.03 and 1 m of
 altitude.  These tests pin the new floor; they are fidelity checks, not a
 detection model.
 """
+import base64
+import gzip
+import json
 import random
 import statistics
 
@@ -211,3 +214,40 @@ def test_preview_returns_the_split_table(tmp_path):
     assert r['code'] == 200, r
     assert [s['seconds'] for s in r['data']['splits']] == [360, 400, 340, 350]
     assert r['data']['sportTime'] == 1450
+
+
+def test_step_distance_is_cumulative_not_zero():
+    """7.4.0 `stepDistance` is cumulative; a 4 km record cannot stay at 0."""
+    for seed in (1, 4, 9):
+        run = _run(seed)
+        values = [p['stepDistance'] for p in run['locPoints']]
+        assert values[0] == 0.0, (seed, values[:3])
+        assert all(b + 1e-6 >= a for a, b in zip(values, values[1:])), seed
+        assert values[-1] > 0.9 * run['juli'], (seed, values[-1], run['juli'])
+        assert abs(values[-1] - run['juli']) <= max(10.0, run['juli'] * 0.1)
+        # It must be its own cumulative column, not another `totalDis` copy.
+        assert any(abs(a - b) > 1.0
+                   for a, b in zip(values, [p['totalDis']
+                                            for p in run['locPoints']]))
+
+
+def test_obs_and_submit_read_the_same_windows_and_points():
+    run = _run(5)
+    obj = OBS.build_obs_object(run, 1333336472, 'UUID-TEST', 99999999)
+    wrap = json.loads(gzip.decompress(base64.b64decode(obj['run_data'])))
+    pts = json.loads(wrap['allLocJson'])
+    assert [p['stepDistance'] for p in pts] == [
+        p['stepDistance'] for p in run['locPoints']]
+    assert [p['totalDis'] for p in pts] == [
+        p['totalDis'] for p in run['locPoints']]
+
+    sp = json.loads(gzip.decompress(base64.b64decode(obj['speed_json'])))
+    st = json.loads(gzip.decompress(base64.b64decode(obj['step_freq_json'])))
+    assert [w['distance'] for w in sp] == [
+        w['distance'] for w in run['speed_json']]
+    assert [w['stepsNum'] for w in st] == [
+        w['stepsNum'] for w in run['step_freq_json']]
+    assert sum(w['endTime'] - w['beginTime'] for w in sp) == (
+        run['sportTime'] * 1000)
+    assert sum(w['endTime'] - w['beginTime'] for w in st) == (
+        run['sportTime'] * 1000)

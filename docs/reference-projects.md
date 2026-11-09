@@ -67,18 +67,18 @@ cd /data/refs/demacia && git diff HEAD~5 -- src/track docs/REALISM_FINDINGS_zh.m
 | 海拔 | repo 2 实测海拔带 9.2–12.4 m，反对固定跨度 | 4 km 约 19–23 m，按距离增长；预览图已改为自适应 | 保留现有生成器；用 repo 2 的结论做回归，不改成固定 9–12 m |
 | 采样 | repo 2 记录 5 s 为主，偶发 1–2 s | 4.2–6.0 s，中位数 5 s | 已接近；如需更真，补 1–2 s 加密采样 |
 | 真实性自检 | repo 2 有 19 项提交前互校 | 我们有 qualification 模型 + 预览 | 对照 19 项补缺口，不复制代码 |
-| `stepDistance` | repo 2 指出官方点是累计步幅距离，跑 2 km 不能记 0 | `rundata.py:1829`、`obs.py:186` 仍写 `0.0` | **P1 候选**：先拿一条 7.4.0 真机点结构确认，再改成累计值并补回归 |
-| 点字段 | repo 2 提到官方点有 `accuracy` / `hasAltitude` 等约 30 键 | 当前 `locPoints` 没有这两个键 | **P1 候选**：确认 7.4.0 是否仍下发；不要凭 7.3.x 直接加 |
+| `stepDistance` | repo 2 指出官方点是累计步幅距离，跑 2 km 不能记 0 | v0.2.1 已改为累计：按 10 s 步数窗积分 × 全局步幅估计，末点≈`juli` | **已完成**；回归见 `test_run_realism.py::test_step_distance_is_cumulative_not_zero` |
+| 点字段 | repo 2 的 `wire.rs` 输出 30 键，含 `accuracy` / `hasAltitude` / `steps` | 7.4.0 `MyLocation` 有 30 个 DB 字段，但 `im/mp/ra` 只有 `@Column`、没有 `@SerializedName`，Gson 实际序列化 **27 键**；10-26 抓包 103/103 点也是 27 键 | **不采纳**：加这 3 个键会变成 30 键，和 7.4.0 真机载荷不一致。repo 2 把 DB 字段当成了线上字段 |
 | 冻结/人脸 | repo 2 把 `freezeRunTime > 0` 作为硬拒绝，`faceCheck` 跟随 `faceVerify` | 冻结是强提醒不硬拦；`faceCheck=0` 且阻止人脸学校 | 行为差异是有意的；发版说明里写清楚 |
-| 10s/60s 窗口 | repo 2 要求提交体与 OBS 用同一套窗口、边界线性插值 | `preview_series` 与 `obs.build_laps` 各算一套 | **P2 候选**：对拍同一条记录的窗口总量 |
+| 10s/60s 窗口 | repo 2 要求提交体与 OBS 用同一套窗口、边界线性插值 | 提交体 `speed_json`/`step_freq_json` 与 OBS `speed_json`/`step_freq_json` 已读同一份数组 | **已完成**；OBS 距离精度从 2 位统一到 4 位，逐项相等有回归 |
 | 遥测/广告 | repo 1 有 startup/pv、datacollection/pv、adgain/adxvip | 未实现 | 先确认是否影响提交链，再决定 |
 | 室内锻炼 | repo 1 有 16 字段签名 | 未实现 | 记录为未来能力，不在当前版本范围 |
 
 ### 5.1 待核对任务
 
-- [ ] `stepDistance` 累计值（repo 2 的 K/L 项）
-- [ ] `accuracy` / `hasAltitude` 字段（7.4.0 真机点结构）
-- [ ] 10s / 60s 窗口边界插值，提交体与 OBS 逐窗对拍
+- [x] `stepDistance` 累计值（repo 2 的 K/L 项）
+- [x] `accuracy` / `hasAltitude` / `steps`：已用 7.4.0 dex + 27 键抓包核对，不采纳
+- [x] 提交体与 OBS 的 10 s 窗逐窗对拍（含 4 位精度与窗时长合计）
 - [ ] 把 repo 2 的 19 项自检映射到我们的 `qualification` / `preview`
 - [ ] repo 1 的 7.4.0 脱壳资料里是否有新 endpoint / 签名字段
 
