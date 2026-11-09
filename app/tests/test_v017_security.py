@@ -26,6 +26,7 @@ def _api(tmp_path):
                       str(tmp_path))
 
 
+@pytest.mark.windows_only
 def test_session_token_is_sealed_at_rest(tmp_path):
     path = tmp_path / 'accounts_emu.json'
     SESS.write(str(path), {'uid': '1', 'token': 'tok-123',
@@ -37,6 +38,7 @@ def test_session_token_is_sealed_at_rest(tmp_path):
     assert SESS.read(str(path))['token'] == 'tok-123'
 
 
+@pytest.mark.windows_only
 def test_legacy_plaintext_token_is_migrated(tmp_path):
     path = tmp_path / 'accounts_emu.json'
     path.write_text(json.dumps({'uid': '1', 'token': 'tok-old'}),
@@ -47,6 +49,7 @@ def test_legacy_plaintext_token_is_migrated(tmp_path):
     assert SESS.read(str(path))['token'] == 'tok-old'
 
 
+@pytest.mark.windows_only
 def test_bridge_writes_only_the_sealed_token(tmp_path):
     api = _api(tmp_path)
     api.real_set_session(uid='1', token='tok-x', unid=9)

@@ -16,6 +16,8 @@ from replica.application import credentials  # noqa: E402
 from replica.adapters.bridge_api import ReplicaApi  # noqa: E402
 
 
+pytestmark = pytest.mark.windows_only
+
 ACCOUNT = '13800138000'
 PASSWORD = 'p@ss-中文-123'
 

@@ -64,3 +64,13 @@ def _isolate_runtime_files(tmp_path, monkeypatch):
     yield
     P.clear_rate_limit()
     CLOCK.reset()
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip Windows-only tests on the InstaBox Linux lane."""
+    if os.name == 'nt':
+        return
+    skip = pytest.mark.skip(reason='Windows-only: DPAPI / registry / updater')
+    for item in items:
+        if 'windows_only' in item.keywords:
+            item.add_marker(skip)

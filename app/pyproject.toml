@@ -1,6 +1,6 @@
 [project]
 name = "haoxiangpao"
-version = "0.1.5"
+version = "0.2.0"
 description = "好想跑：本地跑步数据工作台（协议复刻 / 造数 / 提交 / 只读回查）"
 requires-python = ">=3.11"
 dependencies = [
@@ -23,6 +23,9 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+markers = [
+    "windows_only: requires Windows (DPAPI, registry, updater)",
+]
 
 [tool.ruff]
 line-length = 100

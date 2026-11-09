@@ -9,6 +9,8 @@ import unittest
 import zipfile
 from unittest import mock
 
+import pytest
+
 from replica.adapters import bridge_api as RA
 from replica.application import updater
 
@@ -120,6 +122,7 @@ class InstallStateTest(unittest.TestCase):
         with mock.patch.object(updater, 'is_compiled', return_value=False):
             self.assertFalse(updater.is_installed())
 
+    @pytest.mark.windows_only
     def test_installed_copy_must_live_under_the_registry_dir(self):
         with mock.patch.object(updater, 'is_compiled', return_value=True), \
              mock.patch.object(updater, 'installed_dir',
@@ -245,6 +248,7 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(result['code'], 500)
         self.assertIn('下载失败', result['message'])
 
+    @pytest.mark.windows_only
     def test_apply_update_refuses_a_source_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
             updates = os.path.join(tmp, 'updates')
@@ -325,6 +329,7 @@ class StageTest(unittest.TestCase):
 
 
 class ApplyTest(unittest.TestCase):
+    @pytest.mark.windows_only
     def test_apply_writes_a_detached_swap_script(self):
         with tempfile.TemporaryDirectory() as tmp:
             updates = os.path.join(tmp, 'updates')
@@ -347,6 +352,7 @@ class ApplyTest(unittest.TestCase):
         self.assertTrue(script.rstrip().endswith('}') or
                         'Remove-Item $MyInvocation' in script)
 
+    @pytest.mark.windows_only
     def test_apply_installer_runs_setup_silently(self):
         with tempfile.TemporaryDirectory() as tmp:
             updates = os.path.join(tmp, 'updates')
@@ -368,6 +374,7 @@ class ApplyTest(unittest.TestCase):
         self.assertIn("'/S'", script)
         self.assertIn('Start-Process', script)
 
+    @pytest.mark.windows_only
     def test_apply_installer_rejects_a_non_executable(self):
         with tempfile.TemporaryDirectory() as tmp:
             updates = os.path.join(tmp, 'updates')

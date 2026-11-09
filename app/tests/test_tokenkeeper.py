@@ -5,6 +5,8 @@ No network, no real account: probe/relogin are injected fakes.
 """
 import json
 
+import pytest
+
 from replica.application import session_store
 from replica.application import tokenkeeper as T
 
@@ -54,6 +56,7 @@ def test_auth_failure_marks_expired(tmp_path):
     assert calls['relogin'] == 0
 
 
+@pytest.mark.windows_only
 def test_auto_relogin_rotates_token(tmp_path):
     path = tmp_path / 'accounts_emu.json'
     _write(path, {'uid': 'u1', 'token': 'tok-old', 'keepalive': {}})
