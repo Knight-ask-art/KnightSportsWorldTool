@@ -58,7 +58,7 @@ python scripts\check_references.py
 
 ```powershell
 cd app
-python -m pytest tests -q          # 689 passed（v0.2.1 实测）
+python -m pytest tests -q          # 695 passed（v0.2.2 实测）
 python -m replica.selfcheck        # 28/28
 node --check frontend/js/app.js
 node --check frontend/js/charts.js
@@ -128,10 +128,10 @@ claude mcp list | Select-String instabox
 
 ```powershell
 # 先看参数，不编译
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.1 -Plan
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2 -Plan
 
 # 预检 + 本地测试 + 编译 + 深度校验
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.1
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2
 ```
 
 等价的手工命令：
@@ -140,10 +140,10 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.1
 cd app
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
   -RollbackVersion 0.1.9 -NoDataMigration `
-  -DownloadBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
-  -MirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1",
-                   "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1",
-                   "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1") `
+  -DownloadBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
+  -MirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2",
+                   "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2",
+                   "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2") `
   -RollbackBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
   -RollbackMirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
                            "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
@@ -166,11 +166,11 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
 
 ```powershell
 cd app
-python packaging\make_latest.py --dist dist --version 0.2.1 `
-  --base-url "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
-  --mirror-base-url "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
-  --mirror-base-url "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
-  --mirror-base-url "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1" `
+python packaging\make_latest.py --dist dist --version 0.2.2 `
+  --base-url "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
+  --mirror-base-url "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
+  --mirror-base-url "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
+  --mirror-base-url "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
   --rollback-version 0.1.9 `
   --rollback-base-url "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
   --rollback-mirror-base-url "https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
@@ -213,11 +213,11 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 - 旧版本产物确认在 GitHub Release（核对 SHA256）后删本地；不在 Release 的
   旧版本先传到云机器 `/data/archive/haoxiangpao/` 再删。
 
-## 5. 当前基线（2026-11-09）
+## 5. 当前基线（2026-11-10）
 
-- 产品版本：`0.2.1`（2026-11-10 已发布）；回滚版本 `0.1.9`。
-- Release：https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/tag/v0.2.1
-- 本地：694 passed；云 Linux：675 passed + 19 skipped。
+- 产品版本：`0.2.2`（2026-11-10 已发布）；回滚版本 `0.1.9`。
+- Release：https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/tag/v0.2.2
+- 本地：695 passed；云 Linux：676 passed + 19 skipped。
 - 云机器：`agent-browser-yrbo`（Linux，OpenCode/Claude/Codex/Docker）、
   `b`（Android 14，adb 在线）。
 - 参考项目：`docs/reference-projects.md`；检查脚本 `scripts/check_references.py`，
@@ -225,7 +225,25 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 - 已知坑：`installer.nsi` 必须 UTF-8 BOM；`origin/main` 是发布孤儿分支；
   `pyproject.toml` 版本容易漏改；GitHub 直链 HEAD 偶尔 504，实际 GET 可成功。
 
-## 6. 工作流自检记录（v0.2.1）
+## 6. 工作流自检记录（v0.2.2）
+
+v0.2.2 是小补丁，重点验证 issue #14 的 `policy` 误报和公告暗号：
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 参考项目 | `python scripts\check_references.py` | `NO CHANGES` |
+| 版本/BOM 预检 | `python scripts\release_check.py --source-only` | PASS，0 warning |
+| 本地测试 | `cd app; python -m pytest tests -q` | 695 passed |
+| 云 Linux | `python scripts\cloud_test.py` | 676 passed, 19 skipped |
+| 浏览器实测 | 公告弹窗 | 显示「加群暗号：皮卡丘」，正文无群号 |
+| 打包 | `scripts\release.ps1 -Version 0.2.2` | 5/5，深哈希通过 |
+| 发布 | `gh release create v0.2.2 --latest` | 5 资产，latest，SHA256 复核通过 |
+| jsDelivr | `purge.jsdelivr.net` 后复查 | `latest.json` 为 0.2.2 |
+
+上一轮 v0.2.1 的完整流水线记录保留在 `output/reviews/0.2.1/` 和
+`output/build-0.2.1.log`。
+
+### v0.2.1（2026-11-10）
 
 这一轮用 v0.2.1 的源码把整条流水线走了一遍，最后完成打包和发布：
 
@@ -235,7 +253,7 @@ Windows-only 测试用 `@pytest.mark.windows_only` 标记；非 Windows 由
 | 版本/BOM 预检 | `python scripts\release_check.py --source-only` | PASS，0 warning |
 | 本地测试 | `cd app; python -m pytest tests -q` | 694 passed |
 | 云 Linux | `python scripts\cloud_test.py` | 675 passed, 19 skipped |
-| 打包 | `scripts\release.ps1 -Version 0.2.1` | 5/5，深哈希通过 |
+| 打包 | `scripts\release.ps1 -Version 0.2.2` | 5/5，深哈希通过 |
 | 发布 | `gh release create v0.2.1 --latest` | 5 资产，latest，SHA256 复核通过 |
 | Claude 审查 | `scripts\claude_review.ps1 -Round N -WithTests` | round 1 发现阻塞 → 修复 → round 2/3/5 PASS（`output/reviews/0.2.1/`） |
 
