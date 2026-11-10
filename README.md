@@ -1,9 +1,11 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.webp">
-    <img src="assets/banner-light.webp" alt="好想跑 · 本地跑步数据工作台" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-light.png">
+    <img src="assets/logo.png" width="88" alt="好想跑 logo">
   </picture>
 </p>
+
+<h1 align="center">好想跑</h1>
 
 <p align="center">
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Knight-ask-art/KnightSportsWorldTool?style=flat-square&label=release&color=2E4A7D"></a>
@@ -12,15 +14,6 @@
   <img alt="local" src="https://img.shields.io/badge/network-127.0.0.1%20only-B6483C?style=flat-square">
   <img alt="free" src="https://img.shields.io/badge/price-free-4E7657?style=flat-square">
 </p>
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-light.png">
-    <img src="assets/logo.png" width="88" alt="好想跑 logo">
-  </picture>
-</p>
-
-<h1 align="center">好想跑</h1>
 
 <p align="center">
   <b>帮助自己分析跑步数据的平台</b><br>
