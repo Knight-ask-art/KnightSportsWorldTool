@@ -678,3 +678,11 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 前端 `js/announcements.js` 只做通用渲染 | 图片、正文、可选群号/复制按钮、已读状态都可以由数据描述 | 不把远端 HTML 直接插入页面，文案用 `textContent`；图片只接受 `assets/<file>` |
 | 已读状态按 id 存 `announcement_seen` | 同一条公告只弹一次；改内容时把 `version` 加 1 即可再次提示 | 存在 `data/ui_state.json`，不依赖随机端口上的 localStorage |
 | 设置 → 关于保留入口 | 用户关掉后仍能主动打开，不靠“再弹一次” | 入口用 `data-announcement-id` 绑定，公告 id 变化时同步改按钮 |
+
+## 25. v0.2.2：`policy` 是规则集，不是风险标记（2026-11-10）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| 记录详情的 `policy` 单独显示为「规则集」 | 提交体的 `policy` 是服务器下发的规则集编号（1 = 学分跑），详情接口原样回显；旧前端把所有非零 `policy` 当风险标记，导致 11/05 后正常记录被标红（issue #14） | 只改 UI 展示，不改提交体、签名或服务端判定 |
+| 风险标记只读 `isCheat` / `stepFreqStatus` / `status` / `normalRun` | 这些才是服务端的反作弊字段；`policy=1` 本身不代表被清算 | 服务端反作弊是回溯性的，最终以服务端记录和原因列表为准 |
+| 详情页字段改名 `rdPolicy` → `rdPaceBand`，新增 `rdRulePolicy` | 旧 ID 把“配速区间”和“规则集”混在一起，后续维护容易再次误读 | 静态回归锁定：`if(+x.policy) risk.push` 不能重新出现 |

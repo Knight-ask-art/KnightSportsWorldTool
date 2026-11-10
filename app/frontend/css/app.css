@@ -1977,6 +1977,12 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
   font:600 15px/1 var(--mono);letter-spacing:.08em;color:var(--ink);
 }
 .announcement-meta-row .mini-link{padding:2px 6px}
+.announcement-note{
+  display:inline-block;margin:10px auto 0;padding:7px 12px;
+  border:1px dashed var(--stamp);border-radius:8px;
+  background:rgba(182,72,60,.06);color:var(--ink);
+  font:600 13px/1.4 var(--mono);letter-spacing:.04em;
+}
 
 /* ---------- official-style data preview ---------- */
 .data-preview,.post-submit{

@@ -64,6 +64,7 @@
             <span id="announcementMeta"></span>
             <button type="button" class="mini-link" id="announcementCopy" hidden></button>
           </div>
+          <div class="announcement-note" id="announcementNote" hidden></div>
         </div>
         <footer class="onboard-foot">
           <label class="onboard-never">
@@ -137,6 +138,10 @@
     copy.textContent = item.copy_label || '复制';
     copy.hidden = !item.copy;
     row.hidden = !(item.meta || item.copy);
+
+    const note = $('#announcementNote');
+    note.textContent = item.note || '';
+    note.hidden = !item.note;
 
     $('#announcementDismiss').textContent =
       item.dismiss || '下次不再自动显示';

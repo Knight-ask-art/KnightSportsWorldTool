@@ -5986,10 +5986,10 @@ function renderRecordMap(detail){
   if($('#recFit')) $('#recFit').disabled = false;
 }
 function clearRecordDetail(){
-  ['rdPace','rdTime','rdCadence','rdSteps','rdTrack','rdSource','rdCheat','rdPolicy','rdRrid'].forEach(id => {
+  ['rdPace','rdTime','rdCadence','rdSteps','rdTrack','rdSource','rdCheat','rdRulePolicy','rdPaceBand','rdRrid'].forEach(id => {
     const el = $('#' + id); if(el) el.textContent = '—';
   });
-  ['rdCheat','rdPolicy','rdSource'].forEach(id => {
+  ['rdCheat','rdRulePolicy','rdPaceBand','rdSource'].forEach(id => {
     const el = $('#' + id); if(el){ el.className = ''; el.title = ''; }
   });
   const appealRow = $('#rdAppealRow');
@@ -6186,7 +6186,7 @@ async function selectRecord(i){
   LIVE.lastDetail = d;
   const km = (+x.distance_m || 0) / 1000;
   const state = x.state || recordState(x);
-  const risky = !!(+x.is_cheat || +x.policy || +x.step_freq_status);
+  const risky = !!(+x.is_cheat || +x.step_freq_status);
   const tagText = risky || state === 'issue' ? '有问题'
     : state === 'ok' ? '已通过' : '待核对';
   $('#rdTag').textContent = tagText;
@@ -6223,16 +6223,19 @@ async function selectRecord(i){
   $('#rdSource').textContent = srcText;
   $('#rdSource').className = srcCls;
   $('#rdSource').title = srcTitle;
-  // The server's own anti-cheat fields, not normalRun (which it never sends).
+  // The server's own anti-cheat fields.  `policy` is the rule-set id echoed
+  // back by the detail endpoint (1 = 学分跑), not a risk flag; treating it as
+  // one painted every normal 学分跑 record red starting with the 11/05
+  // records (issue #14).
   const risk = [];
   if(+x.is_cheat) risk.push('isCheat=1');
-  if(+x.policy) risk.push('policy=1');
   if(+x.step_freq_status) risk.push('步频异常');
   $('#rdCheat').textContent = risk.length ? risk.join(' · ') : '正常';
   $('#rdCheat').className = risk.length ? 'risk-bad' : 'risk-ok';
+  $('#rdRulePolicy').textContent = x.policy ? ('policy=' + x.policy) : '—';
   const curPace = paceFromSec(x.duration_s, km);
   const pf = +x.pace_fast, ps = +x.pace_slow;
-  $('#rdPolicy').textContent = (pf > 0 && ps > 0)
+  $('#rdPaceBand').textContent = (pf > 0 && ps > 0)
     ? (paceText(pf) + '–' + paceText(ps) +
        (curPace ? ' · 本次 ' + paceText(curPace) : ''))
     : (curPace ? paceText(curPace) : '—');

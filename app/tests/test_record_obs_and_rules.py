@@ -254,3 +254,18 @@ def test_parse_track_drops_the_740_minus_one_placeholder():
     assert readonly.parse_track([
         {'gLat': -1.0, 'gLng': -1.0, 'lat': 22.4110, 'lng': 112.9410},
     ])[0]['crs'] == 'bd09->gcj02'
+
+
+def test_record_detail_policy_is_the_rule_set_not_a_risk_flag():
+    """Issue #14: `policy=1` is the 学分跑 rule set, not an anti-cheat flag."""
+    with open(os.path.join(ROOT, 'frontend', 'index.html'),
+              encoding='utf-8') as fh:
+        html = fh.read()
+    with open(os.path.join(ROOT, 'frontend', 'js', 'app.js'),
+              encoding='utf-8') as fh:
+        js = fh.read()
+    assert 'id="rdRulePolicy"' in html
+    assert 'id="rdPaceBand"' in html
+    assert "const risky = !!(+x.is_cheat || +x.step_freq_status)" in js
+    assert 'if(+x.policy) risk.push' not in js
+    assert "x.policy ? ('policy=' + x.policy)" in js

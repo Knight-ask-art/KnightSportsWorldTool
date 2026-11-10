@@ -32,8 +32,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1/haoxiangpao_v0.2.1_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1/haoxiangpao_v0.2.1_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2/haoxiangpao_v0.2.2_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2/haoxiangpao_v0.2.2_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases"><img alt="All Releases" src="https://img.shields.io/badge/All-Releases-6F695C?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
@@ -56,7 +56,7 @@
 
 | 项目 | 当前状态 |
 |---|---|
-| 版本 | **v0.2.1** · stable · 2026-11-10 |
+| 版本 | **v0.2.2** · stable · 2026-11-10 |
 | 回滚版本 | v0.1.9 |
 | 系统 | Windows 10 / 11 · 64 位 |
 | 兼容 | 运动世界校园（各校规则不同） |
@@ -138,11 +138,11 @@ flowchart LR
 
 ### 安装版（推荐）
 
-下载 `haoxiangpao_v0.2.1_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
+下载 `haoxiangpao_v0.2.2_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
 
 ### 便携版
 
-下载 `haoxiangpao_v0.2.1_win64.zip`，解压后双击 `好想跑.exe`。
+下载 `haoxiangpao_v0.2.2_win64.zip`，解压后双击 `好想跑.exe`。
 
 > [!WARNING]
 > 便携版要整个文件夹一起用。`好想跑.exe` 旁边的依赖文件不要删，也别只把 exe 拖出来。
@@ -160,7 +160,7 @@ flowchart LR
 例如安装版：
 
 ```text
-https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.1/haoxiangpao_v0.2.1_win64_setup.exe
+https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2/haoxiangpao_v0.2.2_win64_setup.exe
 ```
 
 ---
@@ -173,7 +173,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 4. `data/` 会自动出现，里面是登录状态、回执、限额、设备信息和点位缓存。想彻底重置就整个删掉，下次重新登录。
 
 > [!NOTE]
-> 从 v0.2.0 / v0.1.9 升级到 v0.2.1 不会强制退出登录，也不会删除 `data/`、回执、限额或点位缓存。之前已经接受过《免责声明》的，接受状态保留。
+> 从 v0.2.1 / v0.2.0 / v0.1.9 升级到 v0.2.2 不会强制退出登录，也不会删除 `data/`、回执、限额或点位缓存。之前已经接受过《免责声明》的，接受状态保留。
 
 ---
 
@@ -246,9 +246,9 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 </details>
 
 <details>
-<summary><b>升级到 0.2.1：步幅距离、窗口与公告</b></summary>
+<summary><b>升级到 0.2.2：policy 误报与加群暗号</b></summary>
 
-v0.2.1 不会强制退出登录。轨迹点的 `stepDistance` 改为累计步幅距离；OBS 与提交体的 10 秒窗口逐项对齐；海拔预览图按本次数据自适应。启动后会弹一次 QQ 群公告，直接扫码进群，设置 → 关于里可以重新打开。`data/`、回执和点位缓存都不会丢。
+v0.2.2 不会强制退出登录。记录详情里的 `policy=1` 之前被误显示为风险标记，现在单独显示为「规则集」；真正的风险标记只看 `isCheat` / `stepFreqStatus` 等字段。QQ 群公告补了加群暗号「皮卡丘」。`data/`、回执和点位缓存都不会丢。
 </details>
 
 <details>

@@ -27,6 +27,7 @@ ANNOUNCEMENTS = (
         'kicker': '社区',
         'title': '加入 HAOXIANGPAO QQ 群',
         'body': '扫码进群，反馈问题、获取更新。',
+        'note': '加群暗号：皮卡丘',
         'image': 'assets/qq-group.jpg',
         'image_alt': 'HAOXIANGPAO QQ 群二维码',
         'dismiss': '下次不再自动显示',
