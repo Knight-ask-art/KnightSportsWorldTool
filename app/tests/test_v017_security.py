@@ -111,7 +111,7 @@ def test_announcements_catalog_and_bridge(tmp_path):
 
     items = A.current()
     qq = next(i for i in items if i['id'] == 'qq-group-2026-11')
-    assert qq['version'] == 1
+    assert qq['version'] == 2
     assert qq['image'] == 'assets/qq-group.jpg'
     assert qq['note'] == '加群暗号：皮卡丘'
     assert 'copy' not in qq and 'meta' not in qq
