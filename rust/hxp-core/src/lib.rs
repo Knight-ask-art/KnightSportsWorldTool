@@ -1,0 +1,11 @@
+//! Native core for 好想跑.
+//!
+//! Kept deliberately narrow: the NetSecKit request/response envelope and the
+//! request-signing primitives.  The Python UI calls this through a small
+//! line-oriented sidecar (`hxp-core.exe`), so the salts and the envelope
+//! construction no longer ship as readable `.py`/`.pyc` code.
+
+pub mod netsec;
+pub mod sign;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

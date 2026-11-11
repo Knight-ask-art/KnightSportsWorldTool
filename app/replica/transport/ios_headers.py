@@ -39,6 +39,14 @@ _FALLBACK_DEVICE_ID = str(uuid.uuid4()).upper()
 
 
 def token_sign(ts: str, token: str, uid) -> str:
+    try:
+        from ..transport import rustcore
+        core = rustcore.get()
+        if core is not None:
+            return core.call('token_sign_ios', ts=str(ts), token=str(token),
+                             uid=str(uid))
+    except (rustcore.RustCoreUnavailable, rustcore.RustCoreError):
+        pass
     link = f'timeStamp={ts}&token={token}&uid={uid}'
     return hashlib.md5((link + TOKEN_SIGN_SUFFIX).encode()).hexdigest()
 

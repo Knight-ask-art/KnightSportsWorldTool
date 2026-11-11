@@ -708,3 +708,12 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 总览标题右侧和「我的」头像区加入量化线场（`line-field.svg`） | 把品牌标记采样成 1–4px 四档竖线，给空白区一个可识别的纹理，而不是把动效铺满全站 | 只出现两处；`prefers-reduced-motion` 下停止漂移；不透传到其它页面 |
 | 新增 `manuscript` 皮肤，保留原来的「手稿 × Notion」方向 | 编辑杂志版占用了 `paper` 键，但不能因此丢掉 10 月定下的楷体 + 荧光笔 + 手绘边框；把它作为第五套皮肤放回外观页 | 旧 `paper` 用户不迁移；`manuscript` 直接复用 app.css 基线，不加 editorial 覆盖 |
 | 只覆盖概览/账号/跑步/路线库/记录/我的/设置和登录面板 | 这轮覆盖用户点名的页面；公告和开屏留给后续视觉确认 | 开屏动画 `#bootSplash` 保持原样；`prefers-reduced-motion` 下所有新动效关闭 |
+
+## 28. 核心协议迁移 Rust（2026-11-11）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| NetSecKit 信封与 tokenSign 迁入 `rust/hxp-core`，Python 保留回退 | Python 字节码即使经过 Nuitka 也仍可被分析；把盐、PAES、RSA 和信封顺序放进 native，提高静态分析与补丁成本 | Rust 不是不可逆向；服务端校验仍是最终边界，客户端只提高门槛 |
+| 用常驻 sidecar（行式 JSON）而不是 PyO3/ctypes | 进程边界清楚，崩溃不会带崩 UI；打包只需复制一个 exe；不绑定 Python ABI | 每次调用有 IPC 开销；只传最小参数，不把 token 或 data/ 交给 native |
+| `JHP_RUST_CORE` 自动探测，`0` 强制 Python，`1` 要求 native | 源码运行/CI 没有 Rust 也能跑；排错时可以一键回到 Python | 打包脚本缺 cargo 直接失败，避免静默降级 |
+| 只迁签名/信封，先不动 device_profile、rundata、gt4 | 这三块体积大、状态多；先拿收益最高、边界最清楚的协议核心做样板 | 后续按 `45-native-core.md` 的顺序逐块迁移，每块保留 golden vector |

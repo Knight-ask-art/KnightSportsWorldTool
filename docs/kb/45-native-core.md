@@ -1,0 +1,86 @@
+# 45 · Rust 原生核心
+
+> 结论先行：Rust 不是「不可逆向」，它只是把核心常量、签名和信封算法从
+> 可读的 Python 字节码里搬到 native 代码，提高静态分析和补丁的成本。
+> 真正的边界仍然是服务端校验；客户端加固只提高门槛。
+
+## 1. 边界
+
+| 层 | 语言 | 负责 |
+|---|---|---|
+| UI / 桥 / 本地文件 / 业务规则 | Python | 页面、登录流程、记录、规则、打包 |
+| 协议核心 | Rust | NetSecKit 请求/响应信封、Android/iOS tokenSign、runschool 签名 |
+
+Rust 侧不碰网络、不读 `data/`、不存 token；它只接收最小参数并返回结果。
+这样即使 native 层被单独调用，也拿不到完整账号或本地文件。
+
+## 2. 进程协议
+
+打包产物：`runtime/rust/hxp-core.exe`（Nuitka 产物同级的 `runtime/rust/`）。
+
+Python 通过 stdin/stdout 一行一个 JSON 调用：
+
+```json
+{"id":1,"op":"build_envelope","args":{"plain":"{}","order":"insert","four":"86123.456789","ts_ms":1700000000000,"platform":2}}
+{"id":1,"ok":true,"data":{"json":"{...}","d":"...","h":"...","k":"...","container":"...","req_key":"...","ts_ms":1700000000000,"key_data":["nhang.school","5K0E8400-E29","597DEA1AFB49","86123.456789"]}}
+```
+
+可用 op：
+
+| op | 作用 |
+|---|---|
+| `build_envelope` | 生成 `insert` / `observed` 两种外层顺序的请求信封 |
+| `decrypt_response` | 两层响应解密 + RSA 签名校验（fail-closed） |
+| `four_from_ms` | `keyDataFour` 的 `%.6f` 尾 12 位 |
+| `token_sign` / `token_sign_ios` | 两种平台的 tokenSign |
+| `official_sign` / `runschool_sign` | 通用签名 |
+| `self_test` | 上游 golden vectors + 信封 round-trip |
+| `ping` | 启动探活 |
+
+## 3. 启用与回退
+
+- 默认：找到 `hxp-core.exe` 就用，找不到回退 Python（源码运行不受影响）。
+- `JHP_RUST_CORE=0`：强制 Python（排错用）。
+- `JHP_RUST_CORE=1`：要求 native，缺失时直接报错。
+- `JHP_RUST_CORE_PATH`：指定二进制路径。
+- 测试/调试替换了 `netsec.rsa_recover_digest` 时，`decrypt_response` 自动留在
+  Python 路径（没有服务器私钥，native 无法复现 mock）。
+
+## 4. 构建
+
+```powershell
+cd rust\hxp-core
+cargo test
+cargo build --release --locked
+```
+
+`packaging/build.ps1` 会自动执行 `cargo build --release --locked`，并把
+`hxp-core.exe` 复制到 `dist/好想跑_v*/runtime/rust/`。打包机需要 Rust
+toolchain（1.80+）；源码运行和纯 Python 测试不需要。
+
+## 5. 文件
+
+| 文件 | 作用 |
+|---|---|
+| `rust/hxp-core/src/netsec.rs` | fold32 / PAES key / AES-CBC / RSA / 信封 / 解密 |
+| `rust/hxp-core/src/sign.rs` | tokenSign / official / runschool |
+| `rust/hxp-core/src/main.rs` | 行式 JSON sidecar |
+| `app/replica/transport/rustcore.py` | 进程管理、超时、回退 |
+| `app/replica/transport/netsec.py` | 优先 native，失败回退 Python |
+| `app/replica/domain/crypto.py` / `transport/ios_headers.py` | 签名优先 native |
+
+## 6. 测试
+
+- Rust：`cargo test`（9 个单测：fold32、PAES、信封顺序、签名向量）
+- Python：`tests/test_rust_core.py`；没有二进制时自动 skip
+- 现有 `tests/test_netsec.py` / `test_ios_headers.py` 在二进制存在时会走 native
+
+## 7. 下一步
+
+按收益排序，后续可迁入 native 的模块：
+
+1. `application/device_profile.py`（设备指纹生成/校验）
+2. `domain/rundata.py`（提交体、轨迹点、海拔/分段）
+3. `transport/gt4*.py`（极验载荷/RSA）
+
+每迁一块都保留 Python 回退和 golden vector，避免把「防逆向」变成「防自己排错」。

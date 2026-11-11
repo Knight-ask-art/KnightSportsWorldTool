@@ -62,6 +62,9 @@ $WORK = Join-Path $ROOT 'build_tmp'
 $STAGE = Join-Path $ROOT 'build_stage'
 $BUILT = Join-Path $STAGE '好想跑'
 $EXE = Join-Path $BUILT '好想跑.exe'
+$REPO = Split-Path $ROOT -Parent
+$RUST = Join-Path $REPO 'rust\hxp-core'
+$RUST_EXE = Join-Path $RUST 'target\release\hxp-core.exe'
 
 if (-not $Version) {
     $info = Join-Path $ROOT 'replica\build_info.py'
@@ -101,6 +104,22 @@ $lines = @(
     $buildInfo, $lines, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host ('== build info: {0}{1} {2} ==' -f $commit,
     $(if ($dirty) { '-dirty' } else { '' }), $builtAt)
+
+Write-Host '== 0/5 Rust core =='
+if (-not (Test-Path (Join-Path $RUST 'Cargo.toml'))) {
+    throw "Rust core crate missing: $RUST"
+}
+Push-Location $RUST
+try {
+    cargo build --release --locked
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo build failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
+}
+if (-not (Test-Path $RUST_EXE)) { throw "cargo did not produce $RUST_EXE" }
+Write-Host ('   {0}' -f $RUST_EXE)
 
 if ($Backend -eq 'nuitka') {
     Write-Host ('== 1/5 Nuitka (v{0}) ==' -f $Version)
@@ -159,6 +178,13 @@ if ($Backend -eq 'nuitka') {
     }
 }
 if (-not (Test-Path $EXE)) { throw "$Backend did not produce $EXE" }
+
+# The native core ships next to the exe; the Python wrapper looks for
+# runtime/rust/hxp-core.exe and falls back to Python when it is absent.
+$runtimeRust = Join-Path $BUILT 'runtime\rust'
+New-Item -ItemType Directory -Force -Path $runtimeRust | Out-Null
+Copy-Item $RUST_EXE (Join-Path $runtimeRust 'hxp-core.exe') -Force
+Write-Host '   bundled runtime/rust/hxp-core.exe'
 
 # Debug symbols make function names and source paths readable; they are not
 # needed on the operator's machine.

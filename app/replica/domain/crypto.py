@@ -36,6 +36,14 @@ SWCAMPUS_UA = 'SWCampus/1 CFNetwork/1406.0.4 Darwin/22.4.0'
 
 def runschool_sign(params: dict) -> str:
     """Sort keys -> 'k=v&...' -> MD5. Evidence: str_sign/get_sign."""
+    try:
+        from ..transport import rustcore
+        core = rustcore.get()
+        if core is not None:
+            return core.call('runschool_sign',
+                             params={str(k): str(v) for k, v in params.items()})
+    except (rustcore.RustCoreUnavailable, rustcore.RustCoreError):
+        pass
     query = '&'.join(f'{k}={params[k]}' for k in sorted(params))
     return hashlib.md5(query.encode()).hexdigest()
 
@@ -56,6 +64,15 @@ SIGN_SALT_STANDIN = RUNSCHOOL_SECRET
 def token_sign(time_stamp: str, token: str, uid: str,
                salt: str = TOKEN_SIGN_SALT) -> str:
     """HttpUtil/CommonParamInterceptor tokenSign (salt: recovered static)."""
+    if salt == TOKEN_SIGN_SALT:
+        try:
+            from ..transport import rustcore
+            core = rustcore.get()
+            if core is not None:
+                return core.call('token_sign', ts=str(time_stamp),
+                                 token=str(token), uid=str(uid))
+        except (rustcore.RustCoreUnavailable, rustcore.RustCoreError):
+            pass
     return official_sign({'timeStamp': time_stamp, 'token': token,
                           'uid': uid}, salt)
 

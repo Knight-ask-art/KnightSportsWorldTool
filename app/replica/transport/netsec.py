@@ -234,12 +234,24 @@ def rsa_recover_digest(s_b64: str) -> str:
     return digest.decode()
 
 
+#: Tests and debug tooling replace `rsa_recover_digest` to stand in for the
+#: server's private key.  Keep the native path out of that case.
+_RSA_RECOVER_ORIGINAL = rsa_recover_digest
+
+
 # --------------------------------------------------------------------------
 # session
 # --------------------------------------------------------------------------
 
 def key_data_four_from_ms(ms: float) -> str:
     """native `stringWithFormat:"%f"` (ms as double, 6 dp) -> tail 12 chars."""
+    try:
+        from . import rustcore
+        core = rustcore.get()
+        if core is not None:
+            return core.call('four_from_ms', ms=float(ms))
+    except (rustcore.RustCoreUnavailable, rustcore.RustCoreError):
+        pass
     value = "%.6f" % ms
     raw = value.encode()
     if len(raw) <= 7:
@@ -311,6 +323,24 @@ def build_envelope(session: EnvelopeSession, plain: str, order: str = "insert",
     debugging/diagnostics (req_key, container, key_data, ts).
     """
     ts = now_ms() if ts_ms is None else ts_ms
+    plat = PLATFORM if platform is None else platform
+    # The packaged build routes this through the Rust core so the salts and
+    # envelope construction are not plain Python.  Missing/crashed sidecar
+    # falls back to the implementation below.
+    try:
+        from . import rustcore
+        core = rustcore.get()
+        if core is not None:
+            data = core.call('build_envelope', plain=plain, order=order,
+                             four=session.four, ts_ms=int(ts),
+                             platform=int(plat))
+            data['container'] = str(data.get('container') or '').encode('utf-8')
+            data['key_data'] = [KEYDATA_ONE, KEYDATA_TWO, KEYDATA_THREE,
+                                session.four]
+            return data
+    except rustcore.RustCoreUnavailable:
+        pass
+
     key_data = session.key_data()
     container = serialize_container(b64e(plain.encode()), ts, key_data, platform)
     req_key = new_req_key()
@@ -354,6 +384,19 @@ def decrypt_response(raw: bytes | str, session: EnvelopeSession,
     """
     text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
     text = text.strip()
+    # Prefer the native core; a functional rejection (bad signature, bad JSON)
+    # must not fall back to Python, only transport failures do.  A replaced
+    # rsa_recover_digest (tests/debug) always stays on the Python path.
+    try:
+        from . import rustcore
+        core = rustcore.get() if rsa_recover_digest is _RSA_RECOVER_ORIGINAL else None
+        if core is not None:
+            return core.call('decrypt_response', raw=text, four=session.four,
+                             verify=bool(verify))
+    except rustcore.RustCoreUnavailable:
+        pass
+    except rustcore.RustCoreError as exc:
+        raise DecryptError(str(exc))
     try:
         obj = json.loads(text)
     except Exception as exc:

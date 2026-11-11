@@ -3,6 +3,16 @@
 > 结论先行：Nuitka 能显著提高反编译成本，但**不能保证绝对不可逆**。
 > 真正的边界是服务端校验和不下发敏感密钥；客户端加固只是提高门槛。
 
+## 原生核心：Rust sidecar
+
+- 签名与 NetSecKit 信封在 `rust/hxp-core`，打包时先跑
+  `cargo build --release --locked`（需要 Rust toolchain）。
+- 产物复制到 `dist/好想跑_v*/runtime/rust/hxp-core.exe`，由
+  `app/replica/transport/rustcore.py` 以行式 JSON 调用。
+- 找不到二进制或 sidecar 崩溃时回退 Python，源码运行/纯 Python 测试不受影响；
+  想强制检查原生路径可以用 `JHP_RUST_CORE=1`。
+- Rust 提升的是静态分析和补丁成本，不是「不可逆向」；它不替代服务端校验。
+
 ## 默认后端：Nuitka standalone
 
 `packaging/build.ps1` 默认使用 Nuitka 4.x，把 Python 模块编译成 C 再链接，
