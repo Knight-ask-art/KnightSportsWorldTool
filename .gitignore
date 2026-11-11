@@ -35,6 +35,14 @@ go/hxp-guard/hxp-guard
 go/hxp-guard/hxp-guard.exe
 go/hxp-guard/data/
 
+# C++ shield build artifacts (never commit the binary)
+cpp/hxp-shield/hxp-shield.exe
+cpp/hxp-shield/*.obj
+cpp/hxp-shield/*.pdb
+cpp/hxp-shield/*.ilk
+cpp/hxp-shield/*.exp
+cpp/hxp-shield/*.lib
+
 # ---- 研究资料 / 外部工具（体积大且含历史凭据）----
 archive/
 reverse-engineering/
