@@ -529,6 +529,8 @@ function setCloseUI(on){
     state.textContent = on ? '开' : '关';
     state.classList.toggle('on', on);
   }
+  const rev = $('#reverseRouteBtn');
+  if(rev) rev.disabled = !(on && route.length >= 3);
 }
 setCloseUI(false);
 
@@ -738,6 +740,7 @@ function redraw(){
     $('#runSummary').textContent = '单圈 0.00 km · 等待画线';
     $('#mapNoteKm').textContent = '0.00 km';
     $('#mapNoteMeta').textContent = '等待画线';
+    if($('#reverseRouteBtn')) $('#reverseRouteBtn').disabled = true;
     refreshPointsDistanceState();
     if(typeof scheduleModelPreview === 'function') scheduleModelPreview();
     return;
@@ -753,6 +756,7 @@ function redraw(){
   $('#routeKm').innerHTML = km.toFixed(2) + '<small>km</small>';
   const target = (+$('#inKm').value || 0) * 1000;
   const closed = routeClosed && route.length >= 3;
+  if($('#reverseRouteBtn')) $('#reverseRouteBtn').disabled = !closed;
   // 0.5% tolerance: a target equal to one lap must stay one lap after the
   // route length was rounded to centimetres for the input field.
   const laps = closed && m > 5 && target > 0
@@ -809,6 +813,7 @@ $('#clearBtn').addEventListener('click', () => {
   if(route.length >= 3 && !confirm('清空当前路线？')) return;
   if(route.length) pushRouteHistory('清空路线');
   clearTimeout(_routeFinalTimer);
+  if(typeof hideAutoCandidates === 'function') hideAutoCandidates();
   route = [];
   selRoutePoint = -1;
   redraw();
@@ -1293,19 +1298,156 @@ if($('#navThumb')){
 let currentMode = 'draw';
 const MODE_HELP = {
   draw: '手绘：点地图加点；第一个落点为起点；默认不闭合，需要绕圈时再打开「闭合」。',
-  auto: '自动：仍在开发中，不建议使用；请改用手绘，或导入 GPX / 使用田径场。',
+  auto: '自动：优先用你跑过的路线；没有学习结果时才用临时连线。',
   file: '导入：读取 GPX / GeoJSON / JSON / CSV（手表或别的 App 导出的轨迹）。',
   stadium: '田径场：生成 200/300/400m 标准跑道；提交时按目标距离刷圈。'
 };
 const ROUTE_HINT = {
   draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有 token 时不会生成假点位。',
-  auto: '<b>自动功能仍在开发中，不建议使用。</b>请切到「手绘」逐点画，或导入 GPX / 使用田径场。<br>当前自动模式只是按已加载点位连成一圈，路线质量不稳定。',
+  auto: '自动：优先用你跑过的路线；没有学习结果时才用临时连线。<br>可在「路线库」里先从本机跑步记录学习常跑路线，再回到这里一键选用。',
   file: '导入模式：读取 GPX / GeoJSON / JSON / CSV；手表或别的 App 导出的轨迹。文件只在本机解析。',
   stadium: '田径场模式：选 200/300/400m 生成标准跑道；提交时按目标距离刷圈。'
 };
-function autoGenerate(){
+let _autoSuggestSeq = 0;
+function hideAutoCandidates(){
+  const box = $('#autoCandidates');
+  if(box){
+    box.hidden = true;
+    box.innerHTML = '';
+  }
+}
+function candidateCoverageText(c){
+  const totalPts = livePoints.length;
+  if(totalPts && c && typeof c.coverage === 'number' && isFinite(c.coverage)){
+    const hit = Math.max(0, Math.min(totalPts, Math.round(c.coverage * totalPts)));
+    return hit + '/' + totalPts + ' 打卡点';
+  }
+  if(Array.isArray(c && c.missed) && totalPts){
+    const hit = Math.max(0, totalPts - c.missed.length);
+    return hit + '/' + totalPts + ' 打卡点';
+  }
+  const cov = routeCoverage(validRouteLine(c && c.line));
+  if(cov && cov.total) return cov.passed + '/' + cov.total + ' 打卡点';
+  return (c && c.fence_ok === false) ? '围栏外' : '未加载点位';
+}
+function renderAutoCandidates(candidates){
+  const box = $('#autoCandidates');
+  if(!box) return;
+  const list = Array.isArray(candidates) ? candidates : [];
+  if(!list.length){
+    hideAutoCandidates();
+    return;
+  }
+  box.hidden = false;
+  const head = `<div class="auto-cand-head">
+    <span class="mini">为你匹配到 ${list.length} 条跑过的路线</span>
+    <button type="button" class="btn small ghost" id="autoRotateCandidate">换一条</button>
+  </div>`;
+  const cards = list.map((c, idx) => {
+    const scorePct = Math.max(0, Math.min(100, Math.round((+c.score || 0) * 100)));
+    const lapKm = ((+c.lap_m || 0) / 1000).toFixed(2);
+    const samplesText = c.samples != null ? `${+c.samples || 0} 条样本` : '';
+    const covText = candidateCoverageText(c);
+    const reasons = (Array.isArray(c.reasons) ? c.reasons : [])
+      .filter(Boolean)
+      .map(r => `<span class="tag">${esc(String(r))}</span>`)
+      .join('');
+    return `<div class="auto-candidate ${idx === 0 ? 'is-top' : ''}">
+      <div class="auto-cand-top">
+        <b>${esc(c.name || ('学习路线 ' + (idx + 1)))}</b>
+        <span class="auto-cand-score">${scorePct} 分</span>
+      </div>
+      <div class="auto-cand-meta">
+        <span>${lapKm} km/圈</span>
+        ${samplesText ? `<span>${esc(samplesText)}</span>` : ''}
+        <span>${esc(covText)}</span>
+      </div>
+      ${reasons ? `<div class="auto-cand-reasons">${reasons}</div>` : ''}
+      <div class="auto-cand-actions">
+        <button type="button" class="btn small primary" data-cand-index="${idx}">用这条</button>
+      </div>
+    </div>`;
+  }).join('');
+  box.innerHTML = head + cards;
+}
+function applyAutoCandidate(idx){
+  const cand = (LIVE.rmCandidates || [])[idx];
+  if(!cand) return;
+  const line = validRouteLine(cand.line);
+  if(line.length < 2){
+    toast('候选路线坐标无效');
+    return;
+  }
+  pushRouteHistory('载入学习路线：' + (cand.name || '候选'));
+  selRoutePoint = -1;
+  route = line;
+  setCloseUI(!!cand.closed);
+  redraw();
+  // The candidate was snapped to the checkpoints currently on the map.  Keep
+  // that same set through finalize instead of fetching a fresh random one.
+  const want = pointsTargetM();
+  if(want > 0 && livePoints.length && !pointsDistanceStale()){
+    LIVE.pointsDistance = want;
+  }
+  scheduleRouteFinalize(300, 'learned');
+  hideAutoCandidates();
+  toast('已载入学习路线：' + (cand.name || '候选'));
+}
+function rotateAutoCandidates(){
+  const list = LIVE.rmCandidates || [];
+  if(list.length <= 1){
+    toast('当前只有 1 条学习路线候选');
+    return;
+  }
+  list.push(list.shift());
+  LIVE.rmCandidateOffset = (LIVE.rmCandidateOffset + 1) % list.length;
+  renderAutoCandidates(list);
+}
+async function autoGenerate(){
+  const checkPts = livePoints.map(p => [p.lat, p.lng]);
+  if(checkPts.length < 2){
+    hideAutoCandidates();
+    toast('请先登录刷新点位，或改用手绘');
+    return;
+  }
+  const seq = ++_autoSuggestSeq;
+  const btn = $('#autoGenerate');
+  if(btn){ btn.disabled = true; btn.textContent = '匹配中…'; }
+  let fallbackReason = '';
+  let bridgeErr = false;
+  try{
+    const j = await liveApi('real_route_memory_suggest', {
+      km: +($('#inKm') && $('#inKm').value) || 2.5,
+      points: LIVE.points,
+      fence: LIVE.fences,
+      run_area_id: chosenRunAreaId(LIVE.session)
+    });
+    if(seq !== _autoSuggestSeq || currentMode !== 'auto') return;
+    const data = (j && j.data) || {};
+    if(liveOk(j) && Array.isArray(data.candidates) && data.candidates.length){
+      LIVE.rmCandidates = data.candidates.slice(0, 3);
+      LIVE.rmCandidateOffset = 0;
+      renderAutoCandidates(LIVE.rmCandidates);
+      toast('已匹配 ' + LIVE.rmCandidates.length + ' 条学习路线，请点「用这条」');
+      return;
+    }
+    if(data.message){
+      fallbackReason = String(data.message);
+    }else if(!liveOk(j)){
+      bridgeErr = true;
+      fallbackReason = bridgeMessage(j);
+    }
+  }catch(e){
+    if(seq !== _autoSuggestSeq || currentMode !== 'auto') return;
+    bridgeErr = true;
+    fallbackReason = (e && e.message) ? e.message : String(e || '未知错误');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '重新生成'; }
+  }
+  if(seq !== _autoSuggestSeq || currentMode !== 'auto') return;
+  hideAutoCandidates();
   const left = livePoints.map(p => [p.lat, p.lng]);
-  if(left.length < 2){ toast('自动仍在开发中；请先登录刷新点位，或改用手绘'); return; }
+  if(left.length < 2){ toast('请先登录刷新点位，或改用手绘'); return; }
   const out = [];
   let cur = left.shift();
   out.push(cur);
@@ -1324,8 +1466,12 @@ function autoGenerate(){
   setCloseUI(true);
   redraw();
   scheduleRouteFinalize(300, 'auto');
-  liveLog('自动路线仍在开发中', '仅作试验；建议改用手绘或导入 GPX', 'warn');
-  toast('自动仍在开发中，不建议使用；已按 ' + livePoints.length + ' 个点位生成试验路线');
+  if(fallbackReason){
+    liveLog('自动路线回退到临时连线', fallbackReason, 'warn');
+  }
+  toast(bridgeErr
+    ? '暂未读取到学习路线，已用临时自动路线；可以在路线库先学习'
+    : '还没有学到稳定路线，已用临时自动路线；可以在路线库先学习');
 }
 function stadiumGenerate(){
   const size = +($('#stadiumSize').value || 400);
@@ -1364,6 +1510,7 @@ function setMode(mode){
   $('#importFile').style.display = mode === 'file' ? 'inline-flex' : 'none';
   $('#stadiumSize').style.display = mode === 'stadium' ? 'inline-block' : 'none';
   $('#stadiumGenerate').style.display = mode === 'stadium' ? 'inline-flex' : 'none';
+  if(mode !== 'auto') hideAutoCandidates();
   if(mode === 'draw'){
     if(prev === 'draw'){ setPen(true); return; }
     // Do not wipe an auto/imported/stadium route just because the operator
@@ -2653,6 +2800,9 @@ function go(page){
   }
   if(page === 'routes'){
     setTimeout(() => { routeMap.invalidateSize(); selectRoute(LIVE.selectedRoute); }, 80);
+    if(typeof loadRouteMemory === 'function') loadRouteMemory();
+  }else{
+    if(typeof stopRouteMemoryPoll === 'function') stopRouteMemoryPoll();
   }
   if(page === 'records'){
     if(!LIVE.receiptsLoaded) loadReceipts();
@@ -2822,7 +2972,9 @@ const LIVE = {
   logSel: -1,
   deviceCatalog: null, deviceCatalogError: null, deviceCatalogLoading: false,
   llmProtocols: [], llmSettings: null, llmProtocolPrev: '',
-  llmLoaded: false, llmLoading: false
+  llmLoaded: false, llmLoading: false,
+  rmLoaded: false, rmLoading: false, rmStatus: null,
+  rmCandidates: [], rmCandidateOffset: 0
 };
 
 /* ---------------- appearance skins ---------------- */
@@ -4410,6 +4562,14 @@ function renderEmptyData(){
   LIVE.violations = null; LIVE.violationsError = null; LIVE.violationsAt = 0;
   LIVE.receipts = []; LIVE.receiptsLoaded = false; LIVE.receiptsError = null;
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
+  if(typeof stopRouteMemoryPoll === 'function') stopRouteMemoryPoll();
+  LIVE.rmLoaded = false;
+  LIVE.rmLoading = false;
+  LIVE.rmStatus = null;
+  LIVE.rmCandidates = [];
+  LIVE.rmCandidateOffset = 0;
+  if(typeof hideAutoCandidates === 'function') hideAutoCandidates();
+  if(typeof renderRouteMemory === 'function') renderRouteMemory(null);
   updateFenceChip();
   LIVE.model = null;
   renderModel();
@@ -6508,7 +6668,8 @@ async function exportRecordsCsv(){
 /* ---------------- route library ---------------- */
 const ROUTE_KEY = 'jhp_routes_v1';
 function routeTypeLabel(type){
-  return type === 'stadium' ? '田径场' : type === 'file' ? '导入'
+  return type === 'learned' ? '学习'
+    : type === 'stadium' ? '田径场' : type === 'file' ? '导入'
     : type === 'record' ? '记录' : type === 'auto' ? '自动' : '手绘';
 }
 function validRouteLine(line){
@@ -6527,7 +6688,7 @@ function normaliseRoutes(parsed){
     .filter(r => r && typeof r === 'object')
     .map(r => ({
       name: String(r.name || '未命名路线'),
-      type: ['draw', 'auto', 'stadium', 'file', 'record'].includes(r.type) ? r.type : 'draw',
+      type: ['draw', 'auto', 'stadium', 'file', 'record', 'learned'].includes(r.type) ? r.type : 'draw',
       line: validRouteLine(r.line),
       closed: !!r.closed,
       saved_at: r.saved_at || ''
@@ -6689,6 +6850,328 @@ async function saveDetailAsRoute(){
   LIVE.selectedRoute = LIVE.routes.length - 1;
   renderRouteList(); selectRoute(LIVE.selectedRoute);
   routeSaveToast(ok, '已存为路线');
+}
+
+/* ---------------- route memory (learned routes) ---------------- */
+let _rmPollTimer = 0;
+function stopRouteMemoryPoll(){
+  if(_rmPollTimer){
+    clearInterval(_rmPollTimer);
+    _rmPollTimer = 0;
+  }
+}
+function updateRmProgressUI(progress){
+  const wrap = $('#rmProgress'), bar = $('#rmBar'), txt = $('#rmProgressText');
+  if(!wrap) return;
+  if(!progress){
+    wrap.hidden = true;
+    return;
+  }
+  const phase = String(progress.phase || '');
+  const done = +progress.done || 0;
+  const total = +progress.total || 0;
+  let pct = 10;
+  let label = '正在读取…';
+  if(phase === 'listing'){
+    pct = 12;
+    label = '正在读取记录列表…';
+  }else if(phase === 'detail'){
+    pct = total > 0 ? Math.min(82, Math.max(15, Math.round(15 + (done / total) * 67))) : 35;
+    label = '已读取 ' + done + '/' + total + ' 条';
+  }else if(phase === 'learning'){
+    pct = 88;
+    label = '正在学习轨迹…';
+  }else if(phase === 'saving'){
+    pct = 95;
+    label = '正在保存…';
+  }else if(phase === 'done'){
+    pct = 100;
+    label = '完成';
+  }else if(phase === 'error'){
+    pct = 100;
+    label = '失败：' + String(progress.error || '未知错误');
+  }
+  wrap.hidden = false;
+  if(bar) bar.style.width = pct + '%';
+  if(txt) txt.textContent = label;
+}
+function renderRouteMemory(d){
+  const box = $('#routeMemoryBox');
+  const statusEl = $('#rmStatus');
+  const listEl = $('#rmTemplates');
+  const hintEl = $('#rmHint');
+  const progEl = $('#rmProgress');
+  if(!box) return;
+  if(!d){
+    if(statusEl){ statusEl.textContent = '未学习'; statusEl.className = 'mini'; }
+    if(progEl) progEl.hidden = true;
+    if(listEl) listEl.innerHTML = '';
+    if(hintEl) hintEl.textContent = '学习结果只保存在本机；原始轨迹不落盘。';
+    return;
+  }
+  const summary = (d.summary && typeof d.summary === 'object') ? d.summary : d;
+  const templates = Array.isArray(d.templates) ? d.templates : [];
+  const progress = (d.progress && typeof d.progress === 'object') ? d.progress : null;
+  const running = !!(progress && progress.running);
+  const seen = +(summary.seen != null ? summary.seen : summary.records_seen) || 0;
+  const readable = +(summary.usable != null ? summary.usable : summary.records_readable) || 0;
+  const skipped = +(summary.skipped != null ? summary.skipped : summary.records_skipped) || 0;
+  const statusFlag = String(summary.status || d.status || '');
+
+  if(statusEl){
+    if(running){
+      statusEl.textContent = '学习中';
+      statusEl.className = 'mini warn';
+    }else if(templates.length && statusFlag !== 'weak'){
+      statusEl.textContent = '已学习 ' + templates.length + ' 条';
+      statusEl.className = 'mini ok';
+    }else if(statusFlag === 'weak' || seen > 0){
+      statusEl.textContent = '记录不足';
+      statusEl.className = 'mini warn';
+    }else{
+      statusEl.textContent = '未学习';
+      statusEl.className = 'mini';
+    }
+  }
+  if(running || (progress && progress.phase === 'error')){
+    updateRmProgressUI(progress);
+  }else if(progEl){
+    progEl.hidden = true;
+  }
+  if(listEl){
+    if(statusFlag === 'weak'){
+      listEl.innerHTML = `<div class="rm-empty">记录还不够，暂不提供学习路线（已扫描 ${seen} 条，可用 ${readable} 条，跳过 ${skipped} 条）。可以先用自动或手绘。</div>`;
+    }else if(templates.length){
+      listEl.innerHTML = templates.map(t => {
+        const id = String(t.id || t.template_id || '');
+        const lapKm = ((+t.lap_m || 0) / 1000).toFixed(2);
+        const samples = +t.samples || 0;
+        const lastSeen = t.last_seen_ms ? shortDate(+t.last_seen_ms) : '';
+        const medoidText = (t.medoid_distance_m != null && isFinite(+t.medoid_distance_m))
+          ? (Math.round(+t.medoid_distance_m) + ' m') : '—';
+        return `<div class="rm-card">
+          <div class="rm-card-top">
+            <b class="rm-card-name">${esc(t.name || '学习路线')}</b>
+            <span class="tag">${t.closed ? '闭环' : '开放'}</span>
+          </div>
+          <div class="rm-card-meta">
+            <span>${lapKm} km/圈</span>
+            <span>${samples} 条样本</span>
+            ${lastSeen ? `<span>最近 ${esc(lastSeen)}</span>` : ''}
+            <span>簇内平均偏差 ${esc(medoidText)}</span>
+          </div>
+          <div class="rm-card-actions">
+            <button type="button" class="btn small" data-rm-apply="${esc(id)}">预览</button>
+            <button type="button" class="btn small ghost" data-rm-save="${esc(id)}">存为路线</button>
+          </div>
+        </div>`;
+      }).join('');
+    }else if(seen > 0 || statusFlag === 'weak'){
+      listEl.innerHTML = `<div class="rm-empty">暂无稳定路线（已扫描 ${seen} 条，可用 ${readable} 条，跳过 ${skipped} 条）。可能是记录太少、无轨迹或不在当前校区。</div>`;
+    }else{
+      listEl.innerHTML = '';
+    }
+  }
+  if(hintEl){
+    if(progress && progress.phase === 'error' && progress.error){
+      hintEl.textContent = '学习失败：' + String(progress.error);
+    }else if(statusFlag === 'weak'){
+      hintEl.textContent = `记录还不够，先不提供学习路线（已扫描 ${seen} 条，可用 ${readable} 条）；可先用自动或手绘。`;
+    }else if(templates.length === 1){
+      hintEl.textContent = `只学到 1 条路线（可用 ${readable} 条记录）；只保存在本机，原始轨迹不落盘。`;
+    }else if(templates.length > 1){
+      hintEl.textContent = `从你跑过的 ${readable} 条记录学到 ${templates.length} 条路线；学习结果只保存在本机，原始轨迹不落盘。`;
+    }else if(seen > 0){
+      hintEl.textContent = `记录还不够，先不提供学习路线（已扫描 ${seen} 条，可用 ${readable} 条）；可先用自动或手绘。`;
+    }else{
+      hintEl.textContent = '学习结果只保存在本机；原始轨迹不落盘。';
+    }
+  }
+}
+async function loadRouteMemory(){
+  const box = $('#routeMemoryBox');
+  if(!box || LIVE.rmLoading) return;
+  LIVE.rmLoading = true;
+  try{
+    const j = await liveApi('real_route_memory_status');
+    if(bridgeMissing(j)){
+      box.hidden = true;
+      stopRouteMemoryPoll();
+      return;
+    }
+    box.hidden = false;
+    if(!liveOk(j)){
+      if($('#rmStatus')){ $('#rmStatus').textContent = '未学习'; $('#rmStatus').className = 'mini'; }
+      if($('#rmProgress')) $('#rmProgress').hidden = true;
+      if($('#rmTemplates')) $('#rmTemplates').innerHTML = '';
+      if($('#rmHint')) $('#rmHint').textContent = bridgeMessage(j);
+      return;
+    }
+    const d = j.data || {};
+    LIVE.rmLoaded = true;
+    LIVE.rmStatus = d;
+    renderRouteMemory(d);
+  }catch(e){
+    if($('#rmHint')) $('#rmHint').textContent = '读取失败：' + (e && e.message ? e.message : String(e || '未知错误'));
+  }finally{
+    LIVE.rmLoading = false;
+  }
+}
+async function pollRouteMemoryStatus(){
+  const page = $('#page-routes');
+  if(!page || !page.classList.contains('active')){
+    stopRouteMemoryPoll();
+    return;
+  }
+  try{
+    const j = await liveApi('real_route_memory_status');
+    if(!page.classList.contains('active')){
+      stopRouteMemoryPoll();
+      return;
+    }
+    if(bridgeMissing(j)){
+      if($('#routeMemoryBox')) $('#routeMemoryBox').hidden = true;
+      stopRouteMemoryPoll();
+      return;
+    }
+    if(!liveOk(j)){
+      stopRouteMemoryPoll();
+      if($('#rmLearn')){ $('#rmLearn').disabled = false; $('#rmLearn').textContent = '从跑步记录学习路线'; }
+      toast('读取学习状态失败：' + bridgeMessage(j));
+      return;
+    }
+    const d = j.data || {};
+    const progress = (d.progress && typeof d.progress === 'object') ? d.progress : null;
+    updateRmProgressUI(progress);
+    const doneOrErr = !progress || !progress.running || progress.phase === 'done' || progress.phase === 'error';
+    if(doneOrErr){
+      stopRouteMemoryPoll();
+      if($('#rmLearn')){ $('#rmLearn').disabled = false; $('#rmLearn').textContent = '从跑步记录学习路线'; }
+      if(progress && progress.phase === 'error'){
+        toast('路线学习失败：' + (progress.error || '请稍后重试'));
+      }else if(progress && progress.phase === 'done'){
+        toast('路线学习完成');
+      }
+      await loadRouteMemory();
+    }
+  }catch(e){
+    stopRouteMemoryPoll();
+    if($('#rmLearn')){ $('#rmLearn').disabled = false; $('#rmLearn').textContent = '从跑步记录学习路线'; }
+    toast('读取学习状态失败：' + (e && e.message ? e.message : String(e || '未知错误')));
+  }
+}
+async function startRouteMemoryLearn(){
+  const btn = $('#rmLearn');
+  if(btn && btn.disabled) return;
+  if(btn){ btn.disabled = true; btn.textContent = '启动中…'; }
+  try{
+    const j = await liveApi('real_route_memory_learn', {limit: 50, force: true, wait: false}, 20000);
+    if(bridgeMissing(j)){
+      if($('#routeMemoryBox')) $('#routeMemoryBox').hidden = true;
+      toast(bridgeMessage(j));
+      return;
+    }
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      if($('#rmHint')) $('#rmHint').textContent = '学习失败：' + msg;
+      toast('学习失败：' + msg);
+      if(btn){ btn.disabled = false; btn.textContent = '从跑步记录学习路线'; }
+      return;
+    }
+    const d = j.data || {};
+    if(d.started){
+      if($('#rmStatus')){ $('#rmStatus').textContent = '学习中'; $('#rmStatus').className = 'mini warn'; }
+      updateRmProgressUI(d.progress || {phase: 'listing', done: 0, total: 0, running: true});
+      if(btn) btn.textContent = '学习中…';
+      stopRouteMemoryPoll();
+      _rmPollTimer = setInterval(pollRouteMemoryStatus, 800);
+      return;
+    }
+    if(btn){ btn.disabled = false; btn.textContent = '从跑步记录学习路线'; }
+    await loadRouteMemory();
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    if($('#rmHint')) $('#rmHint').textContent = '学习失败：' + msg;
+    toast('学习失败：' + msg);
+    if(btn){ btn.disabled = false; btn.textContent = '从跑步记录学习路线'; }
+  }
+}
+async function applyRouteMemoryTemplate(templateId, btn){
+  if(!templateId) return;
+  if(btn){ btn.disabled = true; }
+  try{
+    const km = +($('#inKm') && $('#inKm').value) || 2.5;
+    const j = await liveApi('real_route_memory_apply', {template_id: templateId, km, points: LIVE.points});
+    const data = (j && j.data) || {};
+    if(!liveOk(j) || data.ok === false){
+      toast('载入学习路线失败：' + (data.error || bridgeMessage(j)));
+      return;
+    }
+    const line = validRouteLine(data.waypoints);
+    if(line.length < 2){
+      toast('学习路线坐标无效');
+      return;
+    }
+    pushRouteHistory('载入学习路线');
+    selRoutePoint = -1;
+    route = line;
+    setCloseUI(!!data.closed);
+    redraw();
+    const want = pointsTargetM();
+    if(want > 0 && livePoints.length && !pointsDistanceStale()){
+      LIVE.pointsDistance = want;
+    }
+    scheduleRouteFinalize(300, 'learned');
+    hideAutoCandidates();
+    go('run');
+    switchRunTab('route');
+    toast('已载入学习路线');
+  }finally{
+    if(btn){ btn.disabled = false; }
+  }
+}
+async function saveRouteMemoryTemplate(templateId, btn){
+  if(!templateId) return;
+  if(btn){ btn.disabled = true; }
+  try{
+    const j = await liveApi('real_route_memory_save', {template_id: templateId});
+    if(!liveOk(j)){
+      toast('存为路线失败：' + bridgeMessage(j));
+      return;
+    }
+    const data = j.data || {};
+    if(Array.isArray(data.routes)){
+      LIVE.routes = normaliseRoutes(data.routes);
+      if(LIVE.selectedRoute >= LIVE.routes.length) LIVE.selectedRoute = -1;
+      try{ localStorage.setItem(ROUTE_KEY, JSON.stringify(LIVE.routes)); }catch(e){}
+      renderRouteList();
+    }
+    toast('已存为路线，可在下方路线库查看');
+  }finally{
+    if(btn){ btn.disabled = false; }
+  }
+}
+function reverseCurrentRoute(){
+  if(!routeClosed || route.length < 3){
+    toast('只有闭合路线支持反向跑');
+    return;
+  }
+  const ring = route.map(p => [+p[0], +p[1]]);
+  if(ring.length > 1 &&
+     Math.abs(ring[0][0] - ring[ring.length - 1][0]) < 1e-9 &&
+     Math.abs(ring[0][1] - ring[ring.length - 1][1]) < 1e-9){
+    ring.pop();
+  }
+  if(ring.length < 3){
+    toast('闭合路线至少需要 3 个点');
+    return;
+  }
+  pushRouteHistory('反向跑');
+  route = [ring[0], ...ring.slice(1).reverse()];
+  selRoutePoint = -1;
+  redraw();
+  scheduleRouteFinalize(300, 'reverse');
+  toast('已反转闭环方向');
 }
 
 function openRecordDataPreview(){
@@ -8852,12 +9335,12 @@ const ONBOARD_STEPS = [
     tip: '第一次登录要在本地解极验，会慢一点；之后一般几秒内完成。'
   },
   {
-    title: '路线：手绘最稳，自动还在开发中',
-    body: '<p>跑步页有四种路线：<b>手绘</b>、<b>导入</b>（GPX/GeoJSON/CSV）、<b>田径场</b>，以及仍在开发中的<b>自动</b>。</p>' +
-      '<ul><li><b>优先手绘</b>：点地图加点，右键删点，最可控。</li>' +
-      '<li><b>不建议自动</b>：目前只是按点位连一圈，路线质量不稳定。</li>' +
+    title: '路线：优先学习跑过的路线，也支持手绘',
+    body: '<p>跑步页支持四种路线：<b>手绘</b>、<b>导入</b>（GPX/GeoJSON/CSV）、<b>田径场</b>和<b>自动</b>。</p>' +
+      '<ul><li><b>路线学习</b>：在「路线库」先学习你跑过的路线，点击「自动」就会优先推荐这些真实路线。</li>' +
+      '<li><b>手绘最可控</b>：点地图加点，右键删点；没有学习结果时也可用手绘或临时自动连线。</li>' +
       '<li>围栏校验会检查整段路线；提交前看到「越界 0 点 / 0 段」才稳。</li></ul>',
-    tip: '从「手绘」开始；需要绕圈时再打开「闭合」。',
+    tip: '先去「路线库」学习跑过的路线，或从「手绘」开始；需要绕圈时打开「闭合」。',
     actions: [{label:'去手绘', goto:'run', tab:'route', mode:'draw'}]
   },
   {
@@ -10024,6 +10507,35 @@ function featureWire(){
       ev.preventDefault(); replayToggle();
     }
   });
+  if($('#rmLearn')) $('#rmLearn').addEventListener('click', startRouteMemoryLearn);
+  if($('#rmRefresh')) $('#rmRefresh').addEventListener('click', () => loadRouteMemory());
+  if($('#rmTemplates')){
+    $('#rmTemplates').addEventListener('click', ev => {
+      const applyBtn = ev.target.closest('[data-rm-apply]');
+      if(applyBtn){
+        applyRouteMemoryTemplate(applyBtn.dataset.rmApply, applyBtn);
+        return;
+      }
+      const saveBtn = ev.target.closest('[data-rm-save]');
+      if(saveBtn){
+        saveRouteMemoryTemplate(saveBtn.dataset.rmSave, saveBtn);
+      }
+    });
+  }
+  if($('#autoCandidates')){
+    $('#autoCandidates').addEventListener('click', ev => {
+      const useBtn = ev.target.closest('[data-cand-index]');
+      if(useBtn){
+        applyAutoCandidate(+useBtn.dataset.candIndex);
+        return;
+      }
+      if(ev.target.closest('#autoRotateCandidate')){
+        rotateAutoCandidates();
+      }
+    });
+  }
+  if($('#reverseRouteBtn')) $('#reverseRouteBtn').addEventListener('click', reverseCurrentRoute);
+
   renderAudit();
   renderPresets();
 }

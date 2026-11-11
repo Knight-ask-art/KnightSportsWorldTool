@@ -523,7 +523,7 @@
           <div class="run-body">
             <section class="rsec active" id="rsec-route">
               <div class="mode-tabs" role="tablist" aria-label="路线来源">
-                <button class="mode-tab" data-mode="auto">自动<span class="dev-tag">开发中</span></button>
+                <button class="mode-tab" data-mode="auto">自动</button>
                 <button class="mode-tab active" data-mode="draw">手绘</button>
                 <button class="mode-tab" data-mode="file">导入</button>
                 <button class="mode-tab" data-mode="stadium">田径场</button>
@@ -542,6 +542,8 @@
                 <button class="btn small ghost" id="stadiumGenerate" style="display:none">生成跑道</button>
               </div>
 
+              <div class="auto-candidates" id="autoCandidates" hidden></div>
+
               <div class="route-metrics">
                 <div class="route-km" id="routeKm">0.00<small>km</small></div>
                 <div class="route-note" id="routeNote"><b>·</b> 点击地图开始</div>
@@ -556,6 +558,7 @@
               <div class="toggle-row">
                 <span class="toggle-label">平滑</span><button class="switch on" id="smoothToggle" aria-label="平滑曲线" aria-pressed="true"></button>
                 <span class="toggle-label">闭合</span><button class="switch" id="closeToggle" aria-label="闭合路线（当前：关）" aria-pressed="false" title="闭合关：保留起点到终点的开放折线"></button><span class="toggle-state" id="closeState">关</span>
+                <button class="btn small ghost" id="reverseRouteBtn" type="button" disabled title="反转当前闭环路线方向">反向跑</button>
                 <span class="mini" id="ptCount">0 个控制点</span>
               </div>
 
@@ -578,7 +581,7 @@
                 <span id="goalLine2">预计 —</span>
               </div>
 
-              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>自动功能仍在开发中，不建议使用。点位与围栏来自登录后的服务器接口；没有 token 时不会生成假点位。</div>
+              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位与围栏来自登录后的服务器接口；没有 token 时不会生成假点位。</div>
             </section>
 
             <section class="rsec" id="rsec-params">
@@ -900,6 +903,26 @@
           </div>
         </header>
 
+        <section class="rm-box" id="routeMemoryBox">
+          <div class="rm-head">
+            <div>
+              <h2>学习路线</h2>
+              <p class="hint">只读你本机的跑步记录，按起点、围栏和轨迹形状学习常跑路线；不上传轨迹。</p>
+            </div>
+            <span class="mini" id="rmStatus">未学习</span>
+          </div>
+          <div class="rm-actions">
+            <button class="btn small primary" id="rmLearn">从跑步记录学习路线</button>
+            <button class="btn small ghost" id="rmRefresh">刷新</button>
+          </div>
+          <div class="rm-progress" id="rmProgress" hidden>
+            <div class="rm-bar"><i id="rmBar"></i></div>
+            <span class="hint" id="rmProgressText">正在读取…</span>
+          </div>
+          <div class="rm-list" id="rmTemplates"></div>
+          <p class="hint" id="rmHint">学习结果只保存在本机；原始轨迹不落盘。</p>
+        </section>
+
         <div class="filter-row">
           <button class="filter active" data-route-filter="all">全部</button>
           <button class="filter" data-route-filter="draw">手绘</button>
@@ -907,6 +930,7 @@
           <button class="filter" data-route-filter="stadium">田径场</button>
           <button class="filter" data-route-filter="file">导入</button>
           <button class="filter" data-route-filter="record">记录</button>
+          <button class="filter" data-route-filter="learned">学习</button>
         </div>
 
         <div class="route-layout">
