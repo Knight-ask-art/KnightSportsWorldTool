@@ -184,11 +184,14 @@ def apply_template(doc: dict, template_id: str, km: float,
 `learn_from_tracks` 规则：
 
 1. 过滤：`source != 'tool'`、`is_cheat == 0`、`complete is True`、点数 >= 20、距离 0.5–20 km。
-2. `line` 先 `simplify`，再判断闭环；闭环用 `extract_loop` 取单圈，再 `canonical_loop`。
+2. `line` 先 `simplify`，再判断闭环；闭环先 `extract_loop` 取候选段，
+   再用“锚定周期性”把它裁成恰好一圈（首尾回到起点才计数），
+   最后 `canonical_loop`。200 m / 400 m 小圈同样适用。
 3. 闭环按 `route_distance(closed=True)` 增量聚类；开放路线按 `closed=False`。
 4. 新轨迹与最近 medoid 距离 <= threshold 则并入，否则新建簇。
 5. 每簇重算 medoid；模板 `line` 用 medoid 的简化轨迹（闭环先 canonical）。
-6. 模板 `lap_m = polyline_length_m(line)`；闭环的 `avg_distance_m` 取簇内原始距离均值。
+6. 模板 `lap_m = polyline_length_m(line)`；闭环要把首尾闭合段算进去
+   （`line + [line[0]]`）；`avg_distance_m` 取簇内原始距离均值。
 7. `id` 用 `lr_` + sha1(line 的 6 位小数串)[:8]；同一输入必须稳定。
 8. 输出 doc 必须可 JSON 序列化；不能包含 tuple（转 list）。
 9. 空输入返回合法 doc：`templates: []`，`records_seen: 0`。
@@ -196,8 +199,10 @@ def apply_template(doc: dict, template_id: str, km: float,
 `suggest` 规则：
 
 1. 对每个模板：
+   - 单模板 `samples < 3` 或 `medoid_distance_m > 60` 直接淘汰（低置信不推荐）。
    - 闭环：`laps = ceil(target_m / lap_m)`；`laps > 30` 淘汰；`lap_m > target_m * 1.5` 淘汰。
-   - 开放：`lap_m > target_m * 1.5` 淘汰。
+   - 开放：`lap_m > target_m * 1.5` 淘汰；距离拟合按 `build_open` 的
+     “够长就截断、否则来回折返”计算，不硬编码 2 倍。
    - 围栏：`fence` 非空时，模板所有点必须 `outside_fences` 为空；否则淘汰。
    - 点位：调用 `routes.missed_points`；`isMustPoint` 漏一个淘汰；普通点计入覆盖分。
    - 起点距离：模板首点到 `center`（或第一个点位）的距离；越近越好。
