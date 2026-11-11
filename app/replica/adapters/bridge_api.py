@@ -617,6 +617,8 @@ class ReplicaApi:
             'finished_at_ms': 0,
         }
         self._rm_thread = None
+        self._agent_lock = threading.RLock()
+        self._agent_session = None
         self._device_lock = threading.RLock()
         self._device_cache = None
         self._device_migration = None
