@@ -15,6 +15,7 @@
 3. 在 UI 里以“从你跑过的 N 条记录学到 3 条路线”呈现，不叫“AI 画线”。
 4. 全部本机处理，不上传轨迹，不把坐标发给任何 LLM。
 5. 设置页提供 LLM 协议、Base URL、模型、API Key、温度和超时配置；Key 用 DPAPI 封存，默认关闭。
+6. 提供一个专门的 Agent 页面：用户说目标，Agent 编排“学习 → 推荐 → 适配 → 预览 → 审计”，停在用户确认，永不自动提交。
 
 ### 非目标（v1 明确不做）
 
@@ -342,30 +343,192 @@ def apply_template(doc: dict, template_id: str, km: float,
 
 ## 7. Agent（第二阶段）
 
-工具名固定：
+### 7.1 目标
+
+- 给用户一个**专门的 Agent 页面**，不是藏在设置里的开关。
+- 用户可以用自然语言说“帮我跑 2.5 公里”“换一条”“反向跑”“重新学习”，Agent 负责编排：
+  收集目标 → 读学习路线 → 推荐 → 适配 → 预览 → 审计 → 等用户确认。
+- Agent 只做编排和解释；路线几何、打卡点、围栏、距离全部走本地确定性代码。
+- **Agent 永不提交**。页面上的“确认”只是把结果交给现有「跑步」页，最终提交仍由用户在原有确认/提交闸门点击。
+
+### 7.2 状态机
 
 ```text
-route_memory_status
-route_memory_learn
-route_memory_suggest
-route_memory_apply
-preview_route
-audit_run
-snap_missing_points
+idle
+  → collect     解析目标距离；读取当前点位/围栏/校区
+  → learn       没有模板或用户要求重新学习时，只读拉取历史记录
+  → suggest     模板打分，返回最多 3 条候选
+  → adapt       选中模板后旋转起点、插入漏点位
+  → preview     调用现有 preview_route 生成完整跑步模型
+  → audit       调用现有 audit_run 做本地检查
+  → wait_confirm
+  → confirmed   只把预览参数交给前端，不提交
 ```
 
-状态机：
+异常/回退：
 
 ```text
-COLLECT → LEARN → SUGGEST → ADAPT → PREVIEW → AUDIT → WAIT_CONFIRM
+任何阶段失败 → error（带原因和下一步建议）
+用户取消     → cancelled
+学习结果弱   → wait_confirm 前直接 error/fallback，提示“记录还不够，先用自动/手绘”
 ```
 
-要求：
+### 7.3 后端模块 `app/replica/application/agent.py`
 
-- Agent 不得直接提交；`WAIT_CONFIRM` 必须由用户点击。
-- 每次工具调用写 `data/agent_runs/<timestamp>.jsonl`（脱敏：不含 token/密码/完整坐标）。
-- LLM 只做选择与解释，不生成坐标；没有 LLM 时用确定性策略也能跑。
-- 失败重试最多 3 次，然后回退到现有自动/手绘。
+纯逻辑 + 线程编排；不直接发 HTTP，不直接 submit。依赖 `route_memory`、`routes`、`audit` 和 bridge 注入的工具函数。
+
+```python
+STATES = ('idle', 'collect', 'learn', 'suggest', 'adapt',
+          'preview', 'audit', 'wait_confirm', 'confirmed',
+          'cancelled', 'error')
+
+class AgentError(RuntimeError):
+    pass
+
+class AgentSession:
+    def __init__(self, tools: dict, store_dir: str, owner: str): ...
+    def start(self, text: str = '', km: float | None = None,
+              points: list[dict] | None = None,
+              fence: list[list[tuple]] | None = None,
+              run_area_id=None) -> dict: ...
+    def status(self) -> dict: ...
+    def message(self, text: str) -> dict: ...
+    def confirm(self) -> dict: ...
+    def cancel(self) -> dict: ...
+```
+
+- `start` 立即返回 `status()`，耗时步骤在后台线程执行；前端轮询。
+- `status()` 返回：
+  ```python
+  {
+    "session_id": "ag_...",
+    "state": "wait_confirm",
+    "goal": {"km": 2.5, "points": 5, "run_area_id": 47203},
+    "log": [{"at_ms": ..., "level": "info", "text": "...",
+             "tool": "route_memory_suggest", "data": {...}}, ...],
+    "candidates": [...],       # 同 §3.3；选中前都带 line
+    "selected": "lr_a1b2c3d4",
+    "preview": {...},          # 现有 preview_route 的返回
+    "audit": {...},            # 现有 audit_run 的返回
+    "llm": {"used": false, "model": "", "error": ""},
+    "error": "",
+    "updated_at_ms": ...
+  }
+  ```
+- `log` 只保留最近 200 条；`data` 字段不得含 token、uid、完整坐标。
+- 同一时间只允许一个运行中的会话；`start` 会取消旧线程（设置 `cancel_event`）。
+- `confirm()` 只在 `wait_confirm` 状态有效；返回：
+  ```python
+  {"preview_args": {...}, "route": [[lat, lng], ...], "km": 2.5}
+  ```
+  不调用 submit，不写回执。
+
+### 7.4 意图解析（确定性，不依赖 LLM）
+
+`message(text)` 先走规则：
+
+| 输入 | 动作 |
+|---|---|
+| 含 `2.5 km` / `2.5公里` / `跑三公里` | 设置目标距离，重新 `suggest` |
+| `换一条` / `下一条` | 候选列表轮换，重新 `adapt/preview/audit` |
+| `反向` / `反着跑` | 闭环候选反向，重新预览 |
+| `重新学习` / `再学一次` | 强制 `learn(force=True)` |
+| `确认` / `就这条` | 等价 `confirm()` |
+| `取消` / `算了` | `cancel()` |
+| 其他 | 记一条“没听懂”的提示，保持当前状态，不报错 |
+
+中文数字要支持：一/二/三/四/五/六/七/八/九/十，以及 `半`（0.5）。
+解析失败时不要猜，直接问“想跑多少公里？”。
+
+### 7.5 Bridge API
+
+| 方法 | 行为 |
+|---|---|
+| `real_agent_start(self, text='', km=None, points=None, fence=None, run_area_id=None)` | 创建/重置会话并启动；立即返回 `_ok(status)` |
+| `real_agent_status(self)` | 返回当前 `status()` |
+| `real_agent_message(self, text)` | 处理一条用户消息；返回 `_ok(status)` |
+| `real_agent_confirm(self)` | 返回 `_ok({preview_args, route, km})`；不提交 |
+| `real_agent_cancel(self)` | 取消并返回 `_ok(status)` |
+
+- 没有会话时 `status` 返回 `state='idle'`，不报错。
+- 账号/token 失效时 `start` 仍可进入 `collect`，但在 `learn` 阶段返回明确错误：
+  “token 失效，请重新登录”；不得伪造模板。
+- 工具注入：
+  ```python
+  tools = {
+    "route_memory_status": ...,
+    "route_memory_learn": ...,
+    "route_memory_suggest": ...,
+    "route_memory_apply": ...,
+    "preview_route": ...,
+    "audit_run": ...,
+    "snap_missing_points": ...,
+  }
+  ```
+  由 bridge 构造，Agent 模块不 import bridge（避免循环依赖）。
+
+### 7.6 Agent 页面（`#page-agent`）
+
+导航：
+
+- 侧边栏「工作台」分组新增 `data-page="agent"`，label `Agent`，放在「跑步」之后。
+- `PAGES` 增加 `'agent'`；`go('agent')` 时初始化页面（只初始化一次）。
+
+页面结构：
+
+```text
+#page-agent
+  header: Agent 跑步规划 + 状态 chip (#agentStateChip)
+  #agentGoalBar: 目标距离 | 点位数 | 校区 | LLM 状态
+  #agentTranscript: 消息流（用户/Agent/工具卡片），自动滚到底
+  #agentCandidates: 候选卡（最多 3 张，含理由、圈长、样本数、点位覆盖）
+  #agentPreview: 预览摘要（距离、圈数、配速、点位、围栏、审计）
+  #agentComposer: 输入框 #agentInput + 发送 #agentSend + 快捷 chip
+  #agentConfirm: “确认，去跑步页预览”按钮（默认 disabled）
+  #agentCancel: “取消”
+```
+
+交互要求：
+
+- 进入页面自动 `real_agent_status`；没有会话显示引导语和 3 个快捷入口：
+  “帮我跑 2.5 公里”、“用我跑过的路线”、“先学习我的路线”。
+- 发送消息后立即显示用户气泡，再轮询 `real_agent_status`（600 ms，直到
+  `wait_confirm/confirmed/error/cancelled`）。
+- 工具卡片显示中文动作：`正在读取跑步记录…`、`正在学习路线…`、`正在推荐…`、
+  `正在生成预览…`、`正在检查…`；不要显示原始 JSON。
+- 候选卡按钮：“用这条” → `real_agent_message('用第 N 条')`；
+  “换一条” → `real_agent_message('换一条')`。
+- 预览成功后显示 `#agentConfirm` 可用；审计不通过时显示原因并保持 disabled。
+- 点击确认：
+  1. 调用 `real_agent_confirm`；
+  2. 把 `preview_args` 写入 `LIVE.agentHandoff`；
+  3. `go('run')`；
+  4. 跑步页读取 `LIVE.agentHandoff`，设置路线和参数，调用现有 `preview_route`；
+  5. **不调用 submit**，最终提交仍由用户在跑步页点击。
+- 取消：`real_agent_cancel`，清空候选和预览，回到 idle 引导。
+- LLM 未配置时，顶部显示“未配置模型，Agent 使用本地规则”，并给一个
+  `data-goto="settings"` 的链接；不阻塞任何流程。
+
+### 7.7 日志与隐私
+
+- 每次 Agent 工具调用写 `data/agent_runs/<session_id>.jsonl`：
+  `{at_ms, state, tool, ok, detail, prompt_sha256?}`。
+- 不记录 token、uid、账号昵称、完整坐标、原始 prompt。
+- 页面上的消息流可以显示候选统计，但不显示原始坐标列表。
+
+### 7.8 测试
+
+| 文件 | 内容 |
+|---|---|
+| `tests/test_agent_route_memory.py` | 状态机合法/非法跳转、mock 工具、无模板回退、token 失效、取消、confirm 不调用 submit、日志脱敏、中文距离解析 |
+| `tests/test_frontend_agent_page.py` | 导航项、页面 id、控件 id、确认按钮默认 disabled、页面代码不调用 `real_submit`、文案存在 |
+
+### 7.9 验收
+
+- 从 Agent 页输入“帮我跑 2.5 公里”，最多 3 次点击内看到候选、预览、审计结果。
+- 确认后跳到跑步页，路线/距离/配速已填好，页面停在预览态，未提交。
+- Agent 页任何路径都不产生提交回执。
+- 无 LLM、token 失效、0 模板三种情况都有明确中文提示，不白屏。
 
 ---
 
@@ -390,6 +553,8 @@ node --check frontend/js/app.js
 | `tests/test_llm_settings.py` | 协议预设、存取、损坏恢复、非法 URL/协议、key 不回传、prompt 脱敏 |
 | `tests/test_llm_client.py` | 各协议请求体、401/403/429/超时、错误信息不含 key |
 | `tests/test_frontend_llm_settings.py` | 设置页控件 id、协议选项、文案静态断言 |
+| `tests/test_agent_route_memory.py` | Agent 状态机、mock 工具、回退、取消、confirm 不提交、日志脱敏、中文距离 |
+| `tests/test_frontend_agent_page.py` | Agent 导航/页面/控件、确认按钮默认 disabled、不调用 `real_submit` |
 
 ### 验收指标
 
@@ -423,22 +588,25 @@ node --check frontend/js/app.js
 | T2 路线记忆核心 | `application/route_memory.py` + `tests/test_route_memory.py` | T1 |
 | T3 路线记忆 Bridge | `adapters/bridge_api.py` 路线记忆方法 + `tests/test_route_memory_bridge.py` | T2 |
 | T4 路线库前端 | `frontend/js/app.js`、`frontend/index.html`、`frontend/css/app.css` + `tests/test_frontend_route_memory.py` | T3 契约 |
-| T5 Agent | `application/agent.py`（新建）+ bridge 工具 + `tests/test_agent_route_memory.py` | T3 |
-| T6 验收 | 集成测试 + 文档 + 手工验收清单 | T1–T5 |
+| T5 Agent 后端 | `application/agent.py`（新建）+ bridge 工具 + `tests/test_agent_route_memory.py` | T3 |
+| T6 验收 | 集成测试 + 文档 + 手工验收清单 | T1–T5, T9 |
 | T7 LLM 设置后端 | `application/llm_settings.py`、`application/llm_client.py` + `tests/test_llm_settings.py`、`tests/test_llm_client.py` | 无 |
 | T8 LLM 设置前端 | `frontend/js/app.js`、`frontend/index.html`、`frontend/css/app.css` + `tests/test_frontend_llm_settings.py` | T7 契约 |
+| T9 Agent 页面 | `frontend/js/app.js`、`frontend/index.html`、`frontend/css/app.css` + `tests/test_frontend_agent_page.py` | T5, T4 |
 
 ### 并行波次（计划者调度）
 
 ```text
 Wave 1: T1（几何）  ‖  T7（LLM 后端）  ‖  T8（LLM 前端，按契约写）
 Wave 2: T0（P0 验证，用 T1）  ‖  T2（记忆核心，用 T1）  ‖  T3（bridge，按契约写）
-Wave 3: T4（路线库前端）  ‖  T5（Agent）
-Wave 4: T6（验收、文档、手工清单）
+Wave 3: T4（路线库前端）  ‖  T5（Agent 后端）
+Wave 4: T9（Agent 页面，等 T4 合并后）
+Wave 5: T6（验收、文档、手工清单）
 ```
 
-- T7/T8 先合，避免和 T3/T4 抢 `bridge_api.py` / `app.js`。
+- T7/T8 先合，避免和 T3/T4/T9 抢 `bridge_api.py` / `app.js`。
 - T2 与 T3 可以同时开发：T3 按本文件的函数签名写，合并 T2 后再跑测试。
+- T4 与 T5 无文件冲突，可并行；T9 必须等 T4 合并，避免同一前端文件冲突。
 - 同一文件同一时间只允许一个 worker 改；冲突由计划者裁决。
 
 ---
