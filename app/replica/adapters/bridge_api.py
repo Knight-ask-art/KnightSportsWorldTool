@@ -5133,3 +5133,116 @@ class ReplicaApi:
             return _fail('路线保存失败: %s' % e)
         return _ok({'routes': out, 'count': len(out)})
 
+    # -- route-memory agent ------------------------------------------------
+    def _agent_owner(self) -> str:
+        d = self._read_session()
+        uid = str(d.get('uid') or '')
+        unid = str(d.get('unid') or '')
+        return f'{uid}:{unid}' if (uid or unid) else ''
+
+    def _agent_build_tools(self) -> dict:
+        def _llm_choose(candidates, target_m):
+            try:
+                from ..application import llm_client, llm_settings
+            except Exception:  # noqa: BLE001
+                return None
+            settings = llm_settings.effective(self.store_dir)
+            if settings is None:
+                return None
+            messages = llm_settings.build_choice_prompt(candidates, target_m)
+            proxy = (os.environ.get('JHP_PROXY') or '').strip()
+            proxies = {'http': proxy, 'https': proxy} if proxy else None
+            res = llm_client.chat(settings, messages, proxies=proxies)
+            if not isinstance(res, dict) or not res.get('ok'):
+                err = (res.get('error') if isinstance(res, dict) else '') or 'LLM 调用失败'
+                raise RuntimeError(err)
+            return llm_settings.parse_choice(res.get('text') or '', candidates)
+
+        return {
+            'route_memory_status': self.real_route_memory_status,
+            'route_memory_learn': self.real_route_memory_learn,
+            'route_memory_suggest': self.real_route_memory_suggest,
+            'route_memory_apply': self.real_route_memory_apply,
+            'preview_route': self.real_preview_model,
+            'audit_run': self.real_audit_run,
+            'llm_choose': _llm_choose,
+        }
+
+    def _agent_get_or_create_session(self):
+        from ..application.agent import AgentSession
+
+        lock = getattr(self, '_agent_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            self._agent_lock = lock
+        with lock:
+            owner = self._agent_owner()
+            session = getattr(self, '_agent_session', None)
+            if session is None or getattr(session, 'owner', None) != owner:
+                if session is not None:
+                    try:
+                        session.cancel()
+                    except Exception:  # noqa: BLE001
+                        pass
+                session = AgentSession(self._agent_build_tools(), self.store_dir, owner)
+                self._agent_session = session
+            return session
+
+    def real_agent_start(self, text='', km=None, points=None, fence=None,
+                         run_area_id=None):
+        session = self._agent_get_or_create_session()
+        return _ok(session.start(
+            text=text,
+            km=km,
+            points=points,
+            fence=fence,
+            run_area_id=run_area_id,
+        ))
+
+    def _agent_current_session(self):
+        """Return the session only while it still belongs to the active account."""
+        session = getattr(self, '_agent_session', None)
+        if session is None:
+            return None
+        if getattr(session, 'owner', '') != self._agent_owner():
+            try:
+                session.cancel()
+            except Exception:  # noqa: BLE001
+                pass
+            self._agent_session = None
+            return None
+        return session
+
+    def real_agent_status(self):
+        from ..application.agent import _idle_status
+
+        session = self._agent_current_session()
+        if session is None:
+            return _ok(_idle_status())
+        return _ok(session.status())
+
+    def real_agent_message(self, text):
+        session = self._agent_current_session()
+        if session is None:
+            return _fail('Agent 还没有开始')
+        return _ok(session.message(text))
+
+    def real_agent_confirm(self):
+        session = self._agent_current_session()
+        if session is None:
+            return _fail('Agent 还没有开始')
+        res = session.confirm()
+        if not isinstance(res, dict) or res.get('ok') is False or 'preview_args' not in res:
+            err = res.get('error') if isinstance(res, dict) else '当前状态不可确认'
+            return _fail(err or '当前状态不可确认', data=res)
+        return _ok(res)
+
+    def real_agent_cancel(self):
+        from ..application.agent import _idle_status
+
+        session = self._agent_current_session()
+        if session is None:
+            return _ok(_idle_status())
+        return _ok(session.cancel())
+
+
