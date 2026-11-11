@@ -715,7 +715,7 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 |---|---|---|
 | NetSecKit 信封、tokenSign 与 GeeTest v4 `w` 迁入 `rust/hxp-core`，Python 保留回退 | Python 字节码即使经过 Nuitka 也仍可被分析；把盐、PAES、RSA、动态 key 和信封顺序放进 native，提高静态分析与补丁成本 | Rust 不是不可逆向；服务端校验仍是最终边界，客户端只提高门槛 |
 | 用常驻 sidecar（行式 JSON）而不是 PyO3/ctypes | 进程边界清楚，崩溃不会带崩 UI；打包只需复制一个 exe；不绑定 Python ABI | 每次调用有 IPC 开销；只传最小参数，不把 token 或 data/ 交给 native |
-| `JHP_RUST_CORE` 自动探测，`0` 强制 Python，`1` 要求 native | 源码运行/CI 没有 Rust 也能跑；排错时可以一键回到 Python | 打包脚本缺 cargo 直接失败，避免静默降级 |
+| `JHP_RUST_CORE` 自动探测，`0` 强制 Python，`1` 要求 native；Nuitka 构建默认置 `1` | 源码运行/CI 没有 Rust 也能跑；排错时可以一键回到 Python；发布包不会静默退回可读实现 | 打包脚本缺 cargo 直接失败；frozen 构建丢 exe 时第一次加密调用即报错 |
 | GT4 只迁字段构造、PoW、AES/RSA，不迁图像识别 | `w` 的字节布局和动态 key 是最容易被逐字节抄走的部分；图像 Canny/ZNCC 调参频繁，留在 Python 更好排错 | `gt4_image.py` 继续纯 Python；`build_w` 的 modulus 由 Python 传入，native 不内置私钥/公钥选择逻辑 |
 | 上传体字段映射迁入 native，轨迹生成留在 Python | 上传体是服务器直接评分的对象，字段顺序、嵌套 JSON 和 `speed` 两次取整错一处就静默返回 10003；生成器随机过程多，整体迁走会放大回归面 | `build_upload_entity` 只接收 run/ctx，不读本地文件；`_build_upload_entity` 保留 Python 参考实现，两边共用 fixture |
 | 下一批只考虑 rundata 生成器、device_profile | 这两块体积大、状态多，需要先把随机语义和纯函数边界钉死再迁 | 按 `45-native-core.md` 的顺序推进，每块保留 golden vector |

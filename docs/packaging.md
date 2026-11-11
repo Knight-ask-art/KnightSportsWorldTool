@@ -11,6 +11,9 @@
   `app/replica/transport/rustcore.py` 以行式 JSON 调用。
 - 找不到二进制或 sidecar 崩溃时回退 Python，源码运行/纯 Python 测试不受影响；
   想强制检查原生路径可以用 `JHP_RUST_CORE=1`。
+- `app.py` 在 Nuitka 构建里会自动把 `JHP_RUST_CORE` 置为 `1`：发布包丢了
+  `runtime/rust/hxp-core.exe` 就在第一次加密调用时报错，不会静默退回 Python。
+  显式设 `0` 仍可用于排错。
 - Rust 提升的是静态分析和补丁成本，不是「不可逆向」；它不替代服务端校验。
 
 ## 默认后端：Nuitka standalone

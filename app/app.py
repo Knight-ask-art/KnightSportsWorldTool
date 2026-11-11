@@ -76,6 +76,18 @@ def _free_port() -> int:
     return port
 
 
+def _pin_native_core() -> None:
+    """Release builds may not silently run the Python protocol fallback.
+
+    A source checkout still auto-detects (and CI can force `0`), but a frozen
+    build that lost `runtime/rust/hxp-core.exe` should fail at the first
+    crypto call instead of quietly shipping a slower, readable path.
+    """
+    from replica.build_info import is_compiled
+    if is_compiled() and not os.environ.get('JHP_RUST_CORE'):
+        os.environ['JHP_RUST_CORE'] = '1'
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, default=0)
@@ -86,6 +98,7 @@ def main():
     ap.add_argument('--check', action='store_true',
                     help='import frozen runtime pieces and exit 0 (build smoke test)')
     args = ap.parse_args()
+    _pin_native_core()
     if args.check:
         # Import the login/GT4/OpenCV path and verify the packaged frontend is
         # present.  The exe is windowed, so the exit code is the signal.

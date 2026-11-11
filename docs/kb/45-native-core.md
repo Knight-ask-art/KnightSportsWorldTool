@@ -44,7 +44,8 @@ Python 通过 stdin/stdout 一行一个 JSON 调用：
 
 - 默认：找到 `hxp-core.exe` 就用，找不到回退 Python（源码运行不受影响）。
 - `JHP_RUST_CORE=0`：强制 Python（排错用）。
-- `JHP_RUST_CORE=1`：要求 native，缺失时直接报错。
+- `JHP_RUST_CORE=1`：要求 native，缺失时直接报错；`app.py` 在 frozen 构建里
+  默认设置它，发布包不会静默退回 Python。
 - `JHP_RUST_CORE_PATH`：指定二进制路径。
 - 测试/调试替换了 `netsec.rsa_recover_digest` 时，`decrypt_response` 自动留在
   Python 路径（没有服务器私钥，native 无法复现 mock）。

@@ -81,6 +81,22 @@ def test_upload_entity_can_route_through_the_native_core():
     assert "core.call('upload_entity'" in src
 
 
+def test_frozen_builds_require_the_native_core(monkeypatch):
+    import os
+
+    import app as entry
+    from replica import build_info
+
+    monkeypatch.delenv('JHP_RUST_CORE', raising=False)
+    monkeypatch.setattr(build_info, 'is_compiled', lambda: True)
+    entry._pin_native_core()
+    assert os.environ['JHP_RUST_CORE'] == '1'
+    # The explicit override stays available for troubleshooting.
+    monkeypatch.setenv('JHP_RUST_CORE', '0')
+    entry._pin_native_core()
+    assert os.environ['JHP_RUST_CORE'] == '0'
+
+
 @needs_core
 def test_native_self_test_passes():
     core = rustcore.get()
