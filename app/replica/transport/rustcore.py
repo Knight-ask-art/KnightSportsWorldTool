@@ -30,6 +30,10 @@ class RustCoreUnavailable(RustCoreError):
     """The sidecar is missing, crashed, or did not answer in time."""
 
 
+class RustCoreRequired(RustCoreError):
+    """JHP_RUST_CORE=1 was requested but the binary is missing."""
+
+
 def _repo_root() -> str:
     # app/replica/transport/rustcore.py -> 好想跑
     here = os.path.dirname(os.path.abspath(__file__))
@@ -167,7 +171,8 @@ def get() -> _Core | None:
         if not exe:
             if (os.environ.get('JHP_RUST_CORE') or '').strip().lower() in (
                     '1', 'on', 'true', 'yes'):
-                raise RustCoreUnavailable('JHP_RUST_CORE requested but %s is missing' % _EXE)
+                raise RustCoreRequired(
+                    'JHP_RUST_CORE requested but %s is missing' % _EXE)
             return None
         core = _Core(exe)
         try:

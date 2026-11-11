@@ -5,6 +5,7 @@
 //! line-oriented sidecar (`hxp-core.exe`), so the salts and the envelope
 //! construction no longer ship as readable `.py`/`.pyc` code.
 
+pub mod gt4;
 pub mod netsec;
 pub mod sign;
 

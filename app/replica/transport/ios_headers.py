@@ -45,7 +45,7 @@ def token_sign(ts: str, token: str, uid) -> str:
         if core is not None:
             return core.call('token_sign_ios', ts=str(ts), token=str(token),
                              uid=str(uid))
-    except (rustcore.RustCoreUnavailable, rustcore.RustCoreError):
+    except rustcore.RustCoreUnavailable:
         pass
     link = f'timeStamp={ts}&token={token}&uid={uid}'
     return hashlib.md5((link + TOKEN_SIGN_SUFFIX).encode()).hexdigest()

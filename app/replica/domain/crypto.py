@@ -71,7 +71,7 @@ def token_sign(time_stamp: str, token: str, uid: str,
             if core is not None:
                 return core.call('token_sign', ts=str(time_stamp),
                                  token=str(token), uid=str(uid))
-        except (rustcore.RustCoreUnavailable, rustcore.RustCoreError):
+        except rustcore.RustCoreUnavailable:
             pass
     return official_sign({'timeStamp': time_stamp, 'token': token,
                           'uid': uid}, salt)

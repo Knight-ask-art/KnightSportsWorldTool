@@ -11,7 +11,7 @@ use std::io::{self, BufRead, Write};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use hxp_core::{netsec, sign};
+use hxp_core::{gt4, netsec, sign};
 use serde_json::{json, Value};
 
 fn string_map(value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
@@ -140,6 +140,75 @@ fn handle(req: &Value) -> Result<Value, String> {
             Ok(Value::String(sign::runschool_sign(&params)))
         }
 
+        "gt4_str16" => Ok(Value::String(gt4::str16())),
+
+        "gt4_pow_msg" => {
+            let pow_detail = args.get("pow_detail").cloned().unwrap_or(Value::Null);
+            let captcha_id = arg_str(&args, "captcha_id")?;
+            let lot_number = arg_str(&args, "lot_number")?;
+            Ok(Value::String(gt4::pow_msg(
+                &pow_detail,
+                captcha_id,
+                lot_number,
+            )))
+        }
+
+        "gt4_userresponse" => {
+            let set_left = args
+                .get("set_left")
+                .and_then(Value::as_i64)
+                .ok_or("set_left required")?;
+            let bg_width = args.get("bg_width").and_then(Value::as_f64);
+            Ok(json!(gt4::userresponse(set_left, bg_width)))
+        }
+
+        "gt4_passtime" => {
+            let distance = args
+                .get("distance")
+                .and_then(Value::as_i64)
+                .ok_or("distance required")?;
+            Ok(json!(gt4::passtime_for(distance)))
+        }
+
+        "gt4_payload" => {
+            let set_left = args
+                .get("set_left")
+                .and_then(Value::as_i64)
+                .ok_or("set_left required")?;
+            let lot_number = arg_str(&args, "lot_number")?;
+            let pow_msg = arg_str(&args, "pow_msg")?;
+            let pow_sign = arg_str(&args, "pow_sign")?;
+            let bg_width = args.get("bg_width").and_then(Value::as_f64);
+            let passtime = args.get("passtime").and_then(Value::as_i64);
+            Ok(Value::String(gt4::payload_json(
+                set_left, lot_number, pow_msg, pow_sign, bg_width, passtime,
+            )?))
+        }
+
+        "gt4_w" => {
+            let set_left = args
+                .get("set_left")
+                .and_then(Value::as_i64)
+                .ok_or("set_left required")?;
+            let lot_number = arg_str(&args, "lot_number")?;
+            let pow_msg = arg_str(&args, "pow_msg")?;
+            let pow_sign = arg_str(&args, "pow_sign")?;
+            let str16_key = arg_str(&args, "str16_key")?;
+            let modulus_hex = arg_str(&args, "modulus_hex")?;
+            let bg_width = args.get("bg_width").and_then(Value::as_f64);
+            let passtime = args.get("passtime").and_then(Value::as_i64);
+            Ok(Value::String(gt4::build_w(
+                set_left,
+                lot_number,
+                pow_msg,
+                pow_sign,
+                str16_key,
+                bg_width,
+                passtime,
+                modulus_hex,
+            )?))
+        }
+
         "self_test" => Ok(self_test()),
 
         other => Err(format!("unknown op {other:?}")),
@@ -213,6 +282,27 @@ fn self_test() -> Value {
         }
         Err(err) => results.push(json!({
             "name": "envelope build", "ok": false, "detail": err,
+        })),
+    }
+
+    match gt4::payload_json(
+        181,
+        gt4::GOLDEN_LOT,
+        gt4::GOLDEN_POW,
+        "sign",
+        None,
+        Some(1887),
+    ) {
+        Ok(payload) => {
+            let digest = gt4::sha256_hex(payload.as_bytes());
+            results.push(json!({
+                "name": "gt4 payload byte-identical",
+                "ok": digest == gt4::GOLDEN_SHA256,
+                "detail": digest.chars().take(16).collect::<String>(),
+            }));
+        }
+        Err(err) => results.push(json!({
+            "name": "gt4 payload byte-identical", "ok": false, "detail": err,
         })),
     }
 

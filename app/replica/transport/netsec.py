@@ -250,7 +250,7 @@ def key_data_four_from_ms(ms: float) -> str:
         core = rustcore.get()
         if core is not None:
             return core.call('four_from_ms', ms=float(ms))
-    except (rustcore.RustCoreUnavailable, rustcore.RustCoreError):
+    except rustcore.RustCoreUnavailable:
         pass
     value = "%.6f" % ms
     raw = value.encode()

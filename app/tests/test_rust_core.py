@@ -34,6 +34,27 @@ def test_netsec_can_route_through_the_native_core():
     assert "'decrypt_response'" in src
 
 
+def test_gt4_payload_can_route_through_the_native_core():
+    src = (ROOT / 'replica' / 'transport' / 'gt4_payload.py').read_text(encoding='utf-8')
+    assert 'rustcore' in src
+    assert "'gt4_payload'" in src
+    assert "'gt4_w'" in src
+
+
+@needs_core
+def test_native_gt4_payload_matches_the_golden_digest():
+    import hashlib
+    from replica.transport import gt4_payload
+    core = rustcore.get()
+    assert core is not None
+    text = core.call('gt4_payload', set_left=181,
+                     lot_number=gt4_payload.GOLDEN_LOT,
+                     pow_msg=gt4_payload.GOLDEN_POW,
+                     pow_sign='sign', passtime=1887)
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    assert digest == gt4_payload.GOLDEN_SHA256
+
+
 @needs_core
 def test_native_self_test_passes():
     core = rustcore.get()

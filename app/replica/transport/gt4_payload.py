@@ -48,8 +48,20 @@ class PayloadError(ValueError):
     """The payload no longer matches the recorded GeeTest field baseline."""
 
 
+def _rust():
+    """Shared native core, or None when the Python path must handle it."""
+    try:
+        from . import rustcore
+        return rustcore.get()
+    except rustcore.RustCoreUnavailable:
+        return None
+
+
 def str16() -> str:
     """Four 4-hex chunks, the format GeeTest's AES key generator produces."""
+    core = _rust()
+    if core is not None:
+        return core.call('gt4_str16')
     out = []
     for _ in range(4):
         v = int(65536.0 * (1.0 + random.random()))
@@ -78,6 +90,10 @@ def pow_msg(pow_detail: dict, captcha_id: str, lot_number: str) -> str:
 
     ``bits == 0`` means "no work required": return a random nonce immediately.
     """
+    core = _rust()
+    if core is not None:
+        return core.call('gt4_pow_msg', pow_detail=pow_detail,
+                         captcha_id=captcha_id, lot_number=lot_number)
     raw_bits = pow_detail.get('bits')
     try:
         bits = int(raw_bits)
@@ -131,6 +147,10 @@ def userresponse(set_left_px: int, bg_width: int | None = None) -> float:
     test would have rescaled a 340px render too and silently moved every
     coordinate by 0.6%.  Do not tighten this without a live sample.
     """
+    core = _rust()
+    if core is not None:
+        return float(core.call('gt4_userresponse', set_left=int(set_left_px),
+                               bg_width=bg_width))
     x = float(set_left_px)
     if bg_width and (bg_width < NORMAL_WIDTH_MIN
                      or bg_width > NORMAL_WIDTH_MAX):
@@ -140,6 +160,9 @@ def userresponse(set_left_px: int, bg_width: int | None = None) -> float:
 
 def passtime_for(distance_px: int) -> int:
     """A plausible human drag time, instead of a constant the server can spot."""
+    core = _rust()
+    if core is not None:
+        return int(core.call('gt4_passtime', distance=int(distance_px)))
     base = 900.0 + 4.6 * max(0, int(distance_px))
     return int(min(3400.0, base + random.uniform(0.0, 420.0)))
 
@@ -178,6 +201,12 @@ def build_payload(set_left: int, *, lot_number: str, pow_msg: str,
                   pow_sign: str, bg_width: int | None = None,
                   passtime: int | None = None) -> str:
     """Serialise the ``w`` plaintext exactly as GeeTest expects it."""
+    core = _rust()
+    if core is not None:
+        return core.call('gt4_payload', set_left=int(set_left),
+                         lot_number=lot_number, pow_msg=pow_msg,
+                         pow_sign=pow_sign, bg_width=bg_width,
+                         passtime=passtime)
     data = payload_dict(set_left, lot_number=lot_number, pow_msg=pow_msg,
                         pow_sign=pow_sign, bg_width=bg_width,
                         passtime=passtime)
@@ -214,6 +243,14 @@ def build_w(set_left: int, lot_number: str, pow_msg: str, pow_sign: str,
             str16_key: str, *, bg_width: int | None = None,
             passtime: int | None = None) -> str:
     """``hex(AES(payload)) || hex(RSA(str16))`` — the value of ``w``."""
+    core = _rust()
+    if core is not None:
+        from .gt4_rsa import modulus
+        return core.call('gt4_w', set_left=int(set_left),
+                         lot_number=lot_number, pow_msg=pow_msg,
+                         pow_sign=pow_sign, str16_key=str16_key,
+                         modulus_hex=format(modulus(), 'x'),
+                         bg_width=bg_width, passtime=passtime)
     plaintext = build_payload(set_left, lot_number=lot_number,
                               pow_msg=pow_msg, pow_sign=pow_sign,
                               bg_width=bg_width, passtime=passtime)
