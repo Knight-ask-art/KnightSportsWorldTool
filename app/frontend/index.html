@@ -1372,6 +1372,55 @@
           </div>
         </section>
 
+        <section class="sec" id="llmSection">
+          <div class="sec-head">
+            <h2>模型辅助（可选）</h2>
+            <div class="sec-actions">
+              <span class="chip" id="llmStatus"><i></i>未配置</span>
+            </div>
+          </div>
+          <p class="hint" style="margin:-4px 0 9px">仅用于在已有候选路线中择优并补充中文理由。API Key 用 Windows DPAPI 封存，只保存在本机；<b>路线坐标不会发给模型，只发候选统计</b>。默认关闭，不配置也不影响使用。</p>
+          <label class="llm-switch-row" for="llmEnabled">
+            <input type="checkbox" id="llmEnabled" class="llm-switch">
+            <span class="llm-switch-label">启用模型辅助选路</span>
+            <span class="field-note">关闭或未配置时，路线推荐、预览与审计均按本地规则照常运行。</span>
+          </label>
+          <div class="form-grid llm-grid">
+            <div class="field-line">
+              <label for="llmProtocol">协议</label>
+              <select id="llmProtocol" disabled>
+                <option value="">读取中…</option>
+              </select>
+            </div>
+            <div class="field-line">
+              <label for="llmBase">Base URL</label>
+              <input id="llmBase" type="url" placeholder="支持 http(s):// 地址" spellcheck="false" autocomplete="off">
+            </div>
+            <div class="field-line">
+              <label for="llmModel">模型</label>
+              <input id="llmModel" type="text" placeholder="输入模型名称" spellcheck="false" autocomplete="off">
+            </div>
+            <div class="field-line">
+              <label for="llmKey">API Key</label>
+              <input id="llmKey" type="password" placeholder="粘贴 API Key；留空=不修改" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field-line">
+              <label for="llmTemp">温度（0–1）</label>
+              <input id="llmTemp" type="number" min="0" max="1" step="0.1" value="0.2" inputmode="decimal">
+            </div>
+            <div class="field-line">
+              <label for="llmTimeout">超时（秒，5–120）</label>
+              <input id="llmTimeout" type="number" min="5" max="120" step="1" value="30" inputmode="numeric">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn small primary" id="llmSave">保存</button>
+            <button type="button" class="btn small ghost" id="llmTest">测试连接</button>
+            <button type="button" class="btn small ghost danger" id="llmClearKey">清除 Key</button>
+            <span class="hint" id="llmHint" style="margin:0"></span>
+          </div>
+        </section>
+
         <section class="sec" id="realismSection">
           <div class="sec-head"><h2>跑步数据效果</h2><span class="mini" id="realismStatus">未读取</span></div>
           <p class="hint" style="margin:-4px 0 9px">只影响<b>之后生成</b>的跑步数据。不知道怎么选就保持默认，默认值就是原来的效果。</p>
