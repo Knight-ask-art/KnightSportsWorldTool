@@ -7083,7 +7083,8 @@ async function saveLlmSettings(){
     base_url: ($('#llmBase') ? $('#llmBase').value : '').trim(),
     model: ($('#llmModel') ? $('#llmModel').value : '').trim(),
     temperature: temp,
-    timeout_s: timeoutS
+    timeout_s: timeoutS,
+    last_test: null
   };
   const key = ($('#llmKey') ? $('#llmKey').value : '').trim();
   if(key) payload.api_key = key;
