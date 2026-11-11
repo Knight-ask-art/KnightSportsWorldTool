@@ -11,8 +11,8 @@
 | T1 轨迹几何 | `task/rm-core` | `_worktrees/route-memory/t1` | ✅ 已合并 `b0e4e93` |
 | T2 路线记忆核心 | `task/rm-memory` | `_worktrees/route-memory/t2` | ✅ 已合并 `b50c543`（复审 PASS） |
 | T3 路线记忆 Bridge | `task/rm-bridge` | `_worktrees/route-memory/t3` | ✅ 已合并 `d595ff6`（复审 PASS） |
-| T4 路线库前端 | `task/rm-frontend` | `_worktrees/route-memory/t4` | ✅ 已合并 `22e8ebd`（复审进行中） |
-| T5 Agent 后端 | `task/rm-agent` | 待建 | ⏳ 等 T3 |
+| T4 路线库前端 | `task/rm-frontend` | `_worktrees/route-memory/t4` | ✅ 已合并 `22e8ebd`（复审 HIGH/MEDIUM 已修） |
+| T5 Agent 后端 | `task/rm-agent` | `_worktrees/route-memory/t5` | 🟡 进行中 |
 | T6 验收 | `task/rm-acceptance` | 待建 | ⏳ 等 T4/T5/T9 |
 | T7 LLM 设置后端 | `task/llm-backend` | `_worktrees/route-memory/t7` | ✅ 已合并（presets 含 default_model） |
 | T8 LLM 设置前端 | `task/llm-frontend` | `_worktrees/route-memory/t8` | ✅ 已合并 |
