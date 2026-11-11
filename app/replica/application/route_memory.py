@@ -105,7 +105,7 @@ def _mapping_coord(item: dict) -> tuple[float, float] | None:
 
 
 def _clean_line(points: Sequence[Any] | None) -> list[tuple[float, float]]:
-    if not points:
+    if not isinstance(points, (list, tuple)) or not points:
         return []
     out: list[tuple[float, float]] = []
     for item in points:
@@ -131,7 +131,9 @@ def _cp_coord(cp: Any) -> tuple[float, float] | None:
 def _clean_checkpoints(points: Any) -> list[dict]:
     """Keep only checkpoints with a valid coordinate; preserve metadata."""
     out: list[dict] = []
-    for cp in points or []:
+    if not isinstance(points, (list, tuple)):
+        return out
+    for cp in points:
         coord = _cp_coord(cp)
         if coord is None:
             continue
@@ -149,9 +151,26 @@ def _close_ring(pts: Sequence[tuple[float, float]]) -> list[tuple[float, float]]
     return ring
 
 
+def _looks_like_point(item: Any) -> bool:
+    if isinstance(item, dict):
+        return _mapping_coord(item) is not None
+    if isinstance(item, (list, tuple)) and len(item) >= 2:
+        return _valid_point(item[0], item[1]) is not None
+    return False
+
+
 def _normalize_fence(fence: Any) -> list[list[tuple[float, float]]]:
-    if not fence:
+    if isinstance(fence, dict):
+        picked = None
+        for key in ('polygons', 'polygon', 'rings', 'points'):
+            if isinstance(fence.get(key), (list, tuple)):
+                picked = fence[key]
+                break
+        fence = picked if picked is not None else [fence]
+    if not isinstance(fence, (list, tuple)) or not fence:
         return []
+    if _looks_like_point(fence[0]):
+        fence = [fence]
     rings: list[list[tuple[float, float]]] = []
     for raw_ring in fence:
         pts = _clean_line(raw_ring)
@@ -160,25 +179,89 @@ def _normalize_fence(fence: Any) -> list[list[tuple[float, float]]]:
     return rings
 
 
+_LAP_SAMPLES = 240
+_MAX_LAPS_DETECT = 12
+
+
+def _lap_period_count(ring: list[tuple[float, float]]) -> int:
+    """How many identical laps a closed ring contains (anchored periodicity).
+
+    Compares arc-uniform samples shifted by one candidate lap.  A true lap
+    boundary returns to the *start*, so figure-8 or two-lobe routes that only
+    repeat their shape elsewhere do not match.
+    """
+    if len(ring) < 8:
+        return 1
+    total = T.polyline_length_m(ring)
+    if total <= 0.0:
+        return 1
+    samples = T.resample(ring, _LAP_SAMPLES + 1)[:-1]
+    n = len(samples)
+    if n < 8:
+        return 1
+
+    def at(pos: float) -> tuple[float, float]:
+        pos %= n
+        i = int(math.floor(pos))
+        f = pos - i
+        a = samples[i % n]
+        b = samples[(i + 1) % n]
+        return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+
+    max_k = min(_MAX_LAPS_DETECT, n // 4)
+    for k in range(max_k, 1, -1):
+        shift = n / float(k)
+        mean_d = sum(T.haversine_m(samples[i], at(i + shift)) for i in range(n)) / n
+        # GPS noise plus resampling error; a symmetric oval's half-lap point is
+        # the width of the track away (~50 m), so this cannot false-positive.
+        tol = max(15.0, 0.05 * total / float(k))
+        if mean_d <= tol:
+            return k
+    return 1
+
+
+def _cut_one_lap(
+    ring: list[tuple[float, float]],
+    laps: int,
+    per_lap: int = 128,
+) -> list[tuple[float, float]]:
+    """Cut the first of ``laps`` equal-arc periods out of a closed ring."""
+    count = max(2, int(laps) * per_lap + 1)
+    return T.resample(ring, count)[:per_lap + 1]
+
+
 def _extract_single_lap(
     simplified: list[tuple[float, float]],
 ) -> list[tuple[float, float]] | None:
-    loop = T.extract_loop(simplified, MIN_LAP_M)
-    if loop is None:
+    if not simplified or len(simplified) < 4 or not T.is_closed(simplified):
         return None
-    prev_len = T.polyline_length_m(_close_ring(loop))
-    # Trajectory.extract_loop scans after 40% of cumulative length, which yields
-    # 2 laps on a 3+ lap track; iterate on the closed sub-loop to reach 1 lap.
-    while True:
-        nxt = T.extract_loop(_close_ring(loop), MIN_LAP_M)
-        if nxt is None or len(nxt) >= len(loop):
+    ring = _close_ring(simplified)
+    if T.polyline_length_m(ring) < MIN_LAP_M * 0.9:
+        return None
+
+    loop = T.extract_loop(simplified, MIN_LAP_M)
+    candidate = _close_ring(loop) if loop is not None else ring
+    if T.polyline_length_m(candidate) < MIN_LAP_M * 0.9:
+        candidate = ring
+
+    # extract_loop can return 2+ laps (it starts scanning after 40% of the
+    # track).  Anchored periodicity reduces it to exactly one lap, including
+    # 200 m loops where the legacy 30 m start tolerance would cut early.
+    for _ in range(3):
+        laps = _lap_period_count(candidate)
+        if laps <= 1:
             break
-        nxt_len = T.polyline_length_m(_close_ring(nxt))
-        if nxt_len < MIN_LAP_M or nxt_len > 0.85 * prev_len:
+        nxt = _close_ring(_cut_one_lap(candidate, laps))
+        nxt_len = T.polyline_length_m(nxt)
+        if nxt_len < MIN_LAP_M * 0.9:
             break
-        loop = nxt
-        prev_len = nxt_len
-    return loop
+        if nxt_len >= T.polyline_length_m(candidate) * 0.98:
+            break
+        candidate = nxt
+
+    if T.polyline_length_m(_close_ring(candidate)) < MIN_LAP_M * 0.9:
+        return None
+    return candidate
 
 
 # --------------------------------------------------------------------------
@@ -378,13 +461,13 @@ def learn_from_tracks(
             continue
         try:
             is_cheat = int(item.get('is_cheat') or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if is_cheat != 0 or item.get('complete') is not True:
             continue
         try:
             distance_m = float(item.get('distance_m') or 0.0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if not (math.isfinite(distance_m) and MIN_DISTANCE_M <= distance_m <= MAX_DISTANCE_M):
             continue
@@ -413,12 +496,12 @@ def learn_from_tracks(
         rrid = str(item.get('rrid') or '')
         try:
             duration_s = int(item.get('duration_s') or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             duration_s = 0
         pace = (duration_s / (distance_m / 1000.0)) / 60.0 if duration_s > 0 else None
         try:
             start_ms = int(item.get('start_ms') or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             start_ms = 0
 
         clusters = closed_clusters if closed else open_clusters
@@ -541,7 +624,7 @@ def suggest(
         return []
     try:
         target_m = float(km) * 1000.0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return []
     if not (math.isfinite(target_m) and target_m > 0.0):
         return []
@@ -563,6 +646,11 @@ def suggest(
 
     candidates: list[dict] = []
     for tpl in templates:
+        samples = _safe_int(tpl.get('samples'))
+        if samples < 3:
+            continue
+        if _safe_float(tpl.get('medoid_distance_m')) > 60.0:
+            continue
         pts = _clean_line(tpl.get('line'))
         if len(pts) < 2:
             continue
@@ -599,6 +687,8 @@ def suggest(
             snapped = ROUTES.snap_through(work_line, missed_before)
         else:
             snapped = list(work_line)
+        if len(snapped) > 400:
+            snapped = T.simplify(snapped, 2.5, 400)
         detour_m = max(0.0, T.polyline_length_m(snapped) - base_len)
 
         if rings and ROUTES.outside_fences(snapped, rings)['count'] > 0:
@@ -610,9 +700,19 @@ def suggest(
 
         coverage = 1.0 - (len(missed_before) / len(cps)) if cps else 1.0
         if closed:
-            distance_fit = max(0.0, 1.0 - abs(laps * lap_m - target_m) / target_m)
+            actual_m = laps * lap_m
+            distance_fit = max(0.0, 1.0 - abs(actual_m - target_m) / target_m)
+            passes = laps
         else:
-            distance_fit = max(0.0, 1.0 - abs(lap_m * 2.0 - target_m) / target_m)
+            # build_open trims when the learned path is long enough, otherwise
+            # it retraces out-and-back until the target is covered.
+            if lap_m >= target_m:
+                actual_m = target_m
+                passes = 1
+            else:
+                passes = max(1, int(math.ceil(target_m / lap_m)))
+                actual_m = passes * lap_m
+            distance_fit = max(0.0, 1.0 - abs(actual_m - target_m) / target_m)
 
         d_start = T.haversine_m(work_line[0], anchor) if anchor is not None else 0.0
         start_score = max(0.0, 1.0 - d_start / 1000.0)
@@ -643,17 +743,18 @@ def suggest(
             reasons.append(f'{hit_count}/{len(cps)} 点位')
         if closed:
             reasons.append(f'约 {laps} 圈 × {lap_m / 1000.0:.2f} km')
-        else:
+        elif passes == 1:
+            reasons.append(f'单程约 {lap_m / 1000.0:.2f} km')
+        elif passes == 2:
             reasons.append(f'折返约 {lap_m * 2.0 / 1000.0:.2f} km')
+        else:
+            reasons.append(f'来回 {passes} 趟约 {actual_m / 1000.0:.2f} km')
         if last_seen_ms > 0:
             reasons.append(f'最近 {int(round(age_days))} 天跑过 {samples} 次')
         else:
             reasons.append(f'跑过 {samples} 次')
         if detour_m >= 1.0:
             reasons.append(f'补点位绕行 {round(detour_m):.0f} m')
-
-        if len(snapped) > 400:
-            snapped = T.simplify(snapped, 2.5, 400)
 
         candidates.append({
             'template_id': str(tpl.get('id') or ''),
@@ -683,8 +784,10 @@ def apply_template(
     points: list[dict] | None = None,
 ) -> dict:
     """Rotate/snap a template by id into waypoints without forging run data."""
+    if not isinstance(doc, dict):
+        doc = {}
     templates = [
-        t for t in ((doc or {}).get('templates') or [])
+        t for t in (doc.get('templates') or [])
         if isinstance(t, dict)
     ]
     tpl = next((t for t in templates if t.get('id') == template_id), None)
@@ -718,7 +821,7 @@ def apply_template(
     lap_m = T.polyline_length_m(_close_ring(work) if closed else work)
     try:
         target_m = max(0.0, float(km) * 1000.0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         target_m = 0.0
     if not math.isfinite(target_m):
         target_m = 0.0

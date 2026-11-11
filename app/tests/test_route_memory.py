@@ -607,3 +607,141 @@ def test_fence_and_checkpoint_accept_glat_glon():
         {'glat': 22.4100, 'glon': 112.9400, 'isMustPoint': False,
          'lat': 22.4100, 'lon': 112.9400}
     ]
+
+
+def test_normalize_fence_accepts_single_ring_and_dict_payload():
+    ring_tuples = [(22.4075, 112.9380), (22.4075, 112.9455),
+                   (22.4165, 112.9455), (22.4165, 112.9380)]
+    ring_dicts = [{'glat': la, 'glon': ln} for la, ln in ring_tuples]
+    for fence in (ring_tuples, ring_dicts, {'polygon': ring_dicts}):
+        rings = RM._normalize_fence(fence)
+        assert len(rings) == 1, fence
+        assert len(rings[0]) == 4
+    # A single coordinate is not a ring.
+    assert RM._normalize_fence({'glat': 22.4075, 'glon': 112.9380}) == []
+
+    # A single far-away ring must reject a route inside the campus.
+    tracks = [
+        _track_dict(_make_rect(per_edge=10, laps=2), rrid=f'fence{i}')
+        for i in range(5)
+    ]
+    doc = RM.learn_from_tracks(tracks, owner='u:fence')
+    far = [(23.0, 113.0), (23.0, 113.01), (23.01, 113.01), (23.01, 113.0)]
+    assert RM.suggest(doc, 2.8, [], fence=far) == []
+    near = [(22.40, 112.93), (22.40, 112.95), (22.42, 112.95), (22.42, 112.93)]
+    assert RM.suggest(doc, 2.8, [], fence=near)
+
+
+def test_suggest_skips_low_sample_templates():
+    strong = [
+        _track_dict(_make_rect(per_edge=10, laps=2), rrid=f's{i}')
+        for i in range(5)
+    ]
+    doc = RM.learn_from_tracks(strong, owner='u:low')
+    weak_tpl = json.loads(json.dumps(doc['templates'][0]))
+    weak_tpl['id'] = 'lr_weaksample'
+    weak_tpl['samples'] = 1
+    weak_tpl['line'] = [[22.4100, 112.9400], [22.4100, 112.9406],
+                        [22.4106, 112.9406], [22.4106, 112.9400]]
+    weak_tpl['closed'] = True
+    weak_tpl['lap_m'] = 400.0
+    weak_tpl['medoid_distance_m'] = 1.0
+    doc['templates'].insert(0, weak_tpl)
+    assert RM.summarize(doc)['status'] == 'ok'
+    cands = RM.suggest(doc, 2.8, [{'lat': 22.4100, 'lon': 112.9406}])
+    assert cands
+    assert all(c['samples'] >= 3 for c in cands)
+    assert 'lr_weaksample' not in [c['template_id'] for c in cands]
+
+
+def test_malformed_inputs_do_not_raise():
+    assert RM.apply_template(['bad'], 'lr_x', 2.5) == {
+        'ok': False, 'error': '模板不存在'}
+    assert RM.suggest(['bad'], 2.5, []) == []
+    doc = RM.learn_from_tracks([], owner='u:bad')
+    assert RM.suggest(doc, 2.5, 123) == []
+    bad = {
+        'rrid': 'bad', 'line': 123, 'distance_m': 1000.0,
+        'duration_s': float('inf'), 'start_ms': float('inf'),
+        'is_cheat': 0, 'complete': True, 'source': 'server',
+    }
+    cleaned = RM.learn_from_tracks([bad], owner='u:bad')
+    assert cleaned['records_readable'] == 0
+    assert cleaned['templates'] == []
+    assert RM._normalize_fence(123) == []
+    assert RM._clean_checkpoints(123) == []
+
+
+def test_open_route_single_pass_distance_fit():
+    now_ms = int(time.time() * 1000)
+    tracks = []
+    for i in range(5):
+        raw = _make_out_and_back(
+            dlat=0.0235, steps=100, noise_m=0.0, seed=800 + i)
+        tracks.append(
+            _track_dict(raw, rrid=f'open{i}',
+                        distance_m=T.polyline_length_m(raw),
+                        duration_s=900, start_ms=now_ms - i * 3600_000)
+        )
+    doc = RM.learn_from_tracks(tracks, owner='u:open')
+    assert doc['templates'][0]['closed'] is False
+    cands = RM.suggest(doc, 2.5, [])
+    assert cands
+    reasons = ''.join(cands[0]['reasons'])
+    assert '单程' in reasons
+    assert '折返' not in reasons
+
+
+def _make_circle(
+    laps: int = 1,
+    per_lap: int = 40,
+    radius_m: float = 200.0 / (2 * math.pi),
+    noise_m: float = 2.0,
+    seed: int = 0,
+) -> list[tuple[float, float]]:
+    rng = random.Random(seed)
+    lat0, lng0 = 22.4100, 112.9400
+    lat_scale = 1.0 / 110540.0
+    lng_scale = 1.0 / (111320.0 * math.cos(math.radians(lat0)))
+    pts: list[tuple[float, float]] = []
+    for _ in range(laps):
+        for i in range(per_lap):
+            a = 2 * math.pi * i / per_lap
+            pts.append((
+                lat0 + radius_m * math.cos(a) * lat_scale
+                + rng.gauss(0.0, noise_m) * lat_scale,
+                lng0 + radius_m * math.sin(a) * lng_scale
+                + rng.gauss(0.0, noise_m) * lng_scale,
+            ))
+    pts.append(pts[0])
+    return pts
+
+
+def test_200m_loop_extracts_one_lap_for_1_to_6_laps():
+    for laps in (1, 2, 3, 4, 6):
+        simplified = T.simplify(_make_circle(laps=laps, seed=500 + laps), 2.5, 400)
+        single = RM._extract_single_lap(simplified)
+        assert single is not None, laps
+        lap_m = T.polyline_length_m(RM._close_ring(single))
+        # 200 m true loop; noise at 5 m spacing inflates the measured length.
+        assert 190.0 <= lap_m <= 245.0, (laps, lap_m)
+
+
+def test_learn_200m_loop_tracks_are_one_template():
+    now_ms = int(time.time() * 1000)
+    tracks = []
+    for i in range(5):
+        raw = _make_circle(laps=3, seed=900 + i)
+        tracks.append(
+            _track_dict(raw, rrid=f'c200_{i}',
+                        distance_m=T.polyline_length_m(raw) * 3.0,
+                        duration_s=450, start_ms=now_ms - i * 3600_000)
+        )
+    doc = RM.learn_from_tracks(tracks, owner='200:loop')
+    assert doc['records_readable'] == 5
+    assert len(doc['templates']) == 1
+    tpl = doc['templates'][0]
+    assert tpl['closed'] is True
+    assert tpl['samples'] == 5
+    assert 180.0 <= tpl['lap_m'] <= 250.0
+    assert RM.summarize(doc)['status'] == 'ok'
