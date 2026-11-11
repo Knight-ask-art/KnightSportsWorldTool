@@ -7261,6 +7261,16 @@ const AGENT_TOOL_LABELS = {
   preview_route: '正在生成预览…',
   audit_run: '正在检查…'
 };
+const AGENT_TOOL_DONE = {
+  collect: '已整理目标',
+  route_memory_status: '已读取跑步记录',
+  route_memory_learn: '已学习路线',
+  route_memory_suggest: '已推荐路线',
+  route_memory_apply: '已适配路线',
+  reverse: '已反向',
+  preview_route: '已生成预览',
+  audit_run: '已完成检查'
+};
 const AGENT_STATE_TOOL_TEXT = {
   collect: '正在读取跑步记录…',
   learn: '正在学习路线…',
@@ -7591,7 +7601,7 @@ function renderAgentStatus(st){
       const tool = String(entry.tool || '');
       if(!text) continue;
       if(AGENT_TOOL_LABELS[tool] && entry.level !== 'error'){
-        appendAgentToolCard(AGENT_TOOL_LABELS[tool], text, false);
+        appendAgentToolCard(AGENT_TOOL_DONE[tool] || AGENT_TOOL_LABELS[tool], text, false);
       }else{
         const kind = entry.level === 'error' ? 'err' : (entry.level === 'warn' ? 'warn' : 'bot');
         appendAgentBubble(kind, text);
