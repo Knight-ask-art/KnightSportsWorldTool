@@ -1174,6 +1174,16 @@ class ReplicaApi:
                if k not in ('token', 'token_enc') + raw_device}
         out['token_present'] = bool(d.get('token'))
         out['token_masked'] = self._mask_secret(d.get('token'))
+        # The map watermark needs a stable account label.  Older sessions were
+        # written before `username` was persisted; the DPAPI login store has
+        # the same phone and is only read here, never returned with a password.
+        if out['token_present'] and not out.get('username'):
+            try:
+                cred = CRED.load(self.store_dir)
+                if isinstance(cred, dict) and cred.get('account'):
+                    out['username'] = str(cred['account'])
+            except Exception:  # noqa: BLE001 - a broken store must not hide the session
+                pass
         try:
             profile = self._device_profile(d)
             out.update(DP.public_view(profile, d))
@@ -1207,7 +1217,7 @@ class ReplicaApi:
                          deviceName=None, osVersion=None, cpuModel=None,
                          physicPixel=None, logicPixel=None, isRoot=None,
                          appInstallTime=None, appUpdateTime=None,
-                         platform=None, idfa=None):
+                         platform=None, idfa=None, username=None):
         if token:
             # A new session must not inherit the previous account's keeper
             # thread or in-memory password.
@@ -1230,7 +1240,7 @@ class ReplicaApi:
                      ('campusName', campusName), ('schoolName', schoolName),
                      ('unid', unid), ('lat', lat), ('lon', lon),
                      ('DeviceId', DeviceId), ('name', name),
-                     ('nickname', nickname),
+                     ('nickname', nickname), ('username', username),
                      ('deviceName', deviceName), ('osVersion', osVersion),
                      ('cpuModel', cpuModel), ('physicPixel', physicPixel),
                      ('logicPixel', logicPixel), ('isRoot', isRoot),
@@ -1910,7 +1920,7 @@ class ReplicaApi:
                             device=device)
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录失败: {e}')
-        return self._persist_login(sess, device, raw_session)
+        return self._persist_login(sess, device, raw_session, username)
 
     def real_login_ticket(self, username, password, lotNumber='',
                           captchaOutput='', passToken='', genTime=''):
@@ -1940,7 +1950,7 @@ class ReplicaApi:
                                      log=lambda *_: None, device=device)
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录失败: {e}')
-        return self._persist_login(sess, device, raw_session)
+        return self._persist_login(sess, device, raw_session, username)
 
     def real_gt4_config(self):
         """GeeTest constants and the active RSA key's provenance.
@@ -2115,7 +2125,7 @@ class ReplicaApi:
                                      log=lambda *_: None, device=device)
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录失败: {e}')
-        return self._persist_login(sess, device, raw_session)
+        return self._persist_login(sess, device, raw_session, username)
 
     def real_gt4_manual_cancel(self, token):
         """Forget a challenge the operator abandoned."""
@@ -2123,7 +2133,7 @@ class ReplicaApi:
             self._gt4_manual.pop(str(token or ''), None)
         return _ok(True)
 
-    def _persist_login(self, sess, device, raw_session):
+    def _persist_login(self, sess, device, raw_session, username=''):
         """Write a successful login and return the sanitised profile."""
         profile = sess.get('profile') or {}
         # A manual per-account override (CLI/import) must survive the new
@@ -2144,7 +2154,7 @@ class ReplicaApi:
             nickname=profile.get('nickname'),
             schoolName=profile.get('schoolName'),
             campusName=profile.get('campusName'),
-            unid=sess.get('unid'), **extra)
+            unid=sess.get('unid'), username=username, **extra)
         # The new token was issued for the repaired profile; the one-shot
         # notice has served its purpose.
         try:

@@ -52,7 +52,8 @@ def test_legacy_plaintext_token_is_migrated(tmp_path):
 @pytest.mark.windows_only
 def test_bridge_writes_only_the_sealed_token(tmp_path):
     api = _api(tmp_path)
-    api.real_set_session(uid='1', token='tok-x', unid=9)
+    api.real_set_session(uid='1', token='tok-x', unid=9,
+                         username='13800138000')
     raw = json.loads((tmp_path / 'accounts_emu.json').read_text(
         encoding='utf-8'))
     assert 'token' not in raw and raw['token_enc']
@@ -62,6 +63,8 @@ def test_bridge_writes_only_the_sealed_token(tmp_path):
     public = api.real_get_session()['data']
     assert 'token' not in public and 'token_enc' not in public
     assert public['token_present'] is True
+    # The map watermark reads this label; it is the login phone, not a secret.
+    assert public['username'] == '13800138000'
 
 
 def test_ui_state_keeps_disclaimer_acceptance(tmp_path):

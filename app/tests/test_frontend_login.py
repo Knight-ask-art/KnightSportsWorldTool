@@ -227,6 +227,15 @@ def test_csv_export_covers_more_than_the_visible_table():
     assert "toast('已导出 '" in JS
 
 
+def test_map_watermark_uses_the_login_account():
+    assert '.map-watermark' in CSS
+    assert 'function updateMapWatermarks' in JS
+    assert 's.username || s.phone' in JS
+    # Tiles sit at z 200; routes/markers start at 400.
+    assert 'z-index:250' in CSS
+    assert 'pointer-events:none' in CSS
+
+
 def test_freeze_and_face_warnings_are_wired():
     assert 'LIVE.freezeSeconds' in SOURCE
     assert 'LIVE.faceRequired' in SOURCE

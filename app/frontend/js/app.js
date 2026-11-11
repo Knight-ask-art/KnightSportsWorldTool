@@ -153,6 +153,51 @@ const satellite = L.tileLayer(
   'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
   {subdomains: '1234', maxNativeZoom: 18, maxZoom: 19, attribution: '高德卫星'}).addTo(map);
 
+/* Account watermark over the tile pane.  It stays on the viewport, not on the
+   geography, and must never intercept map gestures.  White fill plus a dark
+   stroke keeps the number legible on both satellite and road tiles. */
+function mapWatermarkText(){
+  const s = (typeof LIVE !== 'undefined' && LIVE.session) ? LIVE.session : {};
+  let text = String(s.username || s.phone || '').trim();
+  if(!text){
+    const input = document.getElementById('loginUser');
+    if(input) text = String(input.value || '').trim();
+  }
+  return text.replace(/\s+/g, '');
+}
+function mapWatermarkTile(text){
+  const safe = text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="260" height="150">'
+    + '<g transform="rotate(-27 130 75)">'
+    + '<text x="130" y="79" text-anchor="middle" '
+    + 'font-family="JetBrains Mono, Consolas, monospace" font-size="12" '
+    + 'letter-spacing="1.2" fill="#ffffff" fill-opacity="0.20" '
+    + 'stroke="#000000" stroke-opacity="0.10" stroke-width="0.7" '
+    + 'paint-order="stroke">' + safe + '</text></g></svg>';
+  return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+}
+function updateMapWatermarks(){
+  const text = mapWatermarkText();
+  ['map', 'routeMap', 'rdMap'].forEach(id => {
+    const container = document.getElementById(id);
+    if(!container || !container.classList.contains('leaflet-container')) return;
+    let layer = container.querySelector('.map-watermark');
+    if(!layer){
+      layer = document.createElement('div');
+      layer.className = 'map-watermark';
+      container.appendChild(layer);
+    }
+    if(text){
+      layer.style.display = 'block';
+      layer.style.backgroundImage = mapWatermarkTile(text);
+    }else{
+      layer.style.display = 'none';
+      layer.style.backgroundImage = 'none';
+    }
+  });
+}
+
 /* live map layers: filled from /bridge/real_fetch_points; real checkpoints only */
 let fenceLayer = L.polygon([], {
   color: themeColor('--stamp', '#B6483C'), weight: 1.8, dashArray: '6 5',
@@ -4236,6 +4281,7 @@ function renderSession(){
     LIVE.violations = null; LIVE.violationsError = null;
     renderProfileEmpty();
   }
+  updateMapWatermarks();
 }
 
 async function liveInitSession(){
@@ -6076,6 +6122,7 @@ function ensureRecordMap(){
                                 weight: 2.6, opacity: .95,
                                 lineCap: 'round'}).addTo(rdMap);
   rdPtLayer = L.layerGroup().addTo(rdMap);
+  updateMapWatermarks();
   return rdMap;
 }
 function clearRecordMap(){

@@ -247,7 +247,7 @@ class _ManualApi:
         from replica.application import device_profile as DP
         return DP.generate_profile(platform='android')
 
-    def _persist_login(self, sess, device, raw_session):
+    def _persist_login(self, sess, device, raw_session, username=''):
         self.persisted = sess
         return {'code': 200, 'message': 'success', 'data': sess['profile']}
 
