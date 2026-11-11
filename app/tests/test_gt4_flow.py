@@ -255,6 +255,9 @@ class _ManualApi:
 # Use the real TTL prune, not a copy of it.
 _ManualApi._prune_manual = ReplicaApi._prune_manual
 
+# The slider tests are not about the one-device-one-account seam; stub it.
+_ManualApi._account_guard_block = lambda self, username: None
+
 
 def test_manual_start_returns_the_images_and_the_travel_range(monkeypatch):
     _install(monkeypatch, FakeGee())

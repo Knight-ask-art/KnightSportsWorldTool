@@ -65,6 +65,8 @@ $EXE = Join-Path $BUILT '好想跑.exe'
 $REPO = Split-Path $ROOT -Parent
 $RUST = Join-Path $REPO 'rust\hxp-core'
 $RUST_EXE = Join-Path $RUST 'target\release\hxp-core.exe'
+$GO = Join-Path $REPO 'go\hxp-guard'
+$GO_EXE = Join-Path $GO 'hxp-guard.exe'
 
 if (-not $Version) {
     $info = Join-Path $ROOT 'replica\build_info.py'
@@ -120,6 +122,22 @@ try {
 }
 if (-not (Test-Path $RUST_EXE)) { throw "cargo did not produce $RUST_EXE" }
 Write-Host ('   {0}' -f $RUST_EXE)
+
+Write-Host '== 0/5 Go guard =='
+if (-not (Test-Path (Join-Path $GO 'go.mod'))) {
+    throw "Go guard module missing: $GO"
+}
+Push-Location $GO
+try {
+    go build -trimpath -ldflags='-s -w' -o $GO_EXE ./cmd/hxp-guard
+    if ($LASTEXITCODE -ne 0) {
+        throw "go build failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
+}
+if (-not (Test-Path $GO_EXE)) { throw "go build did not produce $GO_EXE" }
+Write-Host ('   {0}' -f $GO_EXE)
 
 if ($Backend -eq 'nuitka') {
     Write-Host ('== 1/5 Nuitka (v{0}) ==' -f $Version)
@@ -185,6 +203,11 @@ $runtimeRust = Join-Path $BUILT 'runtime\rust'
 New-Item -ItemType Directory -Force -Path $runtimeRust | Out-Null
 Copy-Item $RUST_EXE (Join-Path $runtimeRust 'hxp-core.exe') -Force
 Write-Host '   bundled runtime/rust/hxp-core.exe'
+
+$runtimeGo = Join-Path $BUILT 'runtime\go'
+New-Item -ItemType Directory -Force -Path $runtimeGo | Out-Null
+Copy-Item $GO_EXE (Join-Path $runtimeGo 'hxp-guard.exe') -Force
+Write-Host '   bundled runtime/go/hxp-guard.exe'
 
 # Debug symbols make function names and source paths readable; they are not
 # needed on the operator's machine.

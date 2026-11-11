@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import requests
 
 from ..application import credentials as CRED
+from ..application import account_guard as AG
 from ..application import device_profile as DP
 from ..application import session_store as SESS
 from ..build_info import VERSION as APP_VERSION  # noqa: F401 - re-exported
@@ -1218,6 +1219,10 @@ class ReplicaApi:
                          physicPixel=None, logicPixel=None, isRoot=None,
                          appInstallTime=None, appUpdateTime=None,
                          platform=None, idfa=None, username=None):
+        if token and username:
+            blocked = self._account_guard_block(username)
+            if blocked:
+                return blocked
         if token:
             # A new session must not inherit the previous account's keeper
             # thread or in-memory password.
@@ -1911,6 +1916,9 @@ class ReplicaApi:
             from ..application.login_flow import login as do_login
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录模块不可用: {e}')
+        blocked = self._account_guard_block(username)
+        if blocked:
+            return blocked
         try:
             raw_session = self._read_session()
             device = self._effective_device(raw_session)
@@ -1941,6 +1949,9 @@ class ReplicaApi:
                   'passToken': passToken, 'genTime': genTime}
         if not all(ticket.values()):
             return _fail('手动验证凭证不完整，请重新滑一次')
+        blocked = self._account_guard_block(username)
+        if blocked:
+            return blocked
         try:
             raw_session = self._read_session()
             device = self._effective_device(raw_session)
@@ -2074,6 +2085,9 @@ class ReplicaApi:
         username = str(username or '').strip()
         if not username or not password:
             return _fail('请先填好手机号和密码，再完成手动验证')
+        blocked = self._account_guard_block(username)
+        if blocked:
+            return blocked
         # Validate before consuming: a malformed position must not cost the
         # operator the puzzle they just solved.
         try:
@@ -2135,9 +2149,38 @@ class ReplicaApi:
             self._gt4_manual.pop(str(token or ''), None)
         return _ok(True)
 
+    def _account_guard_block(self, username):
+        """Refuse a second account on this device ("一号一设备").
+
+        Returns a ``_fail`` payload or None.  The sidecar is optional in a
+        source checkout, so a missing binary falls back to allowing the
+        login; a present binary that reports a mismatch/tamper blocks it.
+        """
+        if not username:
+            return None
+        try:
+            res = AG.check(username, self.store_dir)
+        except Exception as e:  # noqa: BLE001 - never trap login on a bug
+            return _fail(f'{AG.SUPPORT_MESSAGE}（{e}）', code=403,
+                         data={'reason': 'guard_error'})
+        if res.get('blocked'):
+            return _fail(res.get('message') or AG.MESSAGE, code=403,
+                         data={'reason': res.get('reason'),
+                               'hint': res.get('hint') or ''})
+        return None
+
     def _persist_login(self, sess, device, raw_session, username=''):
         """Write a successful login and return the sanitised profile."""
         profile = sess.get('profile') or {}
+        if username:
+            # Enforcement point as well as the pre-login check: two logins
+            # racing must not leave the second account with a usable session.
+            bound = AG.bind(username, self.store_dir)
+            if bound.get('blocked'):
+                return _fail(bound.get('message') or AG.MESSAGE, code=403,
+                             data={'reason': bound.get('reason'),
+                                   'hint': bound.get('hint') or ''})
+
         # A manual per-account override (CLI/import) must survive the new
         # token write.  Copy only fields that were explicitly in the session;
         # copying the merged profile would shadow a later rotate().

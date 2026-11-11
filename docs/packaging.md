@@ -16,6 +16,16 @@
   显式设 `0` 仍可用于排错。
 - Rust 提升的是静态分析和补丁成本，不是「不可逆向」；它不替代服务端校验。
 
+## 原生核心：Go sidecar
+
+- `go/hxp-guard` 负责本机的一号一设备绑定；打包时执行
+  `go build -trimpath -ldflags="-s -w"`，复制到
+  `dist/好想跑_v*/runtime/go/hxp-guard.exe`。
+- Python 侧 `app/replica/application/account_guard.py` 以 CLI/JSON 调用；
+  二进制缺失时源码运行放行，正式包由构建脚本保证存在。
+- 状态文件 `data/account_binding.json` 只存账号哈希和脱敏提示，带 HMAC；
+  不是强 DRM，规则与边界见 `docs/kb/46-account-guard.md`。
+
 ## 默认后端：Nuitka standalone
 
 `packaging/build.ps1` 默认使用 Nuitka 4.x，把 Python 模块编译成 C 再链接，

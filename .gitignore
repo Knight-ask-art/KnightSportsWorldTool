@@ -31,6 +31,9 @@ node_modules/
 *.log
 *.tmp
 *.bak
+go/hxp-guard/hxp-guard
+go/hxp-guard/hxp-guard.exe
+go/hxp-guard/data/
 
 # ---- 研究资料 / 外部工具（体积大且含历史凭据）----
 archive/

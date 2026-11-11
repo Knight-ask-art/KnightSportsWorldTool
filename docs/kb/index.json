@@ -2,7 +2,7 @@
   "schema": 1,
   "app": "haoxiangpao",
   "version": "0.2.2",
-  "updated": "2026-11-11",
+  "updated": "2026-11-12",
   "evidence_levels": {
     "A": "本仓库源码、测试或真机实测，能复现",
     "B": "上游参考项目或官方文档",
@@ -97,6 +97,17 @@
       "level": "A",
       "updated": "2026-11-11",
       "sources": ["docs/operations.md", "docs/usage.md"]
+    },
+    {
+      "id": "account-guard",
+      "title": "一号一设备绑定",
+      "file": "46-account-guard.md",
+      "category": "risk",
+      "tags": ["Go", "账号", "设备", "绑定", "防切换"],
+      "summary": "本地 device→account 绑定的规则、Go 侧车、HMAC 状态文件、失败策略和绕过边界。",
+      "level": "A",
+      "updated": "2026-11-12",
+      "sources": ["docs/decisions.md", "go/hxp-guard", "app/replica/application/account_guard.py"]
     },
     {
       "id": "issues",

@@ -120,9 +120,13 @@ def _keepalive_cli(args):
 # --------------------------------------------------------------------------
 
 def do_login(args):
+    from ..application import account_guard as AG
     from ..application import device_profile as DP
     from ..application.login_flow import login
     store = DP.default_store_dir()
+    blocked = AG.check(args.user, store)
+    if blocked.get('blocked'):
+        raise ValueError(blocked.get('message') or AG.MESSAGE)
     device = DP.load_or_create(store, legacy_session=DP.read_session(store))
     if args.device_id:
         device = dict(device, DeviceId=args.device_id)
@@ -133,6 +137,9 @@ def do_login(args):
     log('[1/6] 登录（纯协议，本地解极验）...')
     sess = login(args.user, args.password, captcha_id=args.captcha_id, log=log,
                  device=device)
+    bound = AG.bind(args.user, store)
+    if bound.get('blocked'):
+        raise ValueError(bound.get('message') or AG.MESSAGE)
     DP.clear_migration_marker(store)
     log('      uid=%s unid=%s name=%s'
         % (sess['uid'], sess['unid'], sess['profile'].get('name')))

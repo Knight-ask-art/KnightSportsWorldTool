@@ -239,15 +239,22 @@ def probe_real_session(session: dict, proxy: str | None = None,
 def relogin_real(username: str, password: str,
                  store_dir: str | None = None) -> dict:
     """Default re-login hook.  Calls the same pure-protocol login flow."""
+    from . import account_guard as AG
     from . import device_profile as DP
     from .login_flow import login as do_login
     store = store_dir or DP.default_store_dir()
+    blocked = AG.check(username, store)
+    if blocked.get('blocked'):
+        raise RuntimeError(blocked.get('message') or AG.MESSAGE)
     session = DP.read_session(store)
     profile = DP.load_or_create(store, legacy_session=session)
     device = DP.effective_device(profile, session)
     sess = do_login(username, password, log=lambda *_: None, device=device)
     if not sess.get('token'):
         raise RuntimeError('登录响应没有 token')
+    bound = AG.bind(username, store)
+    if bound.get('blocked'):
+        raise RuntimeError(bound.get('message') or AG.MESSAGE)
     DP.clear_migration_marker(store)
     return {
         'uid': str(sess.get('uid') or ''),
