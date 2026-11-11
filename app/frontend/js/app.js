@@ -3148,9 +3148,14 @@ function setLoginBusy(on, text, tone){
     const err = $('#loginError');
     if(err){ err.hidden = true; err.textContent = ''; }
     if(text) setLoginStatus(text, tone || 'busy');
-  }else if(text !== undefined){
-    setLoginStatus(text, tone || '');
+  }else{
+    setLoginLoader(false);
+    if(text !== undefined) setLoginStatus(text, tone || '');
   }
+}
+function setLoginLoader(on){
+  const el = $('#loginLoader');
+  if(el) el.hidden = !on;
 }
 async function restoreSavedLogin(){
   try{
@@ -3507,6 +3512,7 @@ async function gateLogin(){
   const manualBtn = $('#loginManual');
   if(manualBtn) manualBtn.hidden = true;
   setLoginBusy(true, '正在登录… 通常 5–15 秒', 'busy');
+  setLoginLoader(true);
   startLoginClock();
   liveLog('登录中', '正在验证账号', 'info');
   try{
@@ -3532,6 +3538,7 @@ async function finishLogin(profile, user, pass){
   clearAccountActivity();
   liveLog('登录成功', profile.name || profile.campusName || '会话已保存', 'ok');
   stopLoginClock();
+  setLoginLoader(false);
   setLoginStatus('登录成功，正在读取你的账号…', 'ok');
   const res = await liveInitSession();
   if(!res || res.state !== 'app'){

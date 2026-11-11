@@ -119,6 +119,8 @@ app/frontend/
 - 暖米纸 `#f9f8f6`、墨黑 `#1c1c1c`、石墨 `#6b7280`、陈玫 `#816d70`（只用于选中/引文）。
 - 标题衬线，正文/按钮无衬线；8px 基准、发丝线、无圆角、无阴影。
 - 主按钮参考 Uiverse `brown-otter-21`：黑框、左侧短线、上下 key；hover 反色并收起 key。
+- 收起后的登录按钮参考 `Cornerstone-04/bitter-impala-54`：两段边框滑入并长成完整框。
+- 登录/解极验等待用 `alexruix/tame-fly-42` 的弹跳球 + 阶梯，球改为墨黑。
 - 覆盖页面：概览、账号、跑步、路线库、设置、登录面板；开屏动画不改。
 - 所有新动效在 `prefers-reduced-motion` 下关闭。
 

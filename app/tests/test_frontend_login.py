@@ -28,6 +28,12 @@ def test_login_gate_locks_app_until_session_is_ready():
     assert '<body class="login-locked">' in HTML
     assert 'id="loginGate"' in HTML
     assert 'id="loginForm"' in HTML
+    assert 'id="loginLoader"' in HTML
+    assert '.login-loader::before' in CSS
+    assert 'login-loading-bounce' in CSS
+    assert 'function setLoginLoader' in JS
+    assert 'setLoginLoader(true)' in JS
+    assert 'setLoginLoader(false)' in JS
     assert 'id="loginUser"' in HTML
     assert 'id="loginPass"' in HTML
     assert 'id="loginBtn"' in HTML

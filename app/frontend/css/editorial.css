@@ -421,9 +421,44 @@ html[data-skin="paper"] .login-foot{
 }
 html[data-skin="paper"] .login-tape{
   background:transparent;border:1px solid rgba(28,28,28,.2);color:var(--faint);
-  clip-path:none;transform:none;box-shadow:none;height:26px;
+  clip-path:none;transform:translateX(-50%);box-shadow:none;height:26px;
 }
 html[data-skin="paper"] .login-tape:hover{background:var(--ink);color:var(--paper)}
+html[data-skin="paper"] .login-card.collapsed{
+  background:transparent;border:0;padding:0;width:142px;max-width:142px;
+}
+html[data-skin="paper"] .login-card.collapsed .login-tape{
+  position:relative;top:0;left:auto;transform:none;
+  width:142px;height:42px;background:var(--paper);color:var(--ink);
+  border:0;clip-path:none;overflow:hidden;
+}
+/* Collapsed login button: Uiverse Cornerstone-04 / bitter-impala-54 (MIT).
+   Two border segments slide in from the sides and grow into a full frame. */
+html[data-skin="paper"] .login-card.collapsed .login-tape::before{
+  content:"";position:absolute;left:0;bottom:0;height:4px;width:100%;
+  border-bottom:3px solid transparent;border-left:3px solid transparent;
+  box-sizing:border-box;transform:translateX(100%);pointer-events:none;
+}
+html[data-skin="paper"] .login-card.collapsed .login-tape::after{
+  content:"";position:absolute;top:0;left:0;width:100%;height:4px;
+  border-top:3px solid transparent;border-right:3px solid transparent;
+  box-sizing:border-box;transform:translateX(-100%);pointer-events:none;
+}
+html[data-skin="paper"] .login-card.collapsed .login-tape:hover{
+  background:var(--paper);color:var(--ink);box-shadow:none;
+}
+html[data-skin="paper"] .login-card.collapsed .login-tape:hover::before{
+  border-color:var(--ink);height:100%;transform:translateX(0);
+  transition:transform .3s linear,height .3s linear .3s;
+}
+html[data-skin="paper"] .login-card.collapsed .login-tape:hover::after{
+  border-color:var(--ink);height:100%;transform:translateX(0);
+  transition:transform .3s linear,height .3s linear .5s;
+}
+html[data-skin="paper"] .login-card.collapsed .login-tape-label{
+  position:relative;z-index:1;
+  opacity:1;font:500 9px/1 var(--sans);letter-spacing:.2em;text-transform:uppercase;
+}
 
 /* ---------- overview specifics ----------------------------------------- */
 html[data-skin="paper"] .today-actions .btn{margin-left:8px}

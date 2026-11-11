@@ -294,6 +294,11 @@ def test_editorial_skin_uses_the_magazine_tokens_and_keeps_splash_out():
     assert '--radius-card:0' in css
     assert '--shadow:none' in css
     assert 'prefers-reduced-motion' in css
+    # Collapsed login button keeps the Uiverse border-slide interaction.
+    assert 'bitter-impala-54' in css
+    assert '.login-card.collapsed .login-tape::before' in css
+    assert '.login-card.collapsed .login-tape::after' in css
+    assert 'translateX(100%)' in css
     # The startup animation is intentionally untouched.
     assert '#bootSplash' not in css
     assert '.boot' not in css

@@ -1671,6 +1671,35 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
   min-height:17px;margin-top:-2px;color:var(--faint);
   font-size:10.5px;line-height:1.5;overflow-wrap:anywhere;
 }
+.login-loader{
+  position:relative;width:104px;height:66px;margin:2px auto 4px;
+}
+.login-loader[hidden]{display:none}
+.login-loader::before{
+  content:"";position:absolute;left:16px;bottom:8px;height:24px;width:24px;
+  border-radius:50%;background:var(--ink);
+  animation:login-loading-bounce .5s ease-in-out infinite alternate;
+}
+.login-loader::after{
+  content:"";position:absolute;right:0;top:0;height:6px;width:38px;
+  box-shadow:0 6px 0 var(--rule),-28px 34px 0 var(--rule),-56px 58px 0 var(--rule);
+  animation:login-loading-step 1s ease-in-out infinite;
+}
+@keyframes login-loading-bounce{
+  0%{transform:scale(1,.7)}
+  40%{transform:scale(.8,1.2)}
+  60%{transform:scale(1,1)}
+  100%{transform:translateY(-34px) scale(1,1)}
+}
+@keyframes login-loading-step{
+  0%{box-shadow:0 10px 0 transparent,0 10px 0 var(--rule),
+             -28px 34px 0 var(--rule),-56px 58px 0 var(--rule)}
+  100%{box-shadow:0 10px 0 var(--rule),-28px 34px 0 var(--rule),
+               -56px 58px 0 var(--rule),-56px 58px 0 transparent}
+}
+@media (prefers-reduced-motion:reduce){
+  .login-loader::before,.login-loader::after{animation:none}
+}
 .login-status.busy{color:var(--ink-blue)}
 .login-status.ok{color:var(--green)}
 .login-status.error{color:var(--stamp)}
