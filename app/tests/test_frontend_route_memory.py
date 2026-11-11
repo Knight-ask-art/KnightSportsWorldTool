@@ -123,3 +123,25 @@ def test_learned_type_go_wiring_empty_reset_and_copy_guards():
     assert '自动还在开发中' not in JS
     for cls in ('.rm-box', '.rm-card', '.auto-candidates', '.auto-candidate'):
         assert cls in CSS, cls
+
+
+def test_learned_apply_preserves_requested_distance():
+    lock_fn = _js_function('lockLearnedTargetKm')
+    assert 'distanceManual = true' in lock_fn
+    assert "el.value" in lock_fn
+
+    for name in ('applyAutoCandidate', 'applyRouteMemoryTemplate'):
+        fn = _js_function(name)
+        assert 'lockLearnedTargetKm(' in fn, name
+        assert fn.index('lockLearnedTargetKm(') < fn.index('redraw()'), name
+
+
+def test_route_memory_poll_and_button_recover_after_tab_switch():
+    render_fn = _js_function('renderRouteMemory')
+    assert "#rmLearn" in render_fn
+    assert "learnBtn.disabled = false" in render_fn
+    assert "setInterval(pollRouteMemoryStatus, 800)" in render_fn
+
+    start_fn = _js_function('startRouteMemoryLearn')
+    assert "d.progress && d.progress.running" in start_fn
+    assert "setInterval(pollRouteMemoryStatus, 800)" in start_fn

@@ -1370,6 +1370,21 @@ function renderAutoCandidates(candidates){
   }).join('');
   box.innerHTML = head + cards;
 }
+function lockLearnedTargetKm(targetM){
+  // Applying a learned route is an explicit distance request.  Without this,
+  // redraw() -> autoFillDistanceFromRoute() would replace 2.5 km with the
+  // single-lap length (e.g. 0.40 km) and re-fetch the wrong checkpoints.
+  const el = $('#inKm');
+  if(!el) return 0;
+  let km = +el.value || 0;
+  if(!(km > 0) && +targetM > 0) km = (+targetM) / 1000;
+  if(km > 0){
+    el.value = String(Math.round(km * 100) / 100);
+    distanceManual = true;
+    refreshParams();
+  }
+  return km;
+}
 function applyAutoCandidate(idx){
   const cand = (LIVE.rmCandidates || [])[idx];
   if(!cand) return;
@@ -1382,6 +1397,7 @@ function applyAutoCandidate(idx){
   selRoutePoint = -1;
   route = line;
   setCloseUI(!!cand.closed);
+  lockLearnedTargetKm(+cand.target_m || 0);
   redraw();
   // The candidate was snapped to the checkpoints currently on the map.  Keep
   // that same set through finalize instead of fetching a fresh random one.
@@ -6906,6 +6922,10 @@ function renderRouteMemory(d){
     if(statusEl){ statusEl.textContent = '未学习'; statusEl.className = 'mini'; }
     if(progEl) progEl.hidden = true;
     if(listEl) listEl.innerHTML = '';
+    if($('#rmLearn')){
+      $('#rmLearn').disabled = false;
+      $('#rmLearn').textContent = '从跑步记录学习路线';
+    }
     if(hintEl) hintEl.textContent = '学习结果只保存在本机；原始轨迹不落盘。';
     return;
   }
@@ -6917,6 +6937,16 @@ function renderRouteMemory(d){
   const readable = +(summary.usable != null ? summary.usable : summary.records_readable) || 0;
   const skipped = +(summary.skipped != null ? summary.skipped : summary.records_skipped) || 0;
   const statusFlag = String(summary.status || d.status || '');
+  const rmPage = $('#page-routes');
+  const rmPageActive = !!(rmPage && rmPage.classList.contains('active'));
+  const learnBtn = $('#rmLearn');
+  if(learnBtn){
+    if(running){ learnBtn.disabled = true; learnBtn.textContent = '学习中…'; }
+    else { learnBtn.disabled = false; learnBtn.textContent = '从跑步记录学习路线'; }
+  }
+  if(running && rmPageActive && !_rmPollTimer){
+    _rmPollTimer = setInterval(pollRouteMemoryStatus, 800);
+  }
 
   if(statusEl){
     if(running){
@@ -7087,6 +7117,14 @@ async function startRouteMemoryLearn(){
       _rmPollTimer = setInterval(pollRouteMemoryStatus, 800);
       return;
     }
+    if(d.progress && d.progress.running){
+      if($('#rmStatus')){ $('#rmStatus').textContent = '学习中'; $('#rmStatus').className = 'mini warn'; }
+      updateRmProgressUI(d.progress);
+      if(btn) btn.textContent = '学习中…';
+      stopRouteMemoryPoll();
+      _rmPollTimer = setInterval(pollRouteMemoryStatus, 800);
+      return;
+    }
     if(btn){ btn.disabled = false; btn.textContent = '从跑步记录学习路线'; }
     await loadRouteMemory();
   }catch(e){
@@ -7116,6 +7154,7 @@ async function applyRouteMemoryTemplate(templateId, btn){
     selRoutePoint = -1;
     route = line;
     setCloseUI(!!data.closed);
+    lockLearnedTargetKm(+data.target_m || 0);
     redraw();
     const want = pointsTargetM();
     if(want > 0 && livePoints.length && !pointsDistanceStale()){
