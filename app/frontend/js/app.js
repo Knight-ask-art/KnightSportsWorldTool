@@ -2768,7 +2768,7 @@ function openRecordReplay(){
 }
 
 /* ---------- page routing ---------- */
-const PAGES = ['overview', 'accounts', 'run', 'routes', 'records', 'profile', 'settings'];
+const PAGES = ['overview', 'accounts', 'run', 'agent', 'routes', 'records', 'profile', 'settings'];
 let runMapFitted = false;
 function syncNavThumb(){
   const nav = document.querySelector('.nav');
@@ -2819,6 +2819,17 @@ function go(page){
     if(typeof loadRouteMemory === 'function') loadRouteMemory();
   }else{
     if(typeof stopRouteMemoryPoll === 'function') stopRouteMemoryPoll();
+  }
+  if(page === 'agent'){
+    if(!LIVE.agentInit){
+      LIVE.agentInit = true;
+      if(typeof loadAgentStatus === 'function') loadAgentStatus();
+    }else if(typeof refreshAgentPageOnVisit === 'function'){
+      refreshAgentPageOnVisit();
+    }
+    setTimeout(() => { if($('#agentInput')) $('#agentInput').focus(); }, 60);
+  }else{
+    if(typeof stopAgentPoll === 'function') stopAgentPoll();
   }
   if(page === 'records'){
     if(!LIVE.receiptsLoaded) loadReceipts();
@@ -2990,7 +3001,8 @@ const LIVE = {
   llmProtocols: [], llmSettings: null, llmProtocolPrev: '',
   llmLoaded: false, llmLoading: false,
   rmLoaded: false, rmLoading: false, rmStatus: null,
-  rmCandidates: [], rmCandidateOffset: 0
+  rmCandidates: [], rmCandidateOffset: 0,
+  agentStatus: null, agentInit: false
 };
 
 /* ---------------- appearance skins ---------------- */
@@ -4584,6 +4596,10 @@ function renderEmptyData(){
   LIVE.rmStatus = null;
   LIVE.rmCandidates = [];
   LIVE.rmCandidateOffset = 0;
+  if(typeof stopAgentPoll === 'function') stopAgentPoll();
+  LIVE.agentInit = false;
+  LIVE.agentStatus = null;
+  if(typeof resetAgentUI === 'function') resetAgentUI();
   if(typeof hideAutoCandidates === 'function') hideAutoCandidates();
   if(typeof renderRouteMemory === 'function') renderRouteMemory(null);
   updateFenceChip();
@@ -7211,6 +7227,636 @@ function reverseCurrentRoute(){
   redraw();
   scheduleRouteFinalize(300, 'reverse');
   toast('已反转闭环方向');
+}
+
+/* agent page */
+const AGENT_STATE_LABELS = {
+  idle: '待命',
+  collect: '收集中',
+  learn: '学习中',
+  suggest: '推荐中',
+  adapt: '适配中',
+  preview: '预览中',
+  audit: '检查中',
+  wait_confirm: '待确认',
+  confirmed: '已完成',
+  cancelled: '已取消',
+  error: '出错'
+};
+const AGENT_TRANSIENT_STATES = new Set([
+  'collect', 'learn', 'suggest', 'adapt', 'preview', 'audit'
+]);
+const AGENT_TOOL_LABELS = {
+  collect: '正在整理目标…',
+  route_memory_status: '正在读取跑步记录…',
+  route_memory_learn: '正在学习路线…',
+  route_memory_suggest: '正在推荐…',
+  route_memory_apply: '正在适配路线…',
+  reverse: '正在适配路线…',
+  preview_route: '正在生成预览…',
+  audit_run: '正在检查…'
+};
+const AGENT_STATE_TOOL_TEXT = {
+  collect: '正在读取跑步记录…',
+  learn: '正在学习路线…',
+  suggest: '正在推荐…',
+  adapt: '正在适配路线…',
+  preview: '正在生成预览…',
+  audit: '正在检查…'
+};
+let _agentPollTimer = 0;
+let _agentPolling = false;
+let _agentSending = false;
+let _agentSessionId = '';
+let _agentLogCount = 0;
+let _agentGreetingShown = false;
+
+function stopAgentPoll(){
+  if(_agentPollTimer){
+    clearInterval(_agentPollTimer);
+    _agentPollTimer = 0;
+  }
+}
+function startAgentPoll(){
+  stopAgentPoll();
+  _agentPollTimer = setInterval(pollAgentStatus, 600);
+}
+function resetAgentUI(){
+  _agentSessionId = '';
+  _agentLogCount = 0;
+  _agentGreetingShown = false;
+  const chip = $('#agentStateChip');
+  if(chip){
+    chip.textContent = '待命';
+    chip.className = 'chip agent-state';
+  }
+  const box = $('#agentTranscript');
+  if(box) box.innerHTML = '';
+  renderAgentCandidates([]);
+  renderAgentPreview(null, null);
+  renderAgentGoalBar(null);
+  if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+  if($('#agentHint')){
+    $('#agentHint').textContent = 'Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。';
+  }
+}
+function refreshAgentPageOnVisit(){
+  const st = LIVE.agentStatus;
+  renderAgentGoalBar(st);
+  if(st && AGENT_TRANSIENT_STATES.has(st.state)){
+    startAgentPoll();
+  }
+}
+function renderAgentGoalBar(st){
+  const kmEl = $('#agentGoalKm');
+  const ptsEl = $('#agentGoalPoints');
+  const campusEl = $('#agentGoalCampus');
+  const llmEl = $('#agentLlmChip');
+  const goal = (st && st.goal && typeof st.goal === 'object') ? st.goal : {};
+  if(kmEl){
+    const km = goal.km != null && isFinite(+goal.km) ? +goal.km : null;
+    kmEl.textContent = '目标：' + (km != null ? (km + ' km') : '未设定');
+  }
+  if(ptsEl){
+    const pts = (st && st.session_id && goal.points != null)
+      ? (+goal.points || 0)
+      : (Array.isArray(LIVE.points) ? LIVE.points.length : 0);
+    ptsEl.textContent = '点位：' + pts + ' 个';
+  }
+  if(campusEl){
+    const s = LIVE.session || {};
+    const campus = s.schoolName || s.campusName || '未连接';
+    campusEl.textContent = '校区：' + campus;
+  }
+  if(llmEl){
+    const llm = (st && st.llm && typeof st.llm === 'object') ? st.llm : {};
+    if(llm.used){
+      llmEl.textContent = '模型：' + (llm.model || '已启用');
+    }else if(llm.error){
+      llmEl.innerHTML = '本地规则（模型已回退） · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+    }else if(LIVE.llmSettings && LIVE.llmSettings.enabled &&
+             (LIVE.llmSettings.has_key || LIVE.llmSettings.protocol === 'ollama' || LIVE.llmSettings.protocol === 'custom')){
+      llmEl.textContent = '本地规则 · 已配置 ' + (LIVE.llmSettings.model || '模型');
+    }else{
+      llmEl.innerHTML = '本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+    }
+  }
+}
+function appendAgentBubble(kind, text){
+  const box = $('#agentTranscript');
+  if(!box) return;
+  const msg = String(text || '').trim();
+  if(!msg) return;
+  const liveNode = box.querySelector('.agent-tool.is-live');
+  if(liveNode) liveNode.remove();
+  const div = document.createElement('div');
+  if(kind === 'user'){
+    div.className = 'agent-bubble user';
+  }else if(kind === 'warn'){
+    div.className = 'agent-bubble bot is-warn';
+  }else if(kind === 'err' || kind === 'error'){
+    div.className = 'agent-bubble bot is-err';
+  }else{
+    div.className = 'agent-bubble bot';
+  }
+  div.textContent = msg;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function appendAgentToolCard(title, detail, isLive){
+  const box = $('#agentTranscript');
+  if(!box) return;
+  const liveNode = box.querySelector('.agent-tool.is-live');
+  if(liveNode) liveNode.remove();
+  const card = document.createElement('div');
+  card.className = 'agent-tool' + (isLive ? ' is-live' : '');
+  const t = document.createElement('div');
+  t.className = 'agent-tool-title';
+  t.textContent = String(title || '');
+  card.appendChild(t);
+  if(detail){
+    const d = document.createElement('div');
+    d.className = 'agent-tool-detail';
+    d.textContent = String(detail);
+    card.appendChild(d);
+  }
+  box.appendChild(card);
+  box.scrollTop = box.scrollHeight;
+}
+function showAgentIdleGreeting(extraText){
+  const box = $('#agentTranscript');
+  if(!box || _agentGreetingShown) return;
+  _agentGreetingShown = true;
+  appendAgentBubble('bot', extraText || '你好，我是跑步规划 Agent。点击下方快捷入口或输入目标公里数即可开始；我只负责规划、预览和检查，不会替你提交。');
+}
+function renderAgentCandidates(candidates){
+  const box = $('#agentCandidates');
+  if(!box) return;
+  const list = (Array.isArray(candidates) ? candidates : []).slice(0, 3);
+  if(!list.length){
+    box.innerHTML = '<div class="agent-empty">暂无候选路线；发送目标后会匹配你常跑的路线模板。</div>';
+    return;
+  }
+  const selectedId = (LIVE.agentStatus && LIVE.agentStatus.selected) ? String(LIVE.agentStatus.selected) : '';
+  box.innerHTML = list.map((c, idx) => {
+    const tid = String((c && c.template_id) || '');
+    const selected = !!selectedId && tid === selectedId;
+    const scorePct = Math.max(0, Math.min(100, Math.round((+(c && c.score) || 0) * 100)));
+    const lapKm = ((+(c && c.lap_m) || 0) / 1000).toFixed(2);
+    const lapsText = c && c.laps ? (c.laps + ' 圈') : '';
+    const samplesText = (c && c.samples != null) ? ((+c.samples || 0) + ' 条样本') : '';
+    const missedLen = Array.isArray(c && c.missed) ? c.missed.length : 0;
+    const covNum = (c && typeof c.coverage === 'number' && isFinite(c.coverage))
+      ? c.coverage : null;
+    const totalPts = Array.isArray(livePoints) ? livePoints.length : 0;
+    let covText;
+    if(c && c.fence_ok === false){
+      covText = '围栏外';
+    }else if(covNum != null && totalPts){
+      covText = Math.round(covNum * totalPts) + '/' + totalPts + ' 点位';
+    }else if(missedLen > 0){
+      covText = '缺 ' + missedLen + ' 个点位';
+    }else{
+      covText = '点位全覆盖';
+    }
+    const reasons = (Array.isArray(c && c.reasons) ? c.reasons : [])
+      .filter(Boolean)
+      .slice(0, 4)
+      .map(r => `<span class="tag">${esc(String(r))}</span>`)
+      .join('');
+    return `<div class="agent-card ${selected ? 'is-selected' : ''}">
+      <div class="agent-card-top">
+        <b>${esc((c && c.name) || ('候选路线 ' + (idx + 1)))}${selected ? '（已选）' : ''}</b>
+        <span class="agent-card-score">${scorePct} 分</span>
+      </div>
+      <div class="agent-card-meta">
+        <span>${lapKm} km/圈</span>
+        ${lapsText ? `<span>${esc(lapsText)}</span>` : ''}
+        ${samplesText ? `<span>${esc(samplesText)}</span>` : ''}
+        <span>${esc(covText)}</span>
+      </div>
+      ${reasons ? `<div class="agent-card-reasons">${reasons}</div>` : ''}
+      <div class="agent-card-actions">
+        ${list.length > 1 ? '<button type="button" class="btn small ghost" data-agent-next="1">换一条</button>' : ''}
+        <button type="button" class="btn small primary" data-agent-pick="${idx + 1}">用这条</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function fmtAgentDuration(sec){
+  const s = Math.max(0, Math.round(+sec || 0));
+  if(!s) return '—';
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return m + ' 分 ' + String(rem).padStart(2, '0') + ' 秒';
+}
+function renderAgentPreview(preview, audit){
+  const box = $('#agentPreview');
+  if(!box) return;
+  if(!preview && !audit){
+    box.innerHTML = '<div class="agent-empty">待选定路线后自动生成本地预览与合规检查结果。</div>';
+    return;
+  }
+  const st = LIVE.agentStatus || {};
+  const run = (preview && preview.run && typeof preview.run === 'object') ? preview.run : {};
+  const model = (preview && preview.model && typeof preview.model === 'object') ? preview.model : {};
+  const goalKm = (st.goal && st.goal.km != null) ? +st.goal.km : null;
+  const kmText = run.km != null && isFinite(+run.km)
+    ? (Number(run.km).toFixed(2) + ' km')
+    : (goalKm != null && isFinite(goalKm) ? (goalKm.toFixed(2) + ' km') : '—');
+  const selectedCand = (Array.isArray(st.candidates) ? st.candidates : [])
+    .find(c => c && c.template_id === st.selected);
+  const lapsText = selectedCand && selectedCand.laps
+    ? (selectedCand.laps + ' 圈（' + ((+selectedCand.lap_m || 0) / 1000).toFixed(2) + ' km/圈）')
+    : '—';
+  const paceText = '6.00 /km';
+  const timeText = run.sportTime != null ? fmtAgentDuration(run.sportTime) : '—';
+  const ptsText = run.points != null ? (run.points + ' 个轨迹点') : '—';
+  const verdictMap = {pass: '达标', warn: '需注意', fail: '不达标'};
+  const verdictText = verdictMap[model.verdict] || (model.configured === false ? '未配校规' : '待定');
+
+  let auditHtml = '<div class="agent-audit-box"><span>等待本地检查…</span></div>';
+  if(audit && typeof audit === 'object'){
+    const s = (audit.summary && typeof audit.summary === 'object') ? audit.summary : {};
+    const ok = s.ok === true;
+    const passed = +s.passed || 0;
+    const warned = +s.warned || 0;
+    const failed = +s.failed || 0;
+    const bad = (Array.isArray(audit.checks) ? audit.checks : []).filter(c => c && !c.ok);
+    const badList = (!ok && bad.length)
+      ? `<ul class="agent-audit-list">${bad.slice(0, 4).map(c =>
+          `<li>${esc((c.label || c.id || '检查项') + (c.detail ? ('：' + c.detail) : ''))}</li>`
+        ).join('')}</ul>`
+      : '';
+    auditHtml = `<div class="agent-audit-box">
+      <span class="${ok ? 'agent-audit-ok' : 'agent-audit-fail'}">${ok ? '本地检查通过' : '本地检查未通过'}</span>
+      <span>（通过 ${passed} · 警告 ${warned} · 失败 ${failed}）</span>
+      ${badList}
+    </div>`;
+  }
+  box.innerHTML = `<div class="agent-card">
+    <div class="agent-preview-grid">
+      <div class="agent-preview-kv"><span>目标距离</span><b>${esc(kmText)}</b></div>
+      <div class="agent-preview-kv"><span>配速 / 用时</span><b>${esc(paceText + ' · ' + timeText)}</b></div>
+      <div class="agent-preview-kv"><span>圈数与圈长</span><b>${esc(lapsText)}</b></div>
+      <div class="agent-preview-kv"><span>轨迹点数 / 校规</span><b>${esc(ptsText + ' · ' + verdictText)}</b></div>
+    </div>
+    ${auditHtml}
+  </div>`;
+}
+function applyAgentRouteResult(data){
+  if(!data || typeof data !== 'object') return false;
+  const args = (data.preview_args && typeof data.preview_args === 'object') ? data.preview_args : {};
+  const rawLine = (Array.isArray(args.waypoints) && args.waypoints.length) ? args.waypoints : data.route;
+  const line = validRouteLine(rawLine);
+  if(line.length < 2){
+    toast('返回路线坐标无效');
+    return false;
+  }
+  pushRouteHistory('Agent 规划路线');
+  selRoutePoint = -1;
+  route = line;
+  setCloseUI(args.closed !== undefined ? !!args.closed : true);
+  const kmVal = +(args.km != null ? args.km : data.km);
+  if(isFinite(kmVal) && kmVal > 0 && $('#inKm')){
+    $('#inKm').value = String(Math.round(kmVal * 100) / 100);
+    distanceManual = true;
+  }
+  if(args.pace != null && isFinite(+args.pace) && $('#inPace')){
+    $('#inPace').value = Number(args.pace).toFixed(2);
+  }
+  if(args.cadence != null && isFinite(+args.cadence) && $('#inCad')){
+    $('#inCad').value = String(Math.round(+args.cadence));
+  }
+  refreshParams();
+  redraw();
+  const want = pointsTargetM();
+  if(want > 0 && Array.isArray(args.checkpoints) && args.checkpoints.length && livePoints.length){
+    LIVE.pointsDistance = want;
+    // go('run') refreshes points when the last fetch is older than 5 s; keep
+    // the audited checkpoint set instead.
+    LIVE.pointsAutoAt = Date.now();
+  }
+  scheduleRouteFinalize(300, 'agent');
+  go('run');
+  switchRunTab('route');
+  toast('已载入 Agent 规划路线，请在跑步页确认预览');
+  return true;
+}
+function renderAgentStatus(st){
+  st = (st && typeof st === 'object') ? st : {};
+  LIVE.agentStatus = st;
+  const state = String(st.state || 'idle');
+  const sid = String(st.session_id || '');
+  const chip = $('#agentStateChip');
+  if(chip){
+    chip.textContent = AGENT_STATE_LABELS[state] || state;
+    let cls = 'chip agent-state';
+    if(state === 'wait_confirm' || state === 'confirmed') cls += ' ok';
+    else if(state === 'error') cls += ' err';
+    else if(AGENT_TRANSIENT_STATES.has(state) || state === 'cancelled') cls += ' warn';
+    chip.className = cls;
+  }
+  renderAgentGoalBar(st);
+
+  if(sid !== _agentSessionId){
+    if(_agentSessionId && $('#agentTranscript')){
+      $('#agentTranscript').innerHTML = '';
+    }
+    _agentSessionId = sid;
+    _agentLogCount = 0;
+  }
+  const logs = Array.isArray(st.log) ? st.log : [];
+  if(logs.length < _agentLogCount){
+    _agentLogCount = 0;
+  }
+  if(state === 'idle' && !logs.length){
+    showAgentIdleGreeting();
+  }else{
+    if(_agentGreetingShown && logs.length){
+      _agentGreetingShown = false;
+    }
+    for(let i = _agentLogCount; i < logs.length; i++){
+      const entry = logs[i];
+      if(!entry || typeof entry !== 'object') continue;
+      const text = String(entry.text || '').trim();
+      const tool = String(entry.tool || '');
+      if(!text) continue;
+      if(AGENT_TOOL_LABELS[tool] && entry.level !== 'error'){
+        appendAgentToolCard(AGENT_TOOL_LABELS[tool], text, false);
+      }else{
+        const kind = entry.level === 'error' ? 'err' : (entry.level === 'warn' ? 'warn' : 'bot');
+        appendAgentBubble(kind, text);
+      }
+    }
+    _agentLogCount = logs.length;
+  }
+
+  const box = $('#agentTranscript');
+  const liveExisting = box ? box.querySelector('.agent-tool.is-live') : null;
+  if(liveExisting) liveExisting.remove();
+  if(AGENT_TRANSIENT_STATES.has(state)){
+    appendAgentToolCard(AGENT_STATE_TOOL_TEXT[state] || '正在规划…', '请稍候，正在执行本地步骤…', true);
+  }
+
+  renderAgentCandidates(st.candidates || []);
+  renderAgentPreview(st.preview || null, st.audit || null);
+
+  const auditOk = !!(st.audit && st.audit.summary && st.audit.summary.ok === true);
+  const canConfirm = state === 'wait_confirm' && auditOk;
+  if($('#agentConfirm')) $('#agentConfirm').disabled = !canConfirm;
+
+  const hintEl = $('#agentHint');
+  if(hintEl){
+    if(state === 'error'){
+      const errMsg = String(st.error || '规划未能完成');
+      if(st.fallback === 'auto'){
+        hintEl.innerHTML = esc(errMsg) + ' · <a href="#run" class="agent-llm-link" data-goto="run" data-mode-target="auto">去跑步页用自动/手绘路线</a>';
+      }else if(/token|登录/i.test(errMsg)){
+        hintEl.innerHTML = esc(errMsg) + ' · <a href="#accounts" class="agent-llm-link" data-goto="accounts">前往账号页登录</a>';
+      }else{
+        hintEl.textContent = errMsg;
+      }
+    }else if(state === 'wait_confirm' && !auditOk){
+      hintEl.textContent = '本地检查未通过，暂不可确认；请点「换一条」或调整目标距离。';
+    }else if(canConfirm){
+      hintEl.textContent = '路线与本地检查已就绪；点击「确认，去跑步页预览」前往跑步页确认。';
+    }else if(state === 'cancelled'){
+      hintEl.textContent = '已取消本次规划；可输入新目标或点击快捷入口重新开始。';
+    }else if(state === 'confirmed'){
+      hintEl.textContent = '已确认并载入跑步页；如需重新规划，可发送新的目标。';
+    }else if(AGENT_TRANSIENT_STATES.has(state)){
+      hintEl.textContent = 'Agent 正在执行本地规划与检查…';
+    }else{
+      hintEl.textContent = 'Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。';
+    }
+  }
+}
+async function loadAgentStatus(){
+  renderAgentGoalBar(LIVE.agentStatus);
+  try{
+    const j = await liveApi('real_agent_status');
+    if(bridgeMissing(j)){
+      showAgentIdleGreeting('当前离线桥接未提供 Agent 接口，请先更新或重启桌面端。');
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+      return;
+    }
+    if(!liveOk(j)){
+      showAgentIdleGreeting();
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      return;
+    }
+    const st = (j && j.data) || {};
+    renderAgentStatus(st);
+    if(AGENT_TRANSIENT_STATES.has(st.state)){
+      startAgentPoll();
+    }
+  }catch(e){
+    showAgentIdleGreeting();
+    if($('#agentHint')){
+      $('#agentHint').textContent = '读取 Agent 状态失败：' + (e && e.message ? e.message : String(e || '未知错误'));
+    }
+  }
+}
+async function startAgent(text, km, opts){
+  const msg = String(text || '').trim();
+  const skipUserBubble = !!(opts && opts.skipUserBubble);
+  stopAgentPoll();
+  const box = $('#agentTranscript');
+  const prevState = (LIVE.agentStatus && LIVE.agentStatus.state) || 'idle';
+  if(box && (prevState === 'cancelled' || prevState === 'confirmed' || prevState === 'error')){
+    box.innerHTML = '';
+    _agentSessionId = '';
+    _agentLogCount = 0;
+    _agentGreetingShown = false;
+  }else if(prevState === 'wait_confirm'){
+    _agentSessionId = '';
+    _agentLogCount = 0;
+  }
+  if(msg && !skipUserBubble) appendAgentBubble('user', msg);
+  if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+  renderAgentCandidates([]);
+  renderAgentPreview(null, null);
+  try{
+    const j = await liveApi('real_agent_start', {
+      text: msg,
+      km: km == null ? null : km,
+      points: Array.isArray(LIVE.points) ? LIVE.points : [],
+      fence: (LIVE.fences && LIVE.fences.length) ? LIVE.fences : (LIVE.fence || null),
+      run_area_id: chosenRunAreaId(LIVE.session)
+    }, 20000);
+    if(bridgeMissing(j)){
+      appendAgentBubble('err', bridgeMessage(j));
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      return;
+    }
+    if(!liveOk(j)){
+      const err = bridgeMessage(j);
+      appendAgentBubble('err', err);
+      if($('#agentHint')) $('#agentHint').textContent = err;
+      return;
+    }
+    const st = (j && j.data) || {};
+    renderAgentStatus(st);
+    if(AGENT_TRANSIENT_STATES.has(st.state)){
+      startAgentPoll();
+    }
+  }catch(e){
+    const err = e && e.message ? e.message : String(e || '未知错误');
+    appendAgentBubble('err', '启动 Agent 失败：' + err);
+    if($('#agentHint')) $('#agentHint').textContent = '启动 Agent 失败：' + err;
+  }
+}
+async function sendAgentMessage(text){
+  const input = $('#agentInput');
+  const msg = String(text != null ? text : (input ? input.value : '')).trim();
+  if(!msg || _agentSending) return;
+  if(text == null && input) input.value = '';
+  _agentSending = true;
+  if($('#agentSend')) $('#agentSend').disabled = true;
+  try{
+  const st = LIVE.agentStatus || {};
+  const state = String(st.state || 'idle');
+  if(!st.session_id || state === 'idle' || state === 'cancelled' || state === 'confirmed' || state === 'error'){
+    if(msg === '取消'){
+      await cancelAgent();
+      return;
+    }
+    if(msg === '换一条' || msg.includes('反向')){
+      appendAgentBubble('warn', '还没有候选路线，先告诉我目标距离（如“帮我跑 2.5 公里”）。');
+      return;
+    }
+    await startAgent(msg, null);
+    return;
+  }
+  appendAgentBubble('user', msg);
+  try{
+    const j = await liveApi('real_agent_message', {text: msg}, 20000);
+    if(bridgeMissing(j)){
+      appendAgentBubble('err', bridgeMessage(j));
+      return;
+    }
+    if(!liveOk(j)){
+      const err = bridgeMessage(j);
+      if(err.includes('还没有开始')){
+        await startAgent(msg, null, {skipUserBubble: true});
+        return;
+      }
+      appendAgentBubble('err', err);
+      if($('#agentHint')) $('#agentHint').textContent = err;
+      return;
+    }
+    const next = (j && j.data) || {};
+    renderAgentStatus(next);
+    if(AGENT_TRANSIENT_STATES.has(next.state)){
+      startAgentPoll();
+    }else if(next.state === 'confirmed' && next.preview_args){
+      applyAgentRouteResult(next);
+    }
+  }catch(e){
+    const err = e && e.message ? e.message : String(e || '未知错误');
+    appendAgentBubble('err', '发送消息失败：' + err);
+  }
+  }finally{
+    _agentSending = false;
+    if($('#agentSend')) $('#agentSend').disabled = false;
+  }
+}
+async function pollAgentStatus(){
+  const page = $('#page-agent');
+  if(!page || !page.classList.contains('active')){
+    stopAgentPoll();
+    return;
+  }
+  if(_agentPolling) return;
+  _agentPolling = true;
+  try{
+    const j = await liveApi('real_agent_status');
+    if(!page.classList.contains('active')){
+      stopAgentPoll();
+      return;
+    }
+    if(bridgeMissing(j) || !liveOk(j)){
+      stopAgentPoll();
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      return;
+    }
+    const st = (j && j.data) || {};
+    renderAgentStatus(st);
+    if(!AGENT_TRANSIENT_STATES.has(st.state)){
+      stopAgentPoll();
+    }
+  }catch(e){
+    stopAgentPoll();
+    if($('#agentHint')){
+      $('#agentHint').textContent = '轮询 Agent 状态失败：' + (e && e.message ? e.message : String(e || '未知错误'));
+    }
+  }finally{
+    _agentPolling = false;
+  }
+}
+async function confirmAgent(){
+  const btn = $('#agentConfirm');
+  if(!btn || btn.disabled) return;
+  btn.disabled = true;
+  try{
+    const j = await liveApi('real_agent_confirm', {}, 20000);
+    if(!liveOk(j)){
+      const err = bridgeMessage(j);
+      toast('确认失败：' + err);
+      if($('#agentHint')) $('#agentHint').textContent = err;
+      const st = LIVE.agentStatus || {};
+      const auditOk = !!(st.audit && st.audit.summary && st.audit.summary.ok === true);
+      btn.disabled = !(st.state === 'wait_confirm' && auditOk);
+      return;
+    }
+    const data = (j && j.data) || {};
+    stopAgentPoll();
+    if(LIVE.agentStatus) LIVE.agentStatus.state = 'confirmed';
+    if($('#agentStateChip')){
+      $('#agentStateChip').textContent = AGENT_STATE_LABELS.confirmed;
+      $('#agentStateChip').className = 'chip agent-state ok';
+    }
+    applyAgentRouteResult(data);
+  }catch(e){
+    const err = e && e.message ? e.message : String(e || '未知错误');
+    toast('确认失败：' + err);
+    const st = LIVE.agentStatus || {};
+    const auditOk = !!(st.audit && st.audit.summary && st.audit.summary.ok === true);
+    btn.disabled = !(st.state === 'wait_confirm' && auditOk);
+  }
+}
+async function cancelAgent(){
+  stopAgentPoll();
+  if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+  try{
+    const j = await liveApi('real_agent_cancel');
+    renderAgentCandidates([]);
+    renderAgentPreview(null, null);
+    _agentSessionId = '';
+    _agentLogCount = 0;
+    _agentGreetingShown = false;
+    const box = $('#agentTranscript');
+    if(box) box.innerHTML = '';
+    if(liveOk(j) && j.data){
+      const st = Object.assign({}, j.data, {state: 'idle', candidates: [], preview: null, audit: null});
+      LIVE.agentStatus = st;
+      renderAgentGoalBar(st);
+      if($('#agentStateChip')){
+        $('#agentStateChip').textContent = AGENT_STATE_LABELS.cancelled;
+        $('#agentStateChip').className = 'chip agent-state warn';
+      }
+      showAgentIdleGreeting('已取消本次规划。随时可以输入新目标或点击下方快捷入口重新开始。');
+    }else{
+      showAgentIdleGreeting('已重置规划会话。');
+    }
+    if($('#agentHint')) $('#agentHint').textContent = '已取消本次规划；可重新输入目标或点击快捷入口。';
+  }catch(e){
+    renderAgentCandidates([]);
+    renderAgentPreview(null, null);
+    showAgentIdleGreeting('已取消本次规划。');
+  }
 }
 
 function openRecordDataPreview(){
@@ -10574,6 +11220,33 @@ function featureWire(){
     });
   }
   if($('#reverseRouteBtn')) $('#reverseRouteBtn').addEventListener('click', reverseCurrentRoute);
+
+  if($('#agentSend')) $('#agentSend').addEventListener('click', () => sendAgentMessage());
+  if($('#agentInput')){
+    $('#agentInput').addEventListener('keydown', ev => {
+      if(ev.key === 'Enter' && !ev.isComposing){
+        ev.preventDefault();
+        sendAgentMessage();
+      }
+    });
+  }
+  document.querySelectorAll('[data-agent-say]').forEach(btn => {
+    btn.addEventListener('click', () => sendAgentMessage(btn.dataset.agentSay || ''));
+  });
+  if($('#agentCandidates')){
+    $('#agentCandidates').addEventListener('click', ev => {
+      const pickBtn = ev.target.closest('[data-agent-pick]');
+      if(pickBtn){
+        sendAgentMessage('用第 ' + pickBtn.dataset.agentPick + ' 条');
+        return;
+      }
+      if(ev.target.closest('[data-agent-next]')){
+        sendAgentMessage('换一条');
+      }
+    });
+  }
+  if($('#agentConfirm')) $('#agentConfirm').addEventListener('click', confirmAgent);
+  if($('#agentCancel')) $('#agentCancel').addEventListener('click', cancelAgent);
 
   renderAudit();
   renderPresets();
