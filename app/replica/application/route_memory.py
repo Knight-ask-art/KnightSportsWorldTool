@@ -720,7 +720,13 @@ def suggest(
         lap_m = max(0.0, _safe_float(tpl.get('lap_m')))
         if lap_m <= 0.0:
             lap_m = T.polyline_length_m(_close_ring(pts) if closed else pts)
-        if lap_m <= 0.0 or lap_m > target_m * 1.5:
+        if lap_m <= 0.0:
+            continue
+        if closed and lap_m > target_m * 1.5:
+            continue
+        # generate_run_data rejects an open route longer than the target
+        # (target + 1 m tolerance), so never suggest one.
+        if not closed and lap_m > target_m + 1.0:
             continue
 
         if closed:

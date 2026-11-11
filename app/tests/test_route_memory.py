@@ -685,7 +685,7 @@ def test_open_route_single_pass_distance_fit():
         )
     doc = RM.learn_from_tracks(tracks, owner='u:open')
     assert doc['templates'][0]['closed'] is False
-    cands = RM.suggest(doc, 2.5, [])
+    cands = RM.suggest(doc, 2.621, [])
     assert cands
     reasons = ''.join(cands[0]['reasons'])
     assert '单程' in reasons
@@ -811,3 +811,21 @@ def test_out_and_back_track_is_stored_as_open_half():
     assert tpl['closed'] is False
     assert tpl['lap_m'] < T.polyline_length_m(ring) * 0.6
     assert tpl['samples'] == 5
+
+
+def test_suggest_rejects_open_template_longer_than_target():
+    now_ms = int(time.time() * 1000)
+    tracks = []
+    for i in range(5):
+        raw = _make_out_and_back(dlat=0.0235, steps=100, noise_m=0.0, seed=820 + i)
+        tracks.append(
+            _track_dict(raw, rrid=f'long_open{i}',
+                        distance_m=T.polyline_length_m(raw),
+                        duration_s=900, start_ms=now_ms - i * 3600_000)
+        )
+    doc = RM.learn_from_tracks(tracks, owner='u:longopen')
+    tpl = doc['templates'][0]
+    assert tpl['closed'] is False
+    assert tpl['lap_m'] > 2501.0
+    assert RM.suggest(doc, 2.5, []) == []
+    assert RM.suggest(doc, 3.0, [])
