@@ -162,3 +162,38 @@ Python 严格校验 magic/version/op/len；任何帧错、超时、token 过期�
   子进程回收预算 0.75 s。
 - frozen 构建缺任一层直接拒绝登录；源码 checkout 缺二进制跳过，保证
   `pytest` 不依赖 native 产物。
+
+## 9. 原生完整性清单（Phase 3）
+
+打包产物在 `runtime/` 下多一个 `integrity.json`：
+
+```json
+{"version":1,"files":{"hxp-core.exe":"<sha256>","hxp-guard.exe":"<sha256>","hxp-shield.exe":"<sha256>"}}
+```
+
+| 项 | 位置 / 行为 |
+|---|---|
+| 生成 | `packaging/build.ps1` 在复制三层 native 之后计算三个 exe 的 SHA-256，以 UTF-8 无 BOM 写入 `$BUILT/runtime/integrity.json`；写失败直接 `throw` |
+| 读取 | `app/replica/application/integrity.py` 的 `check_native()`；frozen 下 manifest 路径为 `<app_root>/runtime/integrity.json` |
+| 校验对象 | `runtime/rust/hxp-core.exe`、`runtime/go/hxp-guard.exe`、`runtime/cpp/hxp-shield.exe` |
+| 返回 | `{'ok', 'checked', 'missing', 'mismatch'}`；manifest 缺失/格式错为 `ok=False, reason='manifest'`；源码 checkout 为 `skipped` |
+| 暴露方式 | bridge `real_integrity_status()`，供「设置 → 关于」的诊断视图读取 |
+| 边界 | **只提示，不阻塞**登录/提交/保活；不读 `data/`、不联网、不自动修复 |
+
+`runtime/cpp/` 与 `runtime/rust/`、`runtime/go/` 一样只放一个 exe：
+
+```
+runtime/
+  integrity.json
+  rust/hxp-core.exe
+  go/hxp-guard.exe
+  cpp/hxp-shield.exe
+```
+
+`hxp-shield.exe` 仍然是独立进程（二进制帧、无导出符号），不是 DLL/ctypes
+模块；`runtime/cpp/` 只决定打包位置，不改变 Phase 1/2 的进程边界。完整性与
+蜜罐都只提高观察和排查能力，最终信任边界仍在服务端。
+
+同阶段的被动蜜罐 `app/replica/application/license_decoy.py` 不参与上述
+链路：它只在 bridge 被显式调用时返回 3 秒的假 `pro` 状态，随后 `expired`，
+不阻塞任何正常功能。

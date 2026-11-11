@@ -226,6 +226,36 @@ $runtimeCpp = Join-Path $BUILT 'runtime\cpp'
 New-Item -ItemType Directory -Force -Path $runtimeCpp | Out-Null
 Copy-Item $CPP_EXE (Join-Path $runtimeCpp 'hxp-shield.exe') -Force
 Write-Host '   bundled runtime/cpp/hxp-shield.exe'
+
+# Write the native hash manifest next to the sidecars.  The app uses it only
+# for a diagnostic status (never to block login), so a replaced or damaged
+# sidecar is visible without an antivirus quarantine becoming a lockout.
+$integrityFiles = [ordered]@{}
+foreach ($entry in @(
+    @{ Name = 'hxp-core.exe';   Path = (Join-Path $runtimeRust 'hxp-core.exe') },
+    @{ Name = 'hxp-guard.exe';  Path = (Join-Path $runtimeGo   'hxp-guard.exe') },
+    @{ Name = 'hxp-shield.exe'; Path = (Join-Path $runtimeCpp  'hxp-shield.exe') }
+)) {
+    try {
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $entry.Path).Hash
+    } catch {
+        throw ('failed to hash {0}: {1}' -f $entry.Name, $_.Exception.Message)
+    }
+    if (-not $hash) { throw ('empty SHA-256 for {0}' -f $entry.Name) }
+    $integrityFiles[$entry.Name] = $hash.ToLowerInvariant()
+}
+$integrityDoc = [ordered]@{ version = 1; files = $integrityFiles }
+$integrityPath = Join-Path $BUILT 'runtime\integrity.json'
+try {
+    $integrityJson = $integrityDoc | ConvertTo-Json -Depth 4
+    # File.WriteAllText(path, text) is UTF-8 without a BOM on both Windows
+    # PowerShell 5.1 and PowerShell 7; the app's JSON reader expects no BOM.
+    [IO.File]::WriteAllText($integrityPath, $integrityJson)
+    Write-Host '   wrote runtime/integrity.json'
+} catch {
+    throw ('failed to write integrity.json: {0}' -f $_.Exception.Message)
+}
+
 # The shipped copy must prove it can mint and reject a token before the
 # installer is built.  No .obj/.pdb is copied: only the exe above.
 & (Join-Path $runtimeCpp 'hxp-shield.exe') --selftest

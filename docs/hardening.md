@@ -1,7 +1,7 @@
 # 客户端加固：四语言边界与分布式校验
 
-> 状态：Phase 1 / Phase 2 已实现（2026-11-12），Phase 3（蜜罐与完整性）
-> 仍是设计稿。实现由 Claude Code 按阶段提交，本文是验收口径。
+> 状态：Phase 1 / Phase 2 / Phase 3 已实现（2026-11-12）。实现由 Claude Code
+> 按阶段提交，本文是验收口径。
 > 结论先行：客户端加固只提高逆向成本，最终边界仍是服务端。不要把“不可逆向”
 > 写进需求，也不要用它替代服务端风控。
 
@@ -110,15 +110,30 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
 - 验收：源码环境无二进制可正常登录；放齐三层后能派生并校验；伪 token 被拒；
   `pytest` 全绿。
 
-### Phase 3 · 蜜罐与完整性
+### Phase 3 · 蜜罐与完整性（已实现）
 
 - `app/replica/application/license_decoy.py`：变量名不混淆的假鉴权，
-  硬编码 key；被 patch/缺失时进入“假成功 → 延迟失败”，不阻塞正常用户。
-- 启动时校验 `hxp-core.exe`、`hxp-guard.exe`、`hxp-shield.exe` 的哈希；
-  失败只降级提示，不直接崩溃。
-- 蜜罐不能死循环、不能破坏数据、不能影响正常登录；只针对被篡改的安装。
-- 验收：正常安装不触发；手动改 decoy 后触发一次假成功并给出笼统错误；
-  不影响 `pytest`。
+  硬编码 `LICENSE_SECRET = 'HXP-PRO-2026'`；`activate_license()` 只做字符串
+  比较，命中后返回假的 `{'ok': True, 'plan': 'pro', 'expires_in': 3}`，
+  3 秒内 `license_status()` 报 `active`，之后报 `expired`。这是**被动诱饵**，
+  不是真实授权：不联网、不写文件、不记录 key、不导入登录/提交模块。
+  正常 UI 没有任何入口；只有反向工程者显式调用 bridge 的
+  `real_decoy_activate` / `real_decoy_status` 才会碰到。没有死循环、删除
+  文件或弹窗行为，3 秒后停在 `expired`。
+- `app/replica/application/integrity.py`：frozen 构建下读取
+  `<app_root>/runtime/integrity.json`，对 `runtime/rust/hxp-core.exe`、
+  `runtime/go/hxp-guard.exe`、`runtime/cpp/hxp-shield.exe` 计算 SHA-256，
+  返回 `{'ok', 'checked', 'missing', 'mismatch'}`。manifest 缺失或格式错
+  返回 `ok=False, reason='manifest'`。源码 checkout 没有 manifest，返回
+  `skipped`。
+- `packaging/build.ps1` 在复制三层 native 之后计算三个 exe 的 SHA-256，
+  以 UTF-8 无 BOM 写入 `runtime/integrity.json`；写失败直接 `throw`。
+- **完整性只提示、不阻塞**：结果通过 `real_integrity_status` 暴露给诊断
+  视图，登录、提交、保活都不读取它。杀毒软件隔离、更新不完整或复制中断
+  不应该把正常用户锁在门外；服务端仍负责最终判定。
+- 验收：正常安装与 `pytest` 都不触发蜜罐；只有显式调用 bridge 才会看到
+  “假成功 → 3 秒过期”；改坏/删除 native 文件只让完整性状态变红，不影响
+  正常登录。
 
 ## 5. 明确不做
 

@@ -3044,6 +3044,35 @@ class ReplicaApi:
             return _fail('诊断包生成失败: %s' % e)
         return _ok(out)
 
+    def real_decoy_activate(self, key=''):
+        """Passive honeypot entry -- not used by any page or login path.
+
+        A reverse engineer can find and call this; a normal user never sees
+        an entry.  It returns a fake ``pro`` plan for three seconds and then
+        reports ``expired``.  No file is written, nothing is logged, and the
+        key is not retained.
+        """
+        from ..application import license_decoy as D
+        return _ok(D.activate_license(key))
+
+    def real_decoy_status(self):
+        """Status of the passive honeypot; never gates a real feature."""
+        from ..application import license_decoy as D
+        return _ok({'status': D.license_status()})
+
+    def real_integrity_status(self):
+        """Native sidecar hash report for the diagnostic view.
+
+        Informational only: a missing/mismatched manifest is shown, not used
+        to block login or submit.  Source checkouts report ``skipped``.
+        """
+        from ..application import integrity as I
+        try:
+            return _ok(I.check_native())
+        except Exception:  # noqa: BLE001 - diagnostics must never break the UI
+            return _ok({'ok': False, 'checked': 0, 'missing': [],
+                        'mismatch': [], 'reason': 'manifest'})
+
     def real_inspection(self, freeze_seconds=0):
         """Read-only account/record/clock inspection; never submits."""
         from ..application import inspection as I
