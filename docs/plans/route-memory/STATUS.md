@@ -9,9 +9,9 @@
 | 任务 | 分支 | 工作树 | 状态 |
 |---|---|---|---|
 | T1 轨迹几何 | `task/rm-core` | `_worktrees/route-memory/t1` | ✅ 已合并 `b0e4e93` |
-| T2 路线记忆核心 | `task/rm-memory` | `_worktrees/route-memory/t2` | 🟡 进行中 |
-| T3 路线记忆 Bridge | `task/rm-bridge` | 待建 | ⏳ 等 T2 |
-| T4 路线库前端 | `task/rm-frontend` | 待建 | ⏳ 等 T3 |
+| T2 路线记忆核心 | `task/rm-memory` | `_worktrees/route-memory/t2` | 🟡 独立复审中，未合并 |
+| T3 路线记忆 Bridge | `task/rm-bridge` | 待建 | ⏳ 等 T2 合并 |
+| T4 路线库前端 | `task/rm-frontend` | `_worktrees/route-memory/t4` | 🟡 已实现，等 T2/T3 合并后再审 |
 | T5 Agent 后端 | `task/rm-agent` | 待建 | ⏳ 等 T3 |
 | T6 验收 | `task/rm-acceptance` | 待建 | ⏳ 等 T4/T5/T9 |
 | T7 LLM 设置后端 | `task/llm-backend` | `_worktrees/route-memory/t7` | ✅ 已合并（presets 含 default_model） |
@@ -32,11 +32,11 @@
 
 ## 下一步
 
-1. 审查并合并 T2；启动 T3。
-2. 审查并合并 T7/T8。
-3. T3 合并后启动 T4 + T5 + T0。
-4. T4 合并后启动 T9。
-5. 全部合并后跑全量测试 + `node --check`，写验收报告。
+1. T2 独立复审通过 → 逐条回应 findings → 合并到 `plan/route-memory`。
+2. T2 合并后建 `task/rm-bridge`，实现 T3 并单独复审、单独合并。
+3. T3 稳定后再审 T4（前端），合并后启动 T9。
+4. T5 Agent 后端在 T3 之后单独做、单独合并。
+5. 最后 T0 + T6：全量测试 + `node --check` + 端到端不提交验证，写验收报告。
 
 ## 验收命令
 
