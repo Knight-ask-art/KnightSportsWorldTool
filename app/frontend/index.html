@@ -227,6 +227,10 @@
         <svg class="bi" aria-hidden="true"><use href="#bi-activity"></use></svg>
         <span class="label">跑步</span><span class="nav-dot" id="runNavDot" title="今天还没跑" hidden></span>
       </button>
+      <button class="nav-item" data-page="agent">
+        <svg class="bi" aria-hidden="true"><use href="#bi-activity"></use></svg>
+        <span class="label">Agent</span>
+      </button>
       <button class="nav-item" data-page="routes">
         <svg class="bi" aria-hidden="true"><use href="#bi-map"></use></svg>
         <span class="label">路线库</span>
@@ -879,6 +883,77 @@
           <div class="legend-credit">底图：高德卫星</div>
         </div>
 
+      </div>
+    </section>
+
+    <!-- ========== Agent 跑步规划 ========== -->
+    <section class="page" id="page-agent">
+      <div class="sheet wide">
+        <header class="page-head">
+          <div class="crumb">工作台 <span style="color:var(--faint)">/</span> <b>Agent</b></div>
+          <div class="head-row">
+            <h1>Agent 跑步规划</h1>
+            <div class="head-actions">
+              <span class="chip agent-state" id="agentStateChip">待命</span>
+            </div>
+          </div>
+          <div class="status-row agent-goal-bar" id="agentGoalBar">
+            <span class="chip" id="agentGoalKm">目标：未设定</span>
+            <span class="chip" id="agentGoalPoints">点位：0 个</span>
+            <span class="chip" id="agentGoalCampus">校区：未连接</span>
+            <span class="chip" id="agentLlmChip">本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a></span>
+          </div>
+        </header>
+
+        <div class="agent-shell">
+          <div class="agent-chat-col">
+            <div class="agent-transcript" id="agentTranscript" aria-live="polite"></div>
+
+            <div class="agent-composer" id="agentComposer">
+              <div class="agent-chips" aria-label="快捷指令">
+                <button type="button" class="agent-chip" data-agent-say="帮我跑 2.5 公里">帮我跑 2.5 公里</button>
+                <button type="button" class="agent-chip" data-agent-say="用我跑过的路线">用我跑过的路线</button>
+                <button type="button" class="agent-chip" data-agent-say="先学习我的路线">先学习我的路线</button>
+                <button type="button" class="agent-chip" data-agent-say="换一条">换一条</button>
+                <button type="button" class="agent-chip" data-agent-say="反向跑">反向跑</button>
+              </div>
+              <div class="agent-input-row">
+                <input id="agentInput" type="text" placeholder="说说想跑几公里，如：帮我跑 2.5 公里、换一条、反向跑">
+                <button type="button" class="btn primary" id="agentSend">发送</button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="agent-side-col">
+            <div class="agent-panel">
+              <div class="agent-panel-head">
+                <h2>候选路线</h2>
+                <span class="mini">最多展示 3 条</span>
+              </div>
+              <div class="agent-candidates" id="agentCandidates">
+                <div class="agent-empty">发送目标后，这里会列出匹配你常跑习惯的候选路线。</div>
+              </div>
+            </div>
+
+            <div class="agent-panel">
+              <div class="agent-panel-head">
+                <h2>预览与本地检查</h2>
+                <span class="mini">不会自动提交</span>
+              </div>
+              <div class="agent-preview" id="agentPreview">
+                <div class="agent-empty">待选定路线后自动生成本地预览与合规检查结果。</div>
+              </div>
+            </div>
+
+            <div class="agent-actions-box">
+              <div class="agent-footer-actions">
+                <button type="button" class="btn primary" id="agentConfirm" disabled>确认，去跑步页预览</button>
+                <button type="button" class="btn ghost" id="agentCancel">取消</button>
+              </div>
+              <p class="hint" id="agentHint">Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。</p>
+            </div>
+          </aside>
+        </div>
       </div>
     </section>
 
