@@ -459,6 +459,11 @@ html[data-skin="paper"] .login-card.collapsed .login-tape-label{
   position:relative;z-index:1;
   opacity:1;font:500 9px/1 var(--sans);letter-spacing:.2em;text-transform:uppercase;
 }
+html[data-skin="paper"] .login-card.loading{
+  min-height:360px;display:flex;align-items:center;justify-content:center;
+  padding:0!important;
+}
+html[data-skin="paper"] .login-card.loading > :not(.login-loader){display:none!important}
 
 /* ---------- overview specifics ----------------------------------------- */
 html[data-skin="paper"] .today-actions .btn{margin-left:8px}

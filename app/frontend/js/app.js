@@ -3155,6 +3155,9 @@ function setLoginBusy(on, text, tone){
 }
 function setLoginLoader(on){
   const el = $('#loginLoader');
+  const card = document.querySelector('.login-card');
+  if(card) card.classList.toggle('loading', !!on);
+  if(card) card.setAttribute('aria-busy', on ? 'true' : 'false');
   if(el) el.hidden = !on;
 }
 async function restoreSavedLogin(){

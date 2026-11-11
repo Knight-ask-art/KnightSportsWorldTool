@@ -116,6 +116,7 @@
     </div>
     <h2 id="loginTitle">先登录，再开跑。</h2>
     <p class="login-sub">用你自己的账号进入工作台。</p>
+    <div class="login-loader" id="loginLoader" hidden aria-hidden="true"></div>
 
     <form class="login-form" id="loginForm" novalidate autocomplete="off">
       <div class="login-field">
@@ -155,7 +156,6 @@
         验证码过不去？手动滑一下
       </button>
       <div class="login-status" id="loginStatus" role="status" aria-live="polite">正在读取本地会话…</div>
-      <div class="login-loader" id="loginLoader" hidden aria-hidden="true"></div>
       <button class="login-submit" id="loginBtn" type="submit" disabled>
         <span id="loginBtnText">登录</span><span class="arrow" aria-hidden="true">→</span>
       </button>

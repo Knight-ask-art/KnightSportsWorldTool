@@ -31,7 +31,10 @@ def test_login_gate_locks_app_until_session_is_ready():
     assert 'id="loginLoader"' in HTML
     assert '.login-loader::before' in CSS
     assert 'login-loading-bounce' in CSS
+    assert 'rgba(28,28,28,.35)' in CSS
+    assert '.login-card.loading' in CSS
     assert 'function setLoginLoader' in JS
+    assert "classList.toggle('loading'" in JS
     assert 'setLoginLoader(true)' in JS
     assert 'setLoginLoader(false)' in JS
     assert 'id="loginUser"' in HTML
