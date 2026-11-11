@@ -4222,6 +4222,11 @@ function clearAccountActivity(){
   // as-is.  Bump the request sequences first: a reply that was already in
   // flight for the old account must not land after this point.
   invalidateLiveRequests();
+  if(typeof stopAgentPoll === 'function') stopAgentPoll();
+  _agentSeq += 1;
+  LIVE.agentInit = false;
+  LIVE.agentStatus = null;
+  if(typeof resetAgentUI === 'function') resetAgentUI();
   LIVE.log = [];
   LIVE.checked = null;
   LIVE.tokenUpdatedAt = null;
@@ -7267,6 +7272,7 @@ const AGENT_STATE_TOOL_TEXT = {
 let _agentPollTimer = 0;
 let _agentPolling = false;
 let _agentSending = false;
+let _agentSeq = 0;
 let _agentSessionId = '';
 let _agentLogCount = 0;
 let _agentGreetingShown = false;
@@ -7282,6 +7288,7 @@ function startAgentPoll(){
   _agentPollTimer = setInterval(pollAgentStatus, 600);
 }
 function resetAgentUI(){
+  _agentSeq += 1;
   _agentSessionId = '';
   _agentLogCount = 0;
   _agentGreetingShown = false;
@@ -7485,7 +7492,7 @@ function renderAgentPreview(preview, audit){
     const bad = (Array.isArray(audit.checks) ? audit.checks : []).filter(c => c && !c.ok);
     const badList = (!ok && bad.length)
       ? `<ul class="agent-audit-list">${bad.slice(0, 4).map(c =>
-          `<li>${esc((c.label || c.id || '检查项') + (c.detail ? ('：' + c.detail) : ''))}</li>`
+          `<li>${esc((c.name || c.label || c.id || '检查项') + (c.detail ? ('：' + c.detail) : ''))}</li>`
         ).join('')}</ul>`
       : '';
     auditHtml = `<div class="agent-audit-box">
@@ -7536,6 +7543,7 @@ function applyAgentRouteResult(data){
     // go('run') refreshes points when the last fetch is older than 5 s; keep
     // the audited checkpoint set instead.
     LIVE.pointsAutoAt = Date.now();
+    _pointsAutoAt = Date.now();
   }
   scheduleRouteFinalize(300, 'agent');
   go('run');
@@ -7633,9 +7641,11 @@ function renderAgentStatus(st){
   }
 }
 async function loadAgentStatus(){
+  const seq = _agentSeq;
   renderAgentGoalBar(LIVE.agentStatus);
   try{
     const j = await liveApi('real_agent_status');
+    if(seq !== _agentSeq) return;
     if(bridgeMissing(j)){
       showAgentIdleGreeting('当前离线桥接未提供 Agent 接口，请先更新或重启桌面端。');
       if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
@@ -7662,6 +7672,7 @@ async function loadAgentStatus(){
 async function startAgent(text, km, opts){
   const msg = String(text || '').trim();
   const skipUserBubble = !!(opts && opts.skipUserBubble);
+  _agentSeq += 1;
   stopAgentPoll();
   const box = $('#agentTranscript');
   const prevState = (LIVE.agentStatus && LIVE.agentStatus.state) || 'idle';
@@ -7716,6 +7727,12 @@ async function sendAgentMessage(text){
   _agentSending = true;
   if($('#agentSend')) $('#agentSend').disabled = true;
   try{
+  let sendText = msg;
+  if(msg.includes('先学习')) sendText = '重新学习';
+  if(msg.includes('用我跑过')){
+    appendAgentBubble('bot', '当前规划就是基于你跑过的路线；可以输入目标距离，或点“换一条”。');
+    return;
+  }
   const st = LIVE.agentStatus || {};
   const state = String(st.state || 'idle');
   if(!st.session_id || state === 'idle' || state === 'cancelled' || state === 'confirmed' || state === 'error'){
@@ -7732,7 +7749,7 @@ async function sendAgentMessage(text){
   }
   appendAgentBubble('user', msg);
   try{
-    const j = await liveApi('real_agent_message', {text: msg}, 20000);
+    const j = await liveApi('real_agent_message', {text: sendText}, 20000);
     if(bridgeMissing(j)){
       appendAgentBubble('err', bridgeMessage(j));
       return;
@@ -7771,8 +7788,10 @@ async function pollAgentStatus(){
   }
   if(_agentPolling) return;
   _agentPolling = true;
+  const seq = _agentSeq;
   try{
     const j = await liveApi('real_agent_status');
+    if(seq !== _agentSeq) return;
     if(!page.classList.contains('active')){
       stopAgentPoll();
       return;
@@ -7828,6 +7847,7 @@ async function confirmAgent(){
   }
 }
 async function cancelAgent(){
+  _agentSeq += 1;
   stopAgentPoll();
   if($('#agentConfirm')) $('#agentConfirm').disabled = true;
   try{

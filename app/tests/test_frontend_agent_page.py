@@ -182,3 +182,22 @@ def test_agent_routing_empty_reset_wiring_and_css():
     ):
         assert cls in CSS, cls
     assert '@media (max-width:1100px)' in CSS
+
+
+def test_agent_keeps_audited_points_and_resets_on_account_switch():
+    apply_fn = _js_function('applyAgentRouteResult')
+    assert 'LIVE.pointsAutoAt = Date.now()' in apply_fn
+    assert '_pointsAutoAt = Date.now()' in apply_fn
+
+    clear_fn = _js_function('clearAccountActivity')
+    assert 'stopAgentPoll()' in clear_fn
+    assert 'resetAgentUI()' in clear_fn
+    assert 'LIVE.agentInit = false' in clear_fn
+    assert 'LIVE.agentStatus = null' in clear_fn
+
+    poll_fn = _js_function('pollAgentStatus')
+    assert 'seq !== _agentSeq' in poll_fn
+
+    send_fn = _js_function('sendAgentMessage')
+    assert "sendText = '重新学习'" in send_fn
+    assert "msg.includes('用我跑过')" in send_fn
