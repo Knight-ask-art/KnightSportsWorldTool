@@ -12,12 +12,12 @@
 | T2 路线记忆核心 | `task/rm-memory` | `_worktrees/route-memory/t2` | ✅ 已合并 `b50c543`（复审 PASS） |
 | T3 路线记忆 Bridge | `task/rm-bridge` | `_worktrees/route-memory/t3` | ✅ 已合并 `d595ff6`（复审 PASS） |
 | T4 路线库前端 | `task/rm-frontend` | `_worktrees/route-memory/t4` | ✅ 已合并 `22e8ebd`（复审 HIGH/MEDIUM 已修） |
-| T5 Agent 后端 | `task/rm-agent` | `_worktrees/route-memory/t5` | 🟡 进行中 |
-| T6 验收 | `task/rm-acceptance` | 待建 | ⏳ 等 T4/T5/T9 |
+| T5 Agent 后端 | `task/rm-agent` | `_worktrees/route-memory/t5` | ✅ 已合并 `1ebd245`（复审 PASS） |
+| T6 验收 | `task/rm-acceptance` | 待建 | ⏳ 等 T9 |
 | T7 LLM 设置后端 | `task/llm-backend` | `_worktrees/route-memory/t7` | ✅ 已合并（presets 含 default_model） |
 | T8 LLM 设置前端 | `task/llm-frontend` | `_worktrees/route-memory/t8` | ✅ 已合并 |
-| T9 Agent 页面 | `task/rm-agent-page` | 待建 | ⏳ 等 T4+T5 |
-| T0 P0 验证 | `task/rm-p0` | 待建 | ⏳ 等 T2 |
+| T9 Agent 页面 | `task/rm-agent-page` | `_worktrees/route-memory/t9` | 🟡 进行中 |
+| T0 P0 验证 | `task/rm-p0` | 待建 | ⏳ 等 T9 后一起做 |
 
 ## 已确认的决定
 
@@ -32,11 +32,10 @@
 
 ## 下一步
 
-1. T4 独立复审回来 → 处理 findings。
-2. 建 `task/rm-agent`，实现 T5 Agent 后端并单独复审、合并。
-3. T5 合并后建 `task/rm-agent-page`，实现 T9 Agent 页面。
-4. 最后 T0 基准 + T6 验收：全量测试 + `node --check` + 端到端不提交验证。
-5. T0 合成轨迹要保证采样间距 ≥ 15 m 并做 3 点平滑，
+1. T9 Agent 页面完成 → 独立复审 → 合并。
+2. T0 合成基准（真实围栏/点位 + 合成噪声轨迹）与 T6 验收。
+3. 验收：全量测试 + `node --check` + “学习 → 推荐 → 预览 → 审计 → 确认 → 不提交”端到端 + 手动 UI 走查。
+4. T0 合成轨迹要保证采样间距 ≥ 15 m 并做 3 点平滑，
    否则独立噪声会把路径长度抬高 10–100%，圈长断言失真。
 
 ## 验收命令
