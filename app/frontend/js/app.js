@@ -408,6 +408,10 @@ const routeStart = L.circleMarker([0, 0], {radius: 5, color: themeColor('--paper
 
 /* ---------- draw: click to add, smooth curve ---------- */
 let pen = false, smoothOn = true, routeClosed = false;
+// True when the working line has edits that are not in the route library.
+// Logout uses it (plus "has at least one point") to decide whether to warn;
+// length alone cannot tell a loaded saved route from an unsaved scratch line.
+let routeDirty = false;
 let ctrlDots = [];
 let selRoutePoint = -1;
 let dragPointIndex = -1, dragPointSnapshot = null, dragPointMoved = false;
@@ -461,6 +465,7 @@ function resetRouteHistory(){
 }
 function applyRouteSnapshot(snap){
   route = (snap.route || []).map(p => [+p[0], +p[1]]);
+  routeDirty = true;
   setCloseUI(!!snap.closed);
   selRoutePoint = -1;
   redraw();
@@ -644,6 +649,7 @@ function deleteRoutePoint(i){
   if(i < 0 || i >= route.length) return;
   pushRouteHistory('删除第 ' + (i + 1) + ' 点');
   route.splice(i, 1);
+  routeDirty = true;
   selRoutePoint = -1;
   redraw();
   if(!pen) scheduleRouteFinalize(1200, 'delete');
@@ -684,6 +690,7 @@ document.addEventListener('mouseup', () => {
   document.body.classList.remove('dragging-route-point');
   if(dragPointMoved && dragPointSnapshot){
     routeClickGuardUntil = Date.now() + 300;
+    routeDirty = true;
     pushRouteSnapshot(dragPointSnapshot, '移动第 ' + (i + 1) + ' 点');
     redraw();
     scheduleRouteFinalize(1500, 'drag');
@@ -788,6 +795,7 @@ map.on('click', e => {
   const p = [e.latlng.lat, e.latlng.lng];
   if(route.length && distM(route[route.length - 1], p) < 6) return;
   pushRouteHistory('添加第 ' + (route.length + 1) + ' 点');
+  routeDirty = true;
   selRoutePoint = -1;
   route.push(p);
   redraw();
@@ -806,10 +814,11 @@ map.on('contextmenu', e => {
 
 $('#undoTool').addEventListener('click', undoRoute);
 $('#clearBtn').addEventListener('click', () => {
-  if(route.length >= 3 && !confirm('清空当前路线？')) return;
+  if(route.length && !confirm('清空当前路线？已画的点会被删除，可用撤销恢复。')) return;
   if(route.length) pushRouteHistory('清空路线');
   clearTimeout(_routeFinalTimer);
   route = [];
+  routeDirty = false;
   selRoutePoint = -1;
   redraw();
   toast('已清空：从你的第一个落点开始画');
@@ -823,6 +832,7 @@ $('#smoothToggle').addEventListener('click', () => {
 });
 $('#closeToggle').addEventListener('click', () => {
   if(route.length) pushRouteHistory(routeClosed ? '关闭闭合' : '打开闭合');
+  routeDirty = true;
   setCloseUI(!routeClosed);
   redraw();
   refreshChecks();
@@ -1298,7 +1308,7 @@ const MODE_HELP = {
   stadium: '田径场：生成 200/300/400m 标准跑道；提交时按目标距离刷圈。'
 };
 const ROUTE_HINT = {
-  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有 token 时不会生成假点位。',
+  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有登录凭证时不会生成假点位。',
   auto: '<b>自动功能仍在开发中，不建议使用。</b>请切到「手绘」逐点画，或导入 GPX / 使用田径场。<br>当前自动模式只是按已加载点位连成一圈，路线质量不稳定。',
   file: '导入模式：读取 GPX / GeoJSON / JSON / CSV；手表或别的 App 导出的轨迹。文件只在本机解析。',
   stadium: '田径场模式：选 200/300/400m 生成标准跑道；提交时按目标距离刷圈。'
@@ -1321,6 +1331,7 @@ function autoGenerate(){
   if(out.length) pushRouteHistory('生成自动路线');
   selRoutePoint = -1;
   route = out;
+  routeDirty = true;
   setCloseUI(true);
   redraw();
   scheduleRouteFinalize(300, 'auto');
@@ -1348,6 +1359,7 @@ function stadiumGenerate(){
   pushRouteHistory('生成田径场路线');
   selRoutePoint = -1;
   route = pts;
+  routeDirty = true;
   setCloseUI(true);
   redraw();
   scheduleRouteFinalize(300, 'stadium');
@@ -1504,6 +1516,7 @@ function importRouteFile(){
     pushRouteHistory('导入路线文件');
     selRoutePoint = -1;
     route = pts;
+    routeDirty = true;
     setCloseUI(false);
     redraw();
     scheduleRouteFinalize(300, 'import');
@@ -1901,7 +1914,7 @@ function renderVerify(box, v, errorText){
 }
 async function verifyRecord(target){
   const r = target || {};
-  if(!r.rrid && !r.uuid){ toast('需要 rrid 或 uuid 才能核验'); return; }
+  if(!r.rrid && !r.uuid){ toast('需要记录编号才能核验'); return; }
   if(LIVE.verifyBusy){ toast('核验进行中'); return; }
   LIVE.verifyBusy = true;
   const submitBox = $('#submitVerify'), detailBox = $('#rdVerifyBox');
@@ -2068,6 +2081,7 @@ function applyPreset(){
   // Geometry is round-tripped explicitly; no other switch may redraw it.
   if(Array.isArray(d.route) && d.route.length >= 2){
     route = d.route.map(pt => [+pt[0], +pt[1]]);
+    routeDirty = true;
     lastRouteLength = 0;
     redraw();
   }
@@ -2173,7 +2187,7 @@ function saveB64(b64, filename, mime){
 }
 async function exportFit(target, btn){
   const r = target || {};
-  if(!r.rrid && !r.uuid){ toast('需要 rrid 或 uuid 才能导出 FIT'); return; }
+  if(!r.rrid && !r.uuid){ toast('需要记录编号才能导出 FIT'); return; }
   if(btn){ btn.disabled = true; btn.textContent = '生成中…'; }
   try{
     const j = await liveMaybe('real_export_fit', {rrid: r.rrid || null, uuid: r.uuid || null}, 60000);
@@ -2932,11 +2946,11 @@ function bridgeMissing(j){
   return j.code === 404 && /unknown api/i.test(String(j.message || ''));
 }
 function bridgeMessage(j){
-  if(bridgeMissing(j)) return '该功能还没有接入本地 bridge（后端未就绪），升级或等待主程序更新';
+  if(bridgeMissing(j)) return '该功能还没有接入本地服务（后端未就绪），升级或等待主程序更新';
   // The HTTP layer turns binding errors and exceptions into code 400/500.
   // Before v0.1.8 the native bridge surfaced the same thing as `error: 404`.
   if(j && j.error !== undefined && j.error !== null){
-    return 'bridge ' + j.error + (j.message ? ('：' + j.message) : '');
+    return '本地服务错误 ' + j.error + (j.message ? ('：' + j.message) : '');
   }
   return String((j && j.message) || '未知错误');
 }
@@ -2968,11 +2982,11 @@ async function liveApi(method, args, timeoutMs){
       signal: ctl.signal
     });
     const j = await r.json();
-    return (j && typeof j === 'object') ? j : {code: 500, message: 'bridge 返回非 JSON'};
+    return (j && typeof j === 'object') ? j : {code: 500, message: '本地服务返回了无法识别的内容'};
   }catch(e){
     return {code: 500, message: (e && e.name === 'AbortError')
-      ? '本地 bridge 超时（后台可能仍在执行，请勿重复提交）'
-      : ('本地 bridge 不可用：' + e)};
+      ? '本地服务超时（后台可能仍在执行，请勿重复提交）'
+      : ('本地服务不可用：' + e)};
   }finally{
     clearTimeout(timer);
   }
@@ -4023,7 +4037,7 @@ function renderLog(){
   if($('#logCount')) $('#logCount').textContent = String(total);
   if($('#logSession')) $('#logSession').textContent = hasSession() ? (LIVE.session.campusName || '已登录') : (LIVE.session && LIVE.session.disabled ? '已禁用' : '未登录');
   if($('#logModel')) $('#logModel').textContent = LIVE.model && LIVE.model.configured ? (LIVE.model.score + ' 分') : '—';
-  if($('#logSubmit')) $('#logSubmit').textContent = LIVE.lastSubmit && LIVE.lastSubmit.rrid ? ('rrid ' + LIVE.lastSubmit.rrid) : '未提交';
+  if($('#logSubmit')) $('#logSubmit').textContent = LIVE.lastSubmit && LIVE.lastSubmit.rrid ? ('记录编号 ' + LIVE.lastSubmit.rrid) : '未提交';
   document.querySelectorAll('.log-filter').forEach(b => {
     if(b.dataset.logFilter === 'warn') b.textContent = '提醒 ' + warn;
     if(b.dataset.logFilter === 'err') b.textContent = '错误 ' + err;
@@ -4115,7 +4129,7 @@ function renderSession(){
   $('#sideAvatar').textContent = avatar;
   $('#sideName').textContent = display;
   $('#sideMeta').textContent = s.disabled ? '旧会话已停用' :
-    (logged ? ((s.campusName || '已加载会话') + ' · token') : '等待登录');
+    (logged ? ((s.campusName || '已加载会话') + ' · 登录凭证') : '等待登录');
   $('#sideCampus').textContent = logged ? '运动世界 · 本地工作台' : '本地工作台';
 
   $('#accAvatar').textContent = avatar;
@@ -4123,9 +4137,9 @@ function renderSession(){
   $('#accMeta').textContent = s.disabled ? '该会话已按用户要求停用' :
     (logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ') || '登录后显示学校 / 校区') : '登录后显示学校 / 校区');
   $('#accCount').textContent = s.disabled ? '已禁用' : (logged ? '1 个会话' : '未登录');
-  $('#accTopStatus').textContent = s.disabled ? '已禁用' : (logged ? (verified ? 'token 有效' : '已加载') : '未登录');
+  $('#accTopStatus').textContent = s.disabled ? '已禁用' : (logged ? (verified ? '登录凭证有效' : '已加载') : '未登录');
   $('#accTopStatus').className = 'chip ' + (s.disabled ? 'red' : (logged ? (verified ? 'ok' : 'warn') : ''));
-  $('#accTokenChip').textContent = s.disabled ? '账号已禁用' : (logged ? (verified ? 'token 有效' : 'token 已加载') : 'token 未加载');
+  $('#accTokenChip').textContent = s.disabled ? '账号已禁用' : (logged ? (verified ? '登录凭证有效' : '登录凭证已加载') : '登录凭证未加载');
   $('#accTokenChip').className = 'chip ' + (s.disabled ? 'red' : (logged ? (verified ? 'ok' : 'warn') : ''));
   const hasDevice = !!s.device_id_present;
   const deviceSource = {
@@ -4148,7 +4162,7 @@ function renderSession(){
     $('#setDeviceStatus').title = s.device_source === 'error'
       ? (s.device_error || '设备指纹读取失败')
       : (s.device_platform === 'ios'
-         ? 'iOS 链路已真机验证（2026-10-25）；登录、提交和 OBS 共用同一台设备。'
+         ? 'iOS 链路已真机验证（2026-10-25）；登录、提交和轨迹上传共用同一台设备。'
          : '设备指纹在本机生成一次，登录和提交共用；不要频繁更换。');
   }
   $('#accUidChip').textContent = s.uid ? ('uid ' + s.uid) : 'uid —';
@@ -4187,7 +4201,7 @@ function renderSession(){
   if(!logged && $('#deviceRotateConfirm')) $('#deviceRotateConfirm').value = '';
   if(typeof updateCustomSaveState === 'function') updateCustomSaveState();
 
-  $('#setSession').textContent = s.disabled ? '账号已禁用' : (logged ? '已加载 token' : '未登录');
+  $('#setSession').textContent = s.disabled ? '账号已禁用' : (logged ? '已加载登录凭证' : '未登录');
   $('#setCampus').textContent = logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ') || '—') : '—';
   $('#setDevice').textContent = logged ? (deviceLabel || '—') : '—';
 
@@ -4207,13 +4221,13 @@ function renderSession(){
   if($('#profUidChip')) $('#profUidChip').textContent =
     (logged && s.uid) ? ('uid ' + s.uid) : 'uid —';
   if($('#profUnidChip')) $('#profUnidChip').textContent =
-    (logged && s.unid) ? ('unid ' + s.unid) : 'unid —';
+    (logged && s.unid) ? ('学校识别码 ' + s.unid) : '学校识别码 —';
   if($('#profLoginState')) $('#profLoginState').textContent = s.disabled
     ? '账号已停用' : (logged ? (verified ? '已登录 · 已验证' : '已登录 · 未验证') : '未登录');
   if($('#profDevice')) $('#profDevice').textContent = logged
     ? (deviceLabel || '—') : '—';
   if($('#profSession')) $('#profSession').textContent = logged
-    ? '已加载 token' : (s.disabled ? '已停用' : '未登录');
+    ? '已加载登录凭证' : (s.disabled ? '已停用' : '未登录');
   if($('#violList') && !LIVE.violations && !LIVE.violationsError){
     $('#violList').innerHTML = '<div class="violation-empty">'
       + (logged ? '点「查询违规」读取本账号的违规记录。'
@@ -4229,10 +4243,10 @@ function renderSession(){
     table.innerHTML = head + row;
   }
 
-  $('#runLoginChip').textContent = s.disabled ? '账号已禁用' : (logged ? (verified ? 'token 有效' : 'token 已加载') : '未登录');
+  $('#runLoginChip').textContent = s.disabled ? '账号已禁用' : (logged ? (verified ? '登录凭证有效' : '登录凭证已加载') : '未登录');
   $('#runLoginChip').className = 'chip ' + (s.disabled ? 'red' : (logged ? (verified ? 'ok' : 'warn') : 'warn'));
   $('#runLoginChip').innerHTML = '<i></i>' + $('#runLoginChip').textContent;
-  $('#ovLoginChip').textContent = s.disabled ? '账号已禁用' : (logged ? (verified ? 'token 有效' : 'token 已加载') : '未登录');
+  $('#ovLoginChip').textContent = s.disabled ? '账号已禁用' : (logged ? (verified ? '登录凭证有效' : '登录凭证已加载') : '未登录');
   $('#ovLoginChip').className = 'chip ' + (s.disabled ? 'red' : (logged ? (verified ? 'ok' : 'warn') : 'warn'));
   $('#ovLoginChip').innerHTML = '<i></i>' + $('#ovLoginChip').textContent;
   const bp = beijingParts();
@@ -4355,6 +4369,7 @@ function renderEmptyData(){
   setFences([], '跑步围栏');
   clearTimeout(_routeFinalTimer);
   route = [];
+  routeDirty = false;
   resetRouteHistory();
   redraw();
   LIVE.points = [];
@@ -4451,7 +4466,7 @@ async function liveLogin(){
 
 async function liveTestSession(){
   if(accountBusy){ toast('正在登录，请稍候'); return; }
-  if(!hasSession()){ toast('没有可测试的 token'); return; }
+  if(!hasSession()){ toast('没有可测试的登录凭证'); return; }
   const btn = $('#accTest');
   if(btn && btn.disabled) return;
   const sessionAtStart = LIVE.session;
@@ -4464,21 +4479,25 @@ async function liveTestSession(){
     renderSession();
     if(liveOk(j)){
       liveLog('token 有效', (j.data && j.data.name) ? j.data.name : '', 'ok');
-      toast('token 有效');
+      toast('登录凭证有效');
     }else{
       liveLog('token 无效', j.message || '', 'err');
-      toast('token 无效：' + (j.message || ''));
+      toast('登录凭证无效：' + (j.message || ''));
     }
     refreshChecks();
   }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '测试 token'; }
+    if(btn){ btn.disabled = false; btn.textContent = '测试登录凭证'; }
   }
 }
 
 async function liveLogout(){
   if(LIVE.submitting){ toast('提交进行中，等结果出来后再退出'); return; }
   if(accountBusy){ toast('正在登录，请稍候'); return; }
-  if(!confirm('退出登录？有 token 时会验证 token 已失效；退出后回到登录页。')) return;
+  const unsavedRoute = routeDirty && route.length > 0;
+  const ask = unsavedRoute
+    ? '当前路线未保存，退出后会清空。继续退出？'
+    : '退出登录？退出后会回到登录页。';
+  if(!confirm(ask)) return;
   accountBusy = true;
   try{ await liveApi('real_keepalive_stop'); }catch(e){}
   // Do not wait for the server: after the click the local gate closes at
@@ -4779,8 +4798,8 @@ async function loadKeepalive(){
         showLoginGate('登录已失效，请重新登录。');
       }
     }
-    badge.textContent = '无 token'; badge.className = 'tag warn';
-    info.textContent = '先登录，或保存 token。'; return;
+    badge.textContent = '无登录凭证'; badge.className = 'tag warn';
+    info.textContent = '先登录，或保存登录凭证。'; return;
   }
   // Auto-relogin replaces the token on disk without the page knowing.  Pull
   // the new session and re-verify it, otherwise the account card and submit
@@ -4808,8 +4827,8 @@ async function loadKeepalive(){
   if(LIVE.session !== expectedSession) return;
   LIVE.tokenUpdatedAt = stamp;
   if(d.token_expired){
-    badge.textContent = 'token 失效'; badge.className = 'tag warn';
-    LIVE.checked = {code: 500, message: 'token 失效'};
+    badge.textContent = '登录凭证失效'; badge.className = 'tag warn';
+    LIVE.checked = {code: 500, message: '登录凭证失效'};
     refreshChecks();
   }
   else if(d.running){ badge.textContent = '保活中'; badge.className = 'tag ok'; }
@@ -5374,7 +5393,7 @@ function renderOverviewEmpty(){
   $('#ovPlanRange').textContent = '—';
   renderSemesterCard(null);
   $('#ovRecords').innerHTML = '<div class="empty-state">登录后从服务器读取记录。</div>';
-  $('#ovChecklist').innerHTML = '<div class="empty-state">登录后检查 token、围栏和点位。</div>';
+  $('#ovChecklist').innerHTML = '<div class="empty-state">登录后检查登录凭证、围栏和点位。</div>';
   $('#ovPlan').textContent = '登录后生成计划。';
   $('#ovRhythm').textContent = '登录后显示。';
   const rulesConfigured = !!(LIVE.rules && LIVE.rules.configured);
@@ -5548,7 +5567,7 @@ function renderProfileEmpty(){
   if($('#profUidChip')) $('#profUidChip').textContent =
     (logged && s.uid) ? ('uid ' + s.uid) : 'uid —';
   if($('#profUnidChip')) $('#profUnidChip').textContent =
-    (logged && s.unid) ? ('unid ' + s.unid) : 'unid —';
+    (logged && s.unid) ? ('学校识别码 ' + s.unid) : '学校识别码 —';
   if($('#profVerifiedChip')){
     $('#profVerifiedChip').textContent = s.disabled ? '账号已停用'
       : (logged ? '资料未加载' : '未验证');
@@ -5567,7 +5586,7 @@ function renderProfileEmpty(){
     : (logged ? '已登录' : '未登录'));
   setText('profDevice', logged ? (deviceLabelText(s) || '—') : '—');
   setText('profSession', s.disabled ? '已停用'
-    : (logged ? '已加载 token' : '未登录'));
+    : (logged ? '已加载登录凭证' : '未登录'));
   renderSemesterInto('prof', null, '');
   if($('#violState')){
     $('#violState').textContent = '未查询';
@@ -5646,7 +5665,7 @@ function renderProfile(){
   if($('#profUidChip')) $('#profUidChip').textContent = (p.uid || s.uid)
     ? ('uid ' + (p.uid || s.uid)) : 'uid —';
   if($('#profUnidChip')) $('#profUnidChip').textContent = (p.unid || s.unid)
-    ? ('unid ' + (p.unid || s.unid)) : 'unid —';
+    ? ('学校识别码 ' + (p.unid || s.unid)) : '学校识别码 —';
 
   if($('#profVerifiedChip')){
     if(LIVE.profileError){
@@ -5686,7 +5705,7 @@ function renderProfile(){
   setText('profLoginState', s.disabled ? '账号已停用'
     : (logged ? (p.verified ? '已登录 · 已验证' : '已登录') : '未登录'));
   setText('profDevice', logged ? (deviceLabelText(s) || '—') : '—');
-  setText('profSession', logged ? '已加载 token' : '未登录');
+  setText('profSession', logged ? '已加载登录凭证' : '未登录');
 
   const sem = d.semester || LIVE.semester;
   const semErr = d.semester_error || LIVE.semesterError;
@@ -5777,7 +5796,7 @@ function renderViolations(data, error){
   }
   const rows = records.map(r => {
     const reason = r.reason || '（服务器未返回原因）';
-    const rrid = r.rrid ? ('rrid ' + r.rrid) : '';
+    const rrid = r.rrid ? ('记录编号 ' + r.rrid) : '';
     return '<div class="violation-row">'
       + '<span class="vtime">' + esc(violationTime(r.time)) + '</span>'
       + '<span class="vreason">' + esc(reason) + '</span>'
@@ -5951,7 +5970,7 @@ function refreshOverviewState(){
   const pointsOk = livePoints.length > 0;
   const rulesOk = !!(LIVE.rules && LIVE.rules.configured);
   const checklist = [
-    {ok: tokenOk, text: tokenOk ? 'token 有效' : 'token 未验证'},
+    {ok: tokenOk, text: tokenOk ? '登录凭证有效' : '登录凭证未验证'},
     {ok: pointsOk, text: pointsOk ? ('点位已加载 · ' + livePoints.length + ' 个') : '点位未加载'},
     {ok: rulesOk, text: rulesOk ? '学校要求已配置' : '学校要求未配置'}
   ];
@@ -6128,11 +6147,11 @@ function renderRecordMap(detail){
     clearRecordMap();
     if(hint){
       if(meta.obs_error && /404|不存在/.test(meta.obs_error))
-        hint.textContent = '这条记录的服务器轨迹已不存在（OBS 404），只能查看摘要。';
+        hint.textContent = '这条记录的服务器轨迹已不存在（上传服务 404），只能查看摘要。';
       else if(meta.obs_error)
-        hint.textContent = 'OBS 轨迹读取失败：' + meta.obs_error;
+        hint.textContent = '轨迹上传读取失败：' + meta.obs_error;
       else if(meta.json_from_obs)
-        hint.textContent = '这条记录的轨迹在 OBS，但服务端没有返回可读对象。';
+        hint.textContent = '这条记录的轨迹在上传服务，但服务端没有返回可读对象。';
       else
         hint.textContent = '这条记录没有读到轨迹（服务端未返回 allLocJson）。';
     }
@@ -6229,7 +6248,7 @@ function renderRecords(){
   $('#recChips').innerHTML = `<span class="chip ok"><i></i>${okN} 条已通过</span>` +
     `<span class="chip warn"><i></i>${warnN} 条待核对</span>` +
     (issueN ? `<span class="chip red"><i></i>${issueN} 条有问题</span>` : '');
-  const head = '<div class="thead"><span>日期</span><span>距离</span><span>配速</span><span>状态</span><span>rrid</span></div>';
+  const head = '<div class="thead"><span>日期</span><span>距离</span><span>配速</span><span>状态</span><span>记录编号</span></div>';
   $('#recordTable').innerHTML = head + list.map(r => {
     const idx = LIVE.records.indexOf(r);
     const rr = r.rrid ? (String(r.rrid).slice(0, 4) + '…' + String(r.rrid).slice(-4)) : '—';
@@ -6290,7 +6309,7 @@ function renderReceipts(){
   }
   wrap.innerHTML = rows.slice(0, 8).map(r => {
     const st = RECEIPT_LABEL[r.state] || r.state || '未知';
-    const rrid = r.rrid ? (' · rrid ' + String(r.rrid).slice(-8)) : '';
+    const rrid = r.rrid ? (' · 记录编号 ' + String(r.rrid).slice(-8)) : '';
     return `<div class="receipt-row">
       <span class="receipt-state ${esc(r.state || 'unknown')}">${esc(st)}</span>
       <span>${esc(r.start_text || '—')} · ${(+r.distance_km || 0).toFixed(2)} km${esc(rrid)}<br><span class="receipt-meta">${esc(r.uuid || '')}${r.note ? (' · ' + esc(r.note)) : ''}</span></span>
@@ -6333,7 +6352,7 @@ async function reconcileReceipts(){
         LIVE.submitResult.rrid = matchedRows[0].rrid || '';
         LIVE.submitResult.title = '只读核对完成：已找到服务器记录';
         LIVE.submitResult.detail = '服务器最近记录中有 ' + matched +
-          ' 条匹配' + (matchedRows[0].rrid ? ('（rrid ' + matchedRows[0].rrid + '）') : '') +
+          ' 条匹配' + (matchedRows[0].rrid ? ('（记录编号 ' + matchedRows[0].rrid + '）') : '') +
           '；这次提交已入库，不要重复提交。';
       }else{
         LIVE.submitResult.checked = true;
@@ -6357,7 +6376,7 @@ async function selectRecord(i){
   const r = LIVE.records[i];
   if(!r) return;
   if(!r.rrid){
-    toast('这条记录没有 rrid，无法读取详情');
+    toast('这条记录没有记录编号，无法读取详情');
     return;
   }
   const seq = ++_detailSeq;
@@ -6365,7 +6384,7 @@ async function selectRecord(i){
   // (or after it fails); that made a failed detail look like real data.
   clearRecordDetail();
   document.querySelectorAll('[data-rec-index]').forEach(x => x.classList.toggle('active', +x.dataset.recIndex === i));
-  $('#rdTitle').textContent = '读取 rrid=' + (r.rrid || '…');
+  $('#rdTitle').textContent = '读取记录编号 ' + (r.rrid || '…');
   $('#rdTag').textContent = '查询中'; $('#rdTag').className = 'tag warn';
   const j = await liveApi('real_record_detail', {rrid: r.rrid, uuid: r.uuid || null});
   if(seq !== _detailSeq) return;
@@ -6401,17 +6420,17 @@ async function selectRecord(i){
   const srcKind = s.track_source || (pts ? (fromObs ? 'obs' : 'inline') : 'none');
   let srcText = '', srcCls = '', srcTitle = '';
   if(srcKind === 'obs'){
-    srcText = 'OBS' + (pts ? ` · ${pts} 点` : '');
+    srcText = '轨迹上传' + (pts ? ` · ${pts} 点` : '');
   }else if(srcKind === 'inline'){
     srcText = '记录内联' + (pts ? ` · ${pts} 点` : '');
-    if(obsErr) srcTitle = 'OBS 未读取，已使用记录内联轨迹：' + obsErr;
+    if(obsErr) srcTitle = '轨迹上传未读取，已使用记录内联轨迹：' + obsErr;
   }else if(obsErr && /404|不存在/.test(obsErr)){
     // Historical rows can point at an OBS object the server no longer keeps.
     // That is not a read bug: only the summary survives.
-    srcText = '轨迹未保留（OBS 404）'; srcCls = 'risk-warn';
-    srcTitle = '记录标记为 jsonFromObs=1，但服务器上的 OBS 对象不存在（HTTP 404）；只能查看摘要，无法还原轨迹。';
+    srcText = '轨迹未保留（上传服务 404）'; srcCls = 'risk-warn';
+    srcTitle = '记录标记为轨迹来自上传服务，但服务器上的对象不存在（HTTP 404）；只能查看摘要，无法还原轨迹。';
   }else if(obsErr){
-    srcText = 'OBS 读取失败'; srcCls = 'risk-bad'; srcTitle = obsErr;
+    srcText = '轨迹上传读取失败'; srcCls = 'risk-bad'; srcTitle = obsErr;
   }else{
     srcText = '无轨迹';
   }
@@ -6649,6 +6668,8 @@ async function saveCurrentRoute(){
   };
   const next = LIVE.routes.concat([item]);
   const ok = await persistRoutes(next);
+  // The working line now has a library copy, so logout should stop warning.
+  routeDirty = false;
   LIVE.selectedRoute = LIVE.routes.length - 1;
   renderRouteList(); selectRoute(LIVE.selectedRoute);
   routeSaveToast(ok, '路线已保存');
@@ -6656,7 +6677,8 @@ async function saveCurrentRoute(){
 async function deleteSelectedRoute(){
   const i = LIVE.selectedRoute;
   if(i < 0 || !LIVE.routes[i]) return;
-  if(!confirm('删除路线「' + (LIVE.routes[i].name || '') + '」？')) return;
+  if(!confirm('删除路线「' + (LIVE.routes[i].name || '') +
+              '」？只删除本机路线库，无法撤销；不影响服务器记录。')) return;
   const next = LIVE.routes.filter((_, j) => j !== i);
   const ok = await persistRoutes(next);
   LIVE.selectedRoute = -1;
@@ -7895,11 +7917,12 @@ function renderSubmitResult(){
     ? '已核对' : (labels[r.state] || '—');
   if(title) title.textContent = r.title || '';
   if(text) text.textContent = r.detail || '';
-  if(r.state !== 'ok' && (r.detail || r.title)) recordErrorForExplain(r.detail || r.title, r.state);
+  renderSubmitExplain(r);
+  if(r.state !== 'ok' && (r.detail || r.title)) explainSubmitResult(r);
   if($('#submitResultVerify')){
     const v = r.rrid || r.uuid;
     $('#submitResultVerify').disabled = !v;
-    $('#submitResultVerify').title = v ? '只读核验这条记录（不重发、不 PUT）' : '提交结果里没有 rrid，去记录页核验';
+    $('#submitResultVerify').title = v ? '只读核验这条记录（不重发、不 PUT）' : '提交结果里没有记录编号，去记录页核验';
     if(!v && $('#submitVerify')) $('#submitVerify').hidden = true;
   }
   if(time) time.textContent = r.at
@@ -7916,6 +7939,64 @@ function renderSubmitResult(){
     // durable warning; do not let it be dismissed before the read-only check.
     dismiss.hidden = !(r.state !== 'unknown' || r.checked);
   }
+}
+function submitExplainCode(r){
+  if(r && r.code != null && r.code !== '') return r.code;
+  return codeFromText((r && (r.raw || r.detail)) || '');
+}
+function renderSubmitExplain(r){
+  const box = $('#submitResultExplain');
+  const details = $('#submitResultDetails');
+  const raw = $('#submitResultRaw');
+  const code = r.state === 'ok' ? null : submitExplainCode(r);
+  if(raw){
+    const lines = [];
+    if(r.raw) lines.push(r.raw);
+    if(code != null) lines.push('错误码：' + code);
+    raw.textContent = lines.join('\n');
+  }
+  if(details) details.hidden = !(r.raw || code != null);
+  if(!box) return;
+  if(r.state === 'ok'){ box.hidden = true; return; }
+  box.hidden = false;
+  const t = $('#submitResultExplainTitle');
+  const c = $('#submitResultExplainCause');
+  const a = $('#submitResultExplainAction');
+  const exp = r.explain;
+  if(exp){
+    if(t) t.textContent = exp.title || '这次提交没有完成';
+    if(c) c.textContent = exp.cause ? ('原因：' + exp.cause) : '';
+    if(a) a.textContent = exp.action ? ('下一步：' + exp.action) : '';
+  }else{
+    // "unknown" means the write may still have landed; calling it a failure
+    // contradicts the result badge.  Only a real failure gets the failure copy.
+    if(t) t.textContent = r.state === 'unknown'
+      ? '正在整理这次的结果…' : '正在解释这次失败…';
+    if(c) c.textContent = '';
+    if(a) a.textContent = '';
+  }
+}
+function explainSubmitResult(r){
+  if(!r || r._explaining) return;
+  r._explaining = true;
+  const code = submitExplainCode(r);
+  explainError(code, r.raw || r.detail || r.title || '', {source: 'submit'})
+    .then(exp => {
+      r.explain = exp;
+      // The overview keeps its own compact explanation box.
+      renderExplainBox(exp.title, exp.cause, exp.action);
+      if(LIVE.submitResult === r) renderSubmitExplain(r);
+    })
+    .catch(() => {
+      r._explaining = false;
+      // A failed explainer must not leave the card on "正在解释…" forever:
+      // collapse it to a plain sentence and keep the raw text in details.
+      if(!r.explain){
+        r.explain = {title: '暂时无法解释', cause: '原始信息见下方详情。',
+                     action: '', retryable: false, ok: false};
+      }
+      if(LIVE.submitResult === r) renderSubmitExplain(r);
+    });
 }
 function setSubmitResult(state, title, detail, extra){
   LIVE.submitResult = Object.assign({
@@ -7941,7 +8022,7 @@ function clearSubmitResult(){
 function refreshChecks(){
   const checks = [];
   const verified = !!(LIVE.checked && liveOk(LIVE.checked));
-  checks.push({ok: verified, label: 'token 有效',
+  checks.push({ok: verified, label: '登录凭证有效',
     note: verified ? '服务端已验证' : (hasSession() ? '未验证/失效' : '未登录'),
     goto: 'accounts'});
   // Network egress stays a diagnostic card on the submit page, never a
@@ -8078,9 +8159,9 @@ function refreshChecks(){
   if($('#readyBar')) $('#readyBar').style.width = (checks.length ? (done / checks.length * 100) : 0) + '%';
   const dock = $('#dock'), dockText = $('#dockText'), dockBtn = $('#dockBtn'), stamp = $('#stamp');
   if(dock) dock.classList.toggle('ready', all);
+  const missingNow = checks.filter(c => !c.ok).map(c => c.label);
   if(dockText){
-    const missing = checks.filter(c => !c.ok).map(c => c.label);
-    dockText.textContent = all ? '检查通过 · 可以提交' : ('还差：' + missing.slice(0, 2).join('、') + (missing.length > 2 ? '…' : ''));
+    dockText.textContent = all ? '检查通过 · 可以提交' : ('还差：' + missingNow.slice(0, 2).join('、') + (missingNow.length > 2 ? '…' : ''));
   }
   if(dockBtn){
     dockBtn.textContent = all ? '去提交' : '去核对';
@@ -8090,12 +8171,22 @@ function refreshChecks(){
   const dot = $('#submitDot'); if(dot) dot.classList.toggle('ok', all);
   const locked = submitLocked();
   if($('#submitRun')){
+    // Intentionally NOT disabled by `!all`: an unfinished checklist is a
+    // warning, not a hard gate.  The button carries the N-item count and the
+    // preview asks once before submitting, so a legitimate run with a school
+    // cap or an unloaded optional check can still go through.  Do not add
+    // `!all` here without revisiting that product decision.
     $('#submitRun').disabled = !hasSession() || !verified ||
       LIVE.submitting || locked || !hasTarget;
     if(!LIVE.submitting){
+      // The button says how many checklist items are still open, so the
+      // operator does not have to scroll back up to find out what is missing.
       $('#submitRun').textContent = locked
         ? '先核对回执再提交'
-        : (!hasTarget ? '先画路线' : '提交这次跑步');
+        : (!hasTarget ? '先画路线'
+          : (missingNow.length
+            ? ('提交这次跑步（' + missingNow.length + ' 项未完成）')
+            : '提交这次跑步'));
     }
   }
   if($('#submitHint')){
@@ -8104,9 +8195,16 @@ function refreshChecks(){
       : (!hasTarget
         ? '目标距离当前为 0：先在「路线」页手绘，或手动填写目标距离。'
         : (all ? '检查通过。提交后该时段会被回执锁定，不能重复提交。'
-               : '先补齐上面的检查项；提交仍会由后端再次校验。'));
+               : ('还有 ' + missingNow.length + ' 项未完成：' +
+                  (missingNow.slice(0, 2).join('、') || '提交前检查') +
+                  (missingNow.length > 2 ? '…' : '') +
+                  '。提交前会再确认一次，后端也会再次校验。')));
   }
   refreshOverviewState();
+  // Return the same snapshot that just painted the dock: submitRun() uses
+  // both fields so `allReady` and `missing` cannot come from different
+  // moments (a concurrent refresh used to split them).
+  return {all, missing: missingNow};
 }
 
 function liveDockClick(){
@@ -8120,7 +8218,7 @@ function liveDockClick(){
 }
 
 /* ---------------- submit ---------------- */
-function previewPendingFrom(params, ti, allReady){
+function previewPendingFrom(params, ti, allReady, missingNow){
   let di = dailyCountInfo();
   const dayText = dateDisplay(ti.date);
   const timeText = ti.time || (ti.windows && ti.windows.length
@@ -8130,9 +8228,9 @@ function previewPendingFrom(params, ti, allReady){
     ? (di.count + ' / ' + (di.cap || '—') +
        (di.ok ? '' : '（已达上限，仅提醒）'))
     : '未知（后端会再查）';
-  const missing = allReady ? [] :
+  const missing = allReady ? [] : (Array.isArray(missingNow) ? missingNow.slice() :
     [...document.querySelectorAll('#checks .check-row.warn .clabel')]
-      .map(x => x.textContent.trim());
+      .map(x => x.textContent.trim()));
   return {
     params, ti, allReady, dayText, timeText, dailyText, missing,
     band: paramWarnings(params.pace, params.cadence),
@@ -8150,7 +8248,7 @@ async function submitRun(){
   if(accountBusy){ toast('账号操作进行中，请稍候'); return; }
   if(!hasSession()){ toast('先登录'); switchRunTab('submit'); return; }
   if(!LIVE.checked || !liveOk(LIVE.checked)){
-    toast('token 未验证或已失效；先到「账号」页测试 token');
+    toast('登录凭证未验证或已失效；先到「账号」页重新验证');
     liveLog('提交已阻止', 'token 未验证，不能提交', 'warn');
     switchRunTab('submit');
     return;
@@ -8161,8 +8259,6 @@ async function submitRun(){
   const ti = selectedTimeInfo();
   if(!ti.ok){ toast('开始时间无效：' + ti.note); switchRunTab('params'); return; }
   refreshChecks();
-  const allReady = !!(document.querySelector('#dock') &&
-    document.querySelector('#dock').classList.contains('ready'));
   let di = dailyCountInfo();
   if(!di.loaded){
     toast('当日次数还没核对完，正在重试…');
@@ -8170,7 +8266,12 @@ async function submitRun(){
     di = dailyCountInfo();
     if(!di.loaded){ await refreshDailyCount(); di = dailyCountInfo(); }
   }
-  await openDataPreviewForSubmit(previewPendingFrom(params, ti, allReady));
+  // Re-read the checklist after the awaits: the counts and the preview must
+  // describe the same state, and a background refresh may have landed in
+  // between.  One call supplies both `allReady` and `missing`.
+  const checkState = refreshChecks() || {all: false, missing: []};
+  await openDataPreviewForSubmit(
+    previewPendingFrom(params, ti, !!checkState.all, checkState.missing));
 }
 
 async function openDataPreviewForSubmit(pending){
@@ -8190,6 +8291,8 @@ async function openDataPreviewForSubmit(pending){
     const el = $(sel); if(el) el.innerHTML = '';
   });
   if($('#dpTable')) $('#dpTable').innerHTML = '';
+  if($('#dpErrorDetails')) $('#dpErrorDetails').hidden = true;
+  if($('#dpErrorRaw')) $('#dpErrorRaw').textContent = '';
   if($('#dpConfirm')){ $('#dpConfirm').hidden = false; $('#dpConfirm').disabled = true; $('#dpConfirm').textContent = '生成中…'; }
   try{
     const j = await liveApi('real_preview_model', {
@@ -8211,8 +8314,10 @@ async function openDataPreviewForSubmit(pending){
 
 function renderDataPreview(data, mode, pending, errorText){
   const isRecord = mode === 'record';
+  const failed = !isRecord && !!errorText;
   const rules = (LIVE.rules && LIVE.rules.rules) || {};
   const p = pending || {};
+  if(p) p.previewError = failed ? String(errorText) : '';
   const d = data || {};
   const km = d.distance_m ? d.distance_m / 1000 : (+p.params?.km || 0);
   const duration = d.duration_s || (p.params ? Math.round(+p.params.km * +p.params.pace * 60) : 0);
@@ -8262,7 +8367,7 @@ function renderDataPreview(data, mode, pending, errorText){
   if(errorText){
     ['#dpPace','#dpCadence','#dpStride','#dpAltitude'].forEach(sel => {
       const el = $(sel);
-      if(el) el.innerHTML = '<div class="mini" style="padding:10px 0">' + esc(errorText) + '</div>';
+      if(el) el.innerHTML = '<div class="mini" style="padding:10px 0">预览没有生成，请返回修改后重试。</div>';
     });
   }else{
     HXPCharts.lineChart($('#dpPace'), series, {
@@ -8314,6 +8419,12 @@ function renderDataPreview(data, mode, pending, errorText){
   if($('#dpFootNote')){
     if(isRecord){
       $('#dpFootNote').textContent = '数据从服务器回读轨迹按 10 秒重采样；没有步频字段时显示 —。';
+    }else if(failed){
+      // The raw bridge error can contain an absolute path or an internal
+      // stack fragment; keep the operator-facing line human and put the
+      // original string in the collapsed details block below.
+      $('#dpFootNote').textContent =
+        '预览没有生成，请返回修改后重试；不能提交没有预览过的数据。';
     }else{
       const missing = (p.missing || []).length ? (' · 未通过：' + p.missing.join('、')) : '';
       $('#dpFootNote').textContent = (p.dayText || '') + ' ' + (p.timeText || '') +
@@ -8321,12 +8432,28 @@ function renderDataPreview(data, mode, pending, errorText){
         ' · 预览按当前参数生成，最终以服务器回读为准。';
     }
   }
+  if($('#dpErrorDetails')) $('#dpErrorDetails').hidden = !failed;
+  if($('#dpErrorRaw')) $('#dpErrorRaw').textContent = failed ? String(errorText) : '';
   if($('#dpConfirm')){
+    const missingCount = (p.missing || []).length;
     $('#dpConfirm').hidden = isRecord;
     $('#dpConfirm').disabled = false;
-    $('#dpConfirm').textContent = errorText ? '仍然提交' : '确认提交';
+    if(failed){
+      // A failed preview must not offer a one-click submit: send the operator
+      // back to fix the parameters instead.
+      $('#dpConfirm').textContent = '返回修改';
+      $('#dpConfirm').dataset.action = 'back';
+    }else{
+      $('#dpConfirm').textContent = missingCount
+        ? ('仍有 ' + missingCount + ' 项未通过，继续提交')
+        : '确认提交';
+      $('#dpConfirm').dataset.action = 'submit';
+    }
   }
-  if($('#dpCancel')) $('#dpCancel').textContent = isRecord ? '关闭' : '返回修改';
+  if($('#dpCancel')){
+    $('#dpCancel').hidden = failed;
+    $('#dpCancel').textContent = isRecord ? '关闭' : '返回修改';
+  }
   if($('#altPreview')){
     if(series.length && series.some(s => s.alt != null)){
       HXPCharts.spark($('#altPreview'), series, 'alt');
@@ -8387,12 +8514,13 @@ async function doSubmitRun(pending){
     const d = j.data || {};
     if(d.model){ _modelSeq++; LIVE.model = d.model; renderModel(); }
     const msg = String(j.message || '');
-    const unknown = /超时|未知|已锁定|可能仍在执行|bridge 不可用|bridge 返回非 JSON/.test(msg);
+    const unknown = /超时|未知|已锁定|可能仍在执行|bridge 不可用|bridge 返回非 JSON|本地服务不可用|本地服务返回了无法识别的内容/.test(msg);
+    const errCode = codeFromText(msg) || (j.code && j.code !== 200 ? j.code : null);
     if(unknown){
       setSubmitResult('unknown', '提交结果未知',
         (msg || '没有拿到服务器结果。') +
         ' 后台可能已经受理；已禁用重复提交。请到「记录」页点「只读核对未决」，确认结果后再操作。',
-        {warn: true});
+        {warn: true, raw: msg, code: errCode});
       // A write-ahead receipt is the durable proof of an in-flight submit;
       // surface its count on the card without asking the operator to hunt.
       await loadReceipts();
@@ -8403,7 +8531,9 @@ async function doSubmitRun(pending){
         renderSubmitResult();
       }
     }else{
-      setSubmitResult('fail', '提交失败', msg || '服务器拒绝了这次提交。');
+      const rawMsg = msg || '服务器拒绝了这次提交。';
+      setSubmitResult('fail', '提交失败', rawMsg,
+        {raw: rawMsg, code: errCode});
       loadReceipts();
     }
     liveLog(unknown ? '提交结果未知' : '提交失败', msg, unknown ? 'warn' : 'err');
@@ -8434,24 +8564,30 @@ async function doSubmitRun(pending){
   if(d.daily && d.daily.source === 'unknown') warnings.push('当日次数未知');
   (d.param_warnings || []).forEach(w => warnings.push(w));
   const obsText = (d.obs && d.obs.of)
-    ? ' · OBS ' + (d.obs.uploaded || 0) + '/' + d.obs.of + ' 上传，' +
+    ? ' · 轨迹上传 ' + (d.obs.uploaded || 0) + '/' + d.obs.of + ' 上传，' +
       (d.obs.verified || 0) + '/' + d.obs.of + ' 校验'
     : '';
-  const summary = 'rrid=' + (d.rrid || '') + ' · ' + (d.km || km) + ' km' +
+  const rridText = d.rrid ? String(d.rrid) : '';
+  const summary = '记录编号 ' + (rridText || '—') + ' · ' + (d.km || km) + ' km' +
     (d.start ? ' · ' + d.start.text : '') + obsText;
+  // Keep the raw bridge-shaped line inside the collapsed 详情 block.
+  const rawSummary = 'rrid=' + rridText + ' · ' + (d.km || km) + ' km' +
+    (d.start ? ' · ' + d.start.text : '') +
+    (d.obs && d.obs.of ? (' · OBS ' + (d.obs.uploaded || 0) + '/' + d.obs.of +
+      ' 上传，' + (d.obs.verified || 0) + '/' + d.obs.of + ' 校验') : '');
   if(warnings.length){
-    liveLog('提交已受理（有提醒）', summary + ' · ' + warnings.join('；'), 'warn');
+    liveLog('提交已受理（有提醒）', rawSummary + ' · ' + warnings.join('；'), 'warn');
     toast('已提交，但有提醒：' + warnings[0]);
   }else{
-    liveLog('提交成功', summary, 'ok');
-    toast('提交成功：rrid ' + (d.rrid || ''));
+    liveLog('提交成功', rawSummary, 'ok');
+    toast('提交成功：记录编号 ' + (rridText || '—'));
   }
   setSubmitResult(
     'ok',
     (warnings.length ? '提交已受理（有提醒）' : '提交成功') +
-      (d.rrid ? (' · rrid ' + d.rrid) : ''),
+      (rridText ? (' · 记录编号 ' + rridText) : ''),
     summary + (warnings.length ? (' · ' + warnings.join('；')) : ''),
-    {warn: warnings.length > 0, rrid: d.rrid || ''});
+    {warn: warnings.length > 0, rrid: rridText, raw: rawSummary});
   refreshChecks();
   switchRunTab('log');
   openPostSubmit(d, pending, warnings);
@@ -8470,6 +8606,7 @@ function routeLineKey(line){
 function clearCurrentRouteAfterSubmit(message){
   clearTimeout(_routeFinalTimer);
   route = [];
+  routeDirty = false;
   // Do not let undo resurrect the route that was just submitted: reusing it
   // with a different time window is a deliberate act, not an undo slip.
   resetRouteHistory();
@@ -8491,7 +8628,7 @@ function openPostSubmit(d, pending, warnings){
     const km = pending.params.km;
     const warn = (warnings || []).length
       ? '<div class="tag warn" style="margin-top:6px">' + esc(warnings[0]) + '</div>' : '';
-    $('#postSummary').innerHTML = 'rrid <b>' + esc(POST_SUBMIT.rrid || '—') + '</b> · ' +
+    $('#postSummary').innerHTML = '记录编号 <b>' + esc(POST_SUBMIT.rrid || '—') + '</b> · ' +
       km.toFixed(2) + ' km · ' + esc(pending.dayText || '') + ' ' +
       esc(pending.timeText || '') + warn;
   }
@@ -8554,11 +8691,11 @@ const ONBOARD_STEPS = [
   {
     title: '已登录：工具已经知道你在哪个校区',
     body: '<p>登录后，工具会从服务器读取你所在校区的<b>跑步围栏</b>和<b>打卡点</b>。</p>' +
-      '<ul><li>围栏、点位都来自真实接口；没有 token 不会生成假点位。</li>' +
+      '<ul><li>围栏、点位都来自真实接口；没有登录凭证不会生成假点位。</li>' +
       '<li>多校区学校可在跑步页切换「跑区」，每个跑区用自己的围栏和打卡点。</li>' +
       '<li>有些学校不配置围栏/打卡点，也能正常提交；<b>没有围栏</b>时才需要把地图拖到学校后点「设为校区」。</li>' +
-      '<li>token 失效时，到「账号」页重新验证或登录。</li></ul>' +
-      '<div class="onboard-legal"><b>使用边界</b><span>仅限本人使用。禁止倒卖、分发安装包、代跑收费或共享账号；不要把 data 目录、token、回执发给他人。</span></div>',
+      '<li>登录凭证失效时，到「账号」页重新验证或登录。</li></ul>' +
+      '<div class="onboard-legal"><b>使用边界</b><span>仅限本人使用。禁止倒卖、分发安装包、代跑收费或共享账号；不要把 data 目录、登录凭证、回执发给他人。</span></div>',
     tip: '第一次登录要在本地解极验，会慢一点；之后一般几秒内完成。'
   },
   {
@@ -8591,7 +8728,7 @@ const ONBOARD_STEPS = [
     body: '<p>提交成功后，回执会锁住这个时段；同一时段不能重复提交。</p>' +
       '<ul><li>「记录」页可以回看轨迹、爬升和平台检查项。</li>' +
       '<li>刚上传的路线可以选择<b>存进路线库并清空</b>，下一条从空白开始。</li></ul>',
-    tip: '出问题在「设置 → 关于」复制诊断包；里面带版本和构建号，不含 token/坐标/IP。'
+    tip: '出问题在「设置 → 关于」复制诊断包；里面带版本和构建号，不含登录凭证/坐标/IP。'
   }
 ];
 let onboardIndex = 0;
@@ -8654,13 +8791,15 @@ function closeOnboard(remember){
   const box = $('#onboard');
   if(!box || box.hidden) return;
   box.hidden = true;
-  // null = "skip this time": leave the stored preference untouched, so a
-  // reopened guide does not reset onboard_done and a first-run skip still
-  // shows again next launch unless the operator ticks the opt-out box.
-  const keep = remember === true
-    ? !!( $('#onboardNever') && $('#onboardNever').checked)
-    : (remember === false ? false : null);
-  if(remember !== null){
+  const checked = !!( $('#onboardNever') && $('#onboardNever').checked);
+  // "本次跳过" (remember === null) still counts as "the guide has been shown":
+  // it must persist, otherwise maybeShowOnboard() returns true again on the
+  // next launch and the announcement is suppressed forever.  Persisting it
+  // means the next launch goes straight to the announcement; the guide itself
+  // stays available from 设置 → 关于.  Unticking "下次不再自动显示" keeps the
+  // guide coming back, which is the operator's explicit choice.
+  const keep = remember === false ? false : checked;
+  if(remember !== null || checked){
     try{
       if(keep) localStorage.setItem(ONBOARD_KEY, 'done');
       else localStorage.removeItem(ONBOARD_KEY);
@@ -8669,11 +8808,11 @@ function closeOnboard(remember){
     // the one that actually survives a restart.
     liveApi('real_set_ui_state', {onboard_done: keep}, 8000).catch(() => {});
   }
-  if(keep) toast('已关闭自动显示；可在「设置 → 关于」重看');
-  // The announcement waits while the first-run guide is open.
-  setTimeout(() => {
-    if(window.Announcements) Announcements.maybeShow();
-  }, 500);
+  if(keep && remember !== null) toast('已关闭自动显示；可在「设置 → 关于」重看');
+  // Do not chain the announcement popup right after the first-run guide: two
+  // stacked dialogs made the first session feel like a queue of mandatory
+  // screens.  It will be offered on the next launch, and the About page keeps
+  // a manual "加入 QQ 群" entry.
   if(onboardFocus && onboardFocus.focus){
     try{ onboardFocus.focus(); }catch(e){}
   }
@@ -9313,6 +9452,15 @@ function liveWire(){
   $('#dpConfirm').addEventListener('click', () => {
     const pending = PENDING_SUBMIT;
     if(!pending) return;
+    if(pending.previewError){ cancelDataPreview(); return; }
+    const missing = pending.missing || [];
+    if(missing.length){
+      // One explicit confirmation, right after the checklist has named the
+      // unfinished items.  Cancel keeps the preview open and submits nothing.
+      const ok = confirm('还有 ' + missing.length + ' 项检查未通过：\n' +
+        missing.join('、') + '\n\n仍要继续提交吗？');
+      if(!ok) return;
+    }
     closeDataPreview();
     doSubmitRun(pending);
   });
@@ -9407,6 +9555,7 @@ function liveWire(){
         pushRouteHistory('道路吸附');
         selRoutePoint = -1;
         route = d.route.map(p => [p[0], p[1]]);
+        routeDirty = true;
         redraw();
         scheduleRouteFinalize(500, 'snap');
       }
@@ -9533,6 +9682,7 @@ function liveWire(){
     pushRouteHistory('载入路线库：' + (r.name || '未命名'));
     selRoutePoint = -1;
     route = line;
+    routeDirty = false;             // it already has a library copy
     setCloseUI(!!r.closed);
     redraw();
     scheduleRouteFinalize(300, 'library');
@@ -9577,7 +9727,7 @@ function liveWire(){
     const v = $('#rdCopy').dataset.rrid || '';
     if(!v) return;
     const ok = await copyPlainText(String(v));
-    toast(ok ? '已复制 rrid' : '复制失败，请手动选择');
+    toast(ok ? '已复制记录编号' : '复制失败，请手动选择');
   });
   document.querySelectorAll('.log-filter').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.log-filter').forEach(x => x.classList.remove('active'));
@@ -9690,7 +9840,7 @@ function featureWire(){
   });
   if($('#rdVerify')) $('#rdVerify').addEventListener('click', () => {
     const x = (LIVE.lastDetail && LIVE.lastDetail.detail) || {};
-    if(!x.rrid && !x.uuid){ toast('这条记录没有 rrid，无法核验'); return; }
+    if(!x.rrid && !x.uuid){ toast('这条记录没有记录编号，无法核验'); return; }
     verifyRecord({rrid: x.rrid || null, uuid: x.uuid || null, via: 'detail'});
   });
   if($('#rdReplay')) $('#rdReplay').addEventListener('click', openRecordReplay);

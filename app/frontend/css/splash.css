@@ -409,7 +409,7 @@
   color: rgba(36, 35, 31, .64);
   opacity: 0;
   cursor: pointer;
-  animation: boot-fade-in .4s ease .8s forwards;
+  animation: boot-fade-in .4s ease 0s forwards;
 }
 
 .boot-skip:hover { color: var(--boot-ink); }
@@ -515,4 +515,17 @@
   .acc-btn { margin-top: 24px; }
   .acc-bottom { bottom: 34px; }
   .acc-progress { bottom: 20px; }
+}
+
+/* 390px phones: the bottom rail and the centered read-out were on the same
+   baseline.  "[ 01 / 05 ] 准备" ended around 135px and "READY WHEN YOU ARE"
+   started around 121px, so they overlapped by ~14px.  Stack the rail into a
+   single column and lift the read-out above it; 1440px keeps the wide rail. */
+@media (max-width: 480px) {
+  .acc-bottom {
+    left: 20px; right: 20px; bottom: 26px;
+    flex-direction: column; align-items: flex-start; gap: 6px;
+  }
+  .acc-logwrap { bottom: 66px; width: min(84vw, 340px); }
+  .acc-progress { left: 20px; right: 20px; bottom: 14px; }
 }

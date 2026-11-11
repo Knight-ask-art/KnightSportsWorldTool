@@ -28,7 +28,7 @@
 </head>
 <body class="login-locked">
 <!-- boot splash: white plate, logo construction + access control -->
-<div class="boot" id="bootSplash" role="dialog" aria-modal="true" aria-label="HAOXIANGPAO startup">
+<div class="boot" id="bootSplash" role="dialog" aria-modal="true" aria-labelledby="bootTitle">
   <div class="boot-cam" aria-hidden="true">
     <div class="boot-stage">
       <svg class="boot-mark" viewBox="40 100 432 312" aria-hidden="true">
@@ -58,18 +58,18 @@
     </div>
 
     <div class="acc-center">
-      <h2 class="acc-title" id="bootTitle">ACCESS PERMISSION REQUIRED</h2>
+      <h2 class="acc-title" id="bootTitle">好想跑 · 本地工作台</h2>
       <div class="acc-rule" aria-hidden="true"></div>
-      <p class="acc-sub" id="bootSub">LOCAL WORKBENCH ACCESS</p>
+      <p class="acc-sub" id="bootSub">LOCAL WORKBENCH · RUN OS</p>
       <button class="acc-btn" id="bootAction" type="button">
-        <span id="bootActionText">GRANT ACCESS</span>
+        <span id="bootActionText">进入</span>
       </button>
-      <div class="acc-hint" id="bootHint">PRESS ENTER / SPACE, OR CLICK TO CONTINUE</div>
+      <div class="acc-hint" id="bootHint">按回车 / 空格，或点「进入」继续</div>
     </div>
 
     <div class="acc-bottom" aria-hidden="true">
       <div class="acc-bl">
-        <div class="acc-step" id="bootStep">[ 01 / 06 ] AUTHORIZATION</div>
+        <div class="acc-step" id="bootStep">[ 01 / 05 ] 准备</div>
       </div>
       <div class="acc-br">
         <div>· OPERATOR : LOCAL</div>
@@ -78,14 +78,14 @@
     </div>
 
     <div class="acc-logwrap" aria-live="polite">
-      <div class="acc-log" id="bootLog">AWAITING OPERATOR CONSENT</div>
-      <div class="acc-log-en" id="bootLogEn">GRANT ACCESS TO CONTINUE</div>
+      <div class="acc-log" id="bootLog">正在准备本地工作台</div>
+      <div class="acc-log-en" id="bootLogEn">STARTING LOCAL WORKBENCH</div>
     </div>
 
-    <div class="acc-stamp" id="bootStamp">AUTHORIZED</div>
+    <div class="acc-stamp" id="bootStamp">READY</div>
     <div class="acc-progress" aria-hidden="true"><i id="bootProgress"></i></div>
   </section>
-  <button class="boot-skip" id="bootSkip" type="button">SKIP ▸</button>
+  <button class="boot-skip" id="bootSkip" type="button">跳过 ▸</button>
 </div>
 <!-- Bootstrap Icons 1.13.1 subset (MIT): see vendor/bootstrap-icons-LICENSE.txt -->
 <svg class="bi-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><symbol id="bi-house" viewBox="0 0 16 16"><path d="M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293zM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5z"/></symbol><symbol id="bi-person-badge" viewBox="0 0 16 16"><path d="M6.5 2a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1zM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/>
@@ -353,7 +353,7 @@
                   <button class="btn small" id="inspectRefresh" disabled>巡检</button>
                 </div>
               </div>
-              <p class="hint" style="margin:-4px 0 8px" id="inspectHint">检查 token、冷却、今日次数、最近记录与服务器时间。<b>只读</b>，不会提交或上传任何数据。</p>
+              <p class="hint" style="margin:-4px 0 8px" id="inspectHint">检查登录凭证、冷却、今日次数、最近记录与服务器时间。<b>只读</b>，不会提交或上传任何数据。</p>
               <div class="inspect-list" id="inspectList">
                 <div class="inspect-empty">登录后可手动巡检。</div>
               </div>
@@ -395,7 +395,7 @@
             <div class="head-actions"><span class="chip" id="accTopStatus">未登录</span></div>
           </div>
           <div class="status-row">
-            <span class="chip" id="accTokenChip">token 未加载</span>
+            <span class="chip" id="accTokenChip">登录凭证未加载</span>
           </div>
         </header>
 
@@ -421,7 +421,7 @@
               </div>
               <div class="form-actions account-auth-actions">
                 <button class="btn primary" id="accLogin">登录</button>
-                <button class="btn ghost" id="accTest">测试 token</button>
+                <button class="btn ghost" id="accTest">测试登录凭证</button>
                 <button class="btn ghost" id="accLogout">退出登录</button>
               </div>
             </section>
@@ -437,9 +437,9 @@
           <aside class="col side">
             <section class="sec">
               <div class="sec-head"><h2>会话</h2></div>
-              <div class="detail-row"><span>token</span><span class="mono" id="accTokenMasked">—</span></div>
+              <div class="detail-row"><span>登录凭证</span><span class="mono" id="accTokenMasked">—</span></div>
               <div class="detail-row"><span>校区</span><span id="accCampus">—</span></div>
-              <div class="detail-row"><span>unid</span><span id="accUnid">—</span></div>
+              <div class="detail-row"><span title="技术字段：unid">学校识别码</span><span id="accUnid">—</span></div>
               <p class="hint" style="margin:10px 0 8px">设备指纹、更换和自定义设备已移到设置页。</p>
               <button class="btn small ghost" data-goto="settings">打开设备设置</button>
             </section>
@@ -567,8 +567,8 @@
                 <button class="btn small ghost" id="setCampusBtn" title="学校没有围栏时：先把地图拖到学校，再点这里保存校区坐标">设为校区</button>
                 <button class="btn small ghost" id="togglePts">收起</button>
               </div>
-              <label class="free-run-line" title="仅用于学校确实没有打卡点的场景；有必经点的学校会被后端拒绝。注意：本工具尚未实现官方自由跑（serviceType=3）">
-                <input type="checkbox" id="freeRun"> 跳过打卡点（无点位学校，非官方自由跑）
+              <label class="free-run-line" title="仅用于学校确实没有打卡点的场景；有必经点的学校会被后端拒绝。注意：官方自由跑（技术字段 serviceType=3）尚未实现">
+                <input type="checkbox" id="freeRun"> 跳过打卡点（仅无点位学校）
               </label>
 
               <div class="pt-mini" id="ptList"></div>
@@ -578,7 +578,7 @@
                 <span id="goalLine2">预计 —</span>
               </div>
 
-              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>自动功能仍在开发中，不建议使用。点位与围栏来自登录后的服务器接口；没有 token 时不会生成假点位。</div>
+              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>自动功能仍在开发中，不建议使用。点位与围栏来自登录后的服务器接口；没有登录凭证时不会生成假点位。</div>
             </section>
 
             <section class="rsec" id="rsec-params">
@@ -760,7 +760,7 @@
                     <button class="btn small ghost" id="auditToggle" hidden>只看问题</button>
                   </div>
                 </div>
-                <div class="audit-note" id="auditNote">检查 27 字段、速度/步频窗口、分段、打卡点与 OBS 键。生成路径不联网，记录路径只读。</div>
+                <div class="audit-note" id="auditNote">检查 27 字段、速度/步频窗口、分段、打卡点与轨迹上传。生成路径不联网，记录路径只读。</div>
                 <ul class="audit-checks" id="auditChecks"></ul>
               </div>
 
@@ -793,6 +793,15 @@
                   <span class="submit-result-time" id="submitResultTime"></span>
                 </div>
                 <div class="submit-result-text" id="submitResultText"></div>
+                <div class="submit-result-explain" id="submitResultExplain" hidden>
+                  <b id="submitResultExplainTitle"></b>
+                  <div id="submitResultExplainCause"></div>
+                  <div id="submitResultExplainAction"></div>
+                </div>
+                <details class="submit-result-details" id="submitResultDetails" hidden>
+                  <summary>详情</summary>
+                  <div id="submitResultRaw"></div>
+                </details>
                 <div class="submit-result-actions">
                   <button class="btn small ghost" id="submitResultVerify">只读核验</button>
                   <button class="btn small ghost" id="submitResultRecords">去记录页核对</button>
@@ -802,7 +811,7 @@
               </div>
               <div class="submit-flow">
                 <div class="flow-step"><span>01</span><b>回执</b><small>锁定时间窗</small></div>
-                <div class="flow-step"><span>02</span><b>上传轨迹</b><small>OBS 双 key</small></div>
+                <div class="flow-step"><span>02</span><b>上传轨迹</b><small>双道校验</small></div>
                 <div class="flow-step"><span>03</span><b>回读</b><small>真实结果</small></div>
               </div>
             </section>
@@ -945,7 +954,7 @@
               <button class="btn small ghost" id="recExport" title="导出最近记录（最多 200 条）">导出 CSV</button>
               <button class="btn small ghost" id="recFit" disabled title="从选中的记录导出 FIT">FIT</button>
               <button class="btn small ghost" id="recStats" title="按本机回执与服务器记录统计（只读）">统计</button>
-              <button class="btn small ghost" id="recDiagZip" disabled title="生成脱敏诊断 ZIP，不含 token/坐标">诊断包</button>
+              <button class="btn small ghost" id="recDiagZip" disabled title="生成脱敏诊断 ZIP，不含登录凭证/坐标">诊断包</button>
               <button class="btn small ghost" id="recRefresh">刷新</button>
             </div>
           </div>
@@ -991,7 +1000,7 @@
         <div class="records-layout">
           <div>
             <div class="simple-table" id="recordTable">
-              <div class="thead"><span>日期</span><span>距离</span><span>配速</span><span>状态</span><span>rrid</span></div>
+              <div class="thead"><span>日期</span><span>距离</span><span>配速</span><span>状态</span><span>记录编号</span></div>
             </div>
             <p class="hint" id="recHint">点一行看详情。</p>
           </div>
@@ -1009,7 +1018,7 @@
             <div class="detail-row"><span>规则集</span><span id="rdRulePolicy" title="服务器下发的跑步规则集编号，不是风险标记">—</span></div>
             <div class="detail-row"><span>配速区间</span><span id="rdPaceBand">—</span></div>
             <div class="detail-row" id="rdAppealRow" hidden><span>申诉</span><span id="rdAppeal">—</span></div>
-            <div class="detail-row"><span>rrid</span><span class="mono" id="rdRrid">—</span></div>
+            <div class="detail-row"><span>记录编号</span><span class="mono" id="rdRrid">—</span></div>
             <div class="record-map-wrap">
               <div class="detail-subhead">轨迹</div>
               <div class="record-map" id="rdMap"></div>
@@ -1030,7 +1039,7 @@
               <ul class="detail-list" id="rdReasons"></ul>
             </div>
             <div class="form-actions detail-actions">
-              <button class="btn ghost" id="rdCopy" disabled>复制 rrid</button>
+              <button class="btn ghost" id="rdCopy" disabled>复制记录编号</button>
             </div>
           </aside>
         </div>
@@ -1063,7 +1072,7 @@
           </div>
           <div class="chips">
             <span class="chip" id="profUidChip">uid —</span>
-            <span class="chip" id="profUnidChip">unid —</span>
+            <span class="chip" id="profUnidChip">学校识别码 —</span>
           </div>
           <img class="line-field-mark profile-line-field" src="line-field.svg" alt="" aria-hidden="true">
         </div>
@@ -1108,7 +1117,7 @@
               <div class="detail-row"><span>校区</span><span id="profCampus">—</span></div>
               <div class="detail-row"><span>身高 / 体重</span><span id="profBody">—</span></div>
               <div class="detail-row"><span>uid</span><span class="mono" id="profUid">—</span></div>
-              <div class="detail-row"><span>unid</span><span id="profUnid">—</span></div>
+              <div class="detail-row"><span title="技术字段：unid">学校识别码</span><span id="profUnid">—</span></div>
             </section>
 
             <section class="sec">
@@ -1237,16 +1246,16 @@
             <h2>设备指纹</h2>
             <span class="mini" id="setDeviceStatus">未读取</span>
           </div>
-          <p class="hint" style="margin:-4px 0 9px">登录、提交和 OBS 共用这一份指纹；每个 <b>data</b> 目录只生成一次。更换或自定义后旧指纹会先备份，并需要重新登录。</p>
+          <p class="hint" style="margin:-4px 0 9px">登录、提交和轨迹上传共用这一份指纹；每个 <b>data</b> 目录只生成一次。更换或自定义后旧指纹会先备份，并需要重新登录。</p>
           <div class="device-facts">
             <div class="detail-row"><span>设备</span><span id="setDeviceProfile">—</span></div>
-            <div class="detail-row"><span>DeviceId</span><span class="mono" id="setDeviceId">—</span></div>
+            <div class="detail-row"><span title="技术字段：DeviceId">设备编号</span><span class="mono" id="setDeviceId">—</span></div>
             <div class="detail-row"><span>平台</span><span id="setDevicePlatform">—</span></div>
             <div class="detail-row"><span>屏幕</span><span id="setDeviceScreen">—</span></div>
             <div class="detail-row"><span>缩放</span><span id="setDeviceScale">—</span></div>
             <div class="detail-row"><span>来源</span><span id="setDeviceSource">—</span></div>
             <div class="detail-row"><span>环境自检</span><span id="setDeviceEnv">—</span></div>
-            <div class="detail-row"><span>UA</span><span class="mono" id="setDeviceUa">—</span></div>
+            <div class="detail-row"><span title="技术字段：UA">浏览器标识</span><span class="mono" id="setDeviceUa">—</span></div>
           </div>
 
           <details class="adv-box">
@@ -1314,7 +1323,7 @@
                        placeholder="arm64-v8a / arm64e">
               </div>
               <div class="field-line">
-                <label for="customDeviceId">DeviceId</label>
+                <label for="customDeviceId">设备编号（DeviceId）</label>
                 <input id="customDeviceId" type="text" maxlength="64"
                        autocomplete="off" spellcheck="false"
                        placeholder="1–64 位字母/数字/._:-">
@@ -1433,7 +1442,7 @@
             <button class="btn small ghost" id="qqGroupOpen" data-announcement-id="qq-group-2026-11">加入 QQ 群</button>
             <button class="btn small ghost" id="onboardOpen">新手引导</button>
             <button class="btn small ghost" id="disclaimerOpenAbout">免责声明</button>
-            <span class="hint" id="diagHint" style="margin:0">不含 token / 密码 / uid / 坐标 / IP。</span>
+            <span class="hint" id="diagHint" style="margin:0">不含登录凭证 / 密码 / uid / 坐标 / IP。</span>
           </div>
         </section>
       </div>
@@ -1535,6 +1544,10 @@
       <div class="dp-table-head"><b>每公里数据</b><span class="mini" id="dpTableNote"></span></div>
       <div class="dp-table" id="dpTable"></div>
     </div>
+    <details class="submit-result-details dp-error-details" id="dpErrorDetails" hidden>
+      <summary>详情</summary>
+      <div id="dpErrorRaw"></div>
+    </details>
     <footer class="dp-foot">
       <span class="mini" id="dpFootNote">预览按当前参数生成，最终以服务器回读为准。</span>
       <div class="dp-actions">

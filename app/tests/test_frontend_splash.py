@@ -30,20 +30,60 @@ def test_splash_assets_are_external_and_wired_before_app_js():
     assert (FRONTEND / 'js' / 'splash.js').is_file()
 
 
-def test_splash_is_english_only():
+def test_splash_leads_with_chinese_and_keeps_english_as_decoration():
     block = _splash_block()
-    assert not re.search(r'[\u4e00-\u9fff]', block)
+    assert '\u597d\u60f3\u8dd1 \u00b7 \u672c\u5730\u5de5\u4f5c\u53f0' in block
+    assert '\u8fdb\u5165' in block
+    assert '\u8df3\u8fc7' in block
+    # English stays as small brand decoration, not as the instruction.
     assert 'HAOXIANGPAO' in block
     assert 'LOCAL WORKBENCH' in block
 
 
-def test_splash_has_the_access_step_and_a_skip_path():
+def test_splash_has_one_confirmation_and_a_skip_path():
     assert 'id="bootAction"' in HTML
-    assert 'GRANT ACCESS' in HTML
-    assert 'CONFIRM IDENTITY' in JS
+    assert "btn: '\u8fdb\u5165'" in JS
+    # The old two-step access/identity wall is gone: one click gets in.
+    assert JS.count('wait: true') == 1
+    assert 'CONFIRM IDENTITY' not in JS
+    assert 'GRANT ACCESS' not in JS
     assert 'id="bootSkip"' in HTML
+    assert '\u8df3\u8fc7' in HTML
     assert "event.key === 'Escape'" in JS
     assert 'sessionStorage' in JS
+
+
+def test_splash_skips_when_a_local_session_already_exists():
+    # A saved session should not be asked to authorise anything: the intro
+    # probes the same bridge the page is served from and gets out of the way.
+    assert "fetch('/bridge/real_get_session'" in JS
+    assert 'token_present' in JS
+    assert 'if (found && !done) finish();' in JS
+    # The old global was never consumed and was undefined on the early-exit
+    # paths; guard against re-introducing it.
+    assert 'window.HXPSplash' not in JS
+
+
+def test_splash_dialog_is_named_by_the_chinese_title():
+    line = next(l for l in HTML.splitlines() if 'id="bootSplash"' in l)
+    assert 'role="dialog"' in line
+    assert 'aria-modal="true"' in line
+    assert 'aria-labelledby="bootTitle"' in line
+    # aria-label would override the Chinese title for screen readers.
+    assert 'aria-label=' not in line
+
+
+def test_splash_bottom_rail_does_not_overlap_at_390px():
+    # At 390px the centered read-out ("READY WHEN YOU ARE") used to share a
+    # baseline with "[ 01 / 05 ] 准备": 121px vs 135px, ~14px overlap.  The
+    # narrow query lifts the read-out above the rail and stacks the rail.
+    narrow = CSS[CSS.index('@media (max-width: 480px)'):]
+    assert 'flex-direction: column' in narrow
+    assert '.acc-logwrap { bottom: 66px;' in narrow
+    # The wide layout must stay untouched by this query.
+    wide = CSS[:CSS.index('@media (max-width: 480px)')]
+    assert '.acc-logwrap' in wide
+    assert 'bottom: 42px' in wide
 
 
 def test_splash_respects_reduced_motion_and_has_a_failsafe():

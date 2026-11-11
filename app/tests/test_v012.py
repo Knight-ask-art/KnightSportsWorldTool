@@ -127,9 +127,9 @@ def test_record_detail_exposes_the_obs_source():
     html = (ROOT / 'frontend' / 'index.html').read_text(encoding='utf-8')
     js = (ROOT / 'frontend' / 'js' / 'app.js').read_text(encoding='utf-8')
     assert 'id="rdSource"' in html
-    assert 'json_from_obs' in js and 'OBS 读取失败' in js
+    assert 'json_from_obs' in js and '轨迹上传读取失败' in js
     assert 'track_source' in js
-    assert '轨迹未保留（OBS 404）' in js
+    assert '轨迹未保留（上传服务 404）' in js
     assert '服务器轨迹已不存在' in js
 
 

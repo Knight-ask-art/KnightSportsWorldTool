@@ -112,7 +112,7 @@ def test_points_follow_the_selected_target_distance():
     assert 'distance_m' in SOURCE
     assert 'schedulePointsForDistance' in SOURCE
     assert '无法确认该校区是否允许自由跑' in SOURCE
-    assert '跳过打卡点（无点位学校，非官方自由跑）' in HTML
+    assert '跳过打卡点（仅无点位学校）' in HTML
     assert "id=\"setCampusBtn\"" in HTML
 
 
@@ -176,7 +176,7 @@ def test_multi_fence_ui_uses_all_rings_and_marks_invalid_areas():
     assert '（无效）' in _js_function('renderRunAreas')
     assert 'rings.some' in _js_function('fenceOutside')
     assert 'count === 1' in _js_function('updateCampusControls')
-    assert '非官方自由跑' in HTML
+    assert '跳过打卡点（仅无点位学校）' in HTML
     assert 'setFences' in JS
     start = JS.index("['inKm', 'inPace', 'inCad', 'inAlt']")
     assert 'schedulePointsForDistance()' in JS[start:JS.index('});', start)]
@@ -279,7 +279,7 @@ def test_network_egress_is_diagnostic_not_a_checklist_gate():
 
 def test_obs_track_fallback_is_wired():
     assert "meta.obs_error" in SOURCE
-    assert '这条记录的轨迹在 OBS' in SOURCE
+    assert '这条记录的轨迹在上传服务' in SOURCE
 
 
 def test_update_icon_is_quiet_until_the_manifest_has_a_newer_build():
@@ -621,3 +621,154 @@ def test_stale_points_distance_is_visible_and_actionable():
     assert '点位按 %d m 加载，本次目标 %d m' in (
         ROOT / 'replica' / 'adapters' / 'bridge_api.py'
     ).read_text(encoding='utf-8')
+
+
+def test_submit_button_and_preview_confirm_report_unfinished_checks():
+    checks = _js_function('refreshChecks')
+    # The button carries the count, so it is not a silent disabled state.
+    assert "missingNow = checks.filter(c => !c.ok)" in checks
+    assert "' 项未完成）'" in checks
+    assert "提交这次跑步（' + missingNow.length" in checks
+    # The preview primary action names the same count and asks once.
+    preview = _js_function('renderDataPreview')
+    assert "仍有 ' + missingCount + ' 项未通过，继续提交" in preview
+    assert "if(pending.previewError){ cancelDataPreview(); return; }" in JS
+    assert "confirm('还有 ' + missing.length + ' 项检查未通过" in JS
+
+
+def test_failed_preview_offers_return_instead_of_one_click_submit():
+    preview = _js_function('renderDataPreview')
+    assert "p.previewError = failed ? String(errorText) : ''" in preview
+    assert "$('#dpConfirm').textContent = '返回修改'" in preview
+    assert "dataset.action = 'back'" in preview
+    # The old one-click escape hatch must never come back.
+    assert "'仍然提交'" not in JS
+    assert '不能提交没有预览过的数据' in preview
+    # The raw bridge error (it can contain an absolute path) belongs in the
+    # collapsed details block, never in the footnote or the chart placeholders.
+    assert "$('#dpErrorRaw').textContent = failed ? String(errorText) : ''" in preview
+    assert "$('#dpErrorDetails').hidden = !failed" in preview
+    assert 'id="dpErrorDetails"' in HTML
+    foot = preview[preview.index("if($('#dpFootNote'))"):
+                   preview.index("if($('#dpErrorDetails'))")]
+    assert 'errorText' not in foot
+    assert '预览没有生成，请返回修改后重试' in foot
+    assert 'esc(errorText)' not in preview
+    assert '预览没有生成，请返回修改后重试。</div>' in preview
+
+
+def test_logout_warns_before_discarding_an_unsaved_route():
+    logout = _js_function('liveLogout')
+    # Dirty + has content, not "length >= 2": a loaded saved route must stay
+    # silent, and a one-point scratch line must still warn.
+    assert 'const unsavedRoute = routeDirty && route.length > 0;' in logout
+    assert '当前路线未保存，退出后会清空。继续退出？' in logout
+    assert 'if(!confirm(ask)) return;' in logout
+    assert 'let routeDirty = false;' in JS
+    # Edits mark the line dirty.
+    assert 'routeDirty = true;' in _js_function('deleteRoutePoint')
+    assert 'routeDirty = true;' in _js_function('applyRouteSnapshot')
+    assert 'routeDirty = true;' in _js_function('importRouteFile')
+    assert "pushRouteHistory('添加第 ' + (route.length + 1) + ' 点');\n  routeDirty = true;" in JS
+    assert "if(route.length) pushRouteHistory(routeClosed ? '关闭闭合' : '打开闭合');\n  routeDirty = true;" in JS
+    # Saving, clearing and loading a library route clear it again.
+    assert 'routeDirty = false;' in _js_function('saveCurrentRoute')
+    assert 'routeDirty = false;' in _js_function('clearCurrentRouteAfterSubmit')
+    assert "route = line;\n    routeDirty = false;" in JS
+    delete = _js_function('deleteSelectedRoute')
+    assert '只删除本机路线库，无法撤销' in delete
+    assert "if(route.length && !confirm('清空当前路线？" in JS
+
+
+def test_school_id_chip_stays_in_plain_language_at_runtime():
+    # index.html already says 学校识别码; the three runtime writers must not
+    # overwrite it back to the internal field name after login/profile refresh.
+    for name in ('renderSession', 'renderProfileEmpty', 'renderProfile'):
+        body = _js_function(name)
+        assert '学校识别码 ' in body, name
+        assert "'unid '" not in body, name
+        assert "'unid —'" not in body, name
+    assert "'unid ' +" not in JS
+    assert "'unid —'" not in JS
+    assert '学校识别码 —' in HTML
+
+
+def test_check_snapshot_feeds_both_ready_and_missing():
+    # `allReady` and `missing` must come from the same refreshChecks() call;
+    # the old code snapshotted the dock before two awaits and read the DOM after.
+    checks = _js_function('refreshChecks')
+    assert 'return {all, missing: missingNow};' in checks
+    submit = _js_function('submitRun')
+    assert 'const checkState = refreshChecks() || {all: false, missing: []};' in submit
+    assert '!!checkState.all, checkState.missing' in submit
+    preview = _js_function('previewPendingFrom')
+    assert 'Array.isArray(missingNow)' in preview
+
+
+def test_submit_button_stays_clickable_with_unfinished_checks():
+    checks = _js_function('refreshChecks')
+    # Product decision: warn + confirm, do not hard-disable on `!all`.
+    assert 'Intentionally NOT disabled by `!all`' in checks
+    disabled = checks[checks.index("$('#submitRun').disabled ="):]
+    disabled = disabled[:disabled.index(';')]
+    assert '!all' not in disabled
+    assert 'LIVE.submitting || locked || !hasTarget' in disabled
+
+
+def test_unknown_submit_result_is_not_described_as_a_failure():
+    explain = _js_function('renderSubmitExplain')
+    assert "r.state === 'unknown'" in explain
+    assert '正在整理这次的结果…' in explain
+    assert '正在解释这次失败…' in explain
+    # A failed explain request collapses instead of hanging on "正在解释…".
+    worker = _js_function('explainSubmitResult')
+    assert '暂时无法解释' in worker
+    assert '原始信息见下方详情' in worker
+    assert 'if(LIVE.submitResult === r) renderSubmitExplain(r);' in worker
+
+
+def test_first_run_guide_does_not_chain_the_announcement_popup():
+    close = _js_function('closeOnboard')
+    assert 'Announcements.maybeShow' not in close
+    # "Skip" still persists "guide shown", so the next launch can offer the
+    # announcement instead of suppressing it forever behind the guide.
+    assert 'const keep = remember === false ? false : checked;' in close
+    assert 'if(remember !== null || checked){' in close
+    assert "liveApi('real_set_ui_state', {onboard_done: keep}, 8000)" in close
+    assert "$('#onboardSkip').addEventListener('click', () => closeOnboard(null));" in JS
+    # The next launch path and the About entry still offer the notice.
+    assert "if(!guide && window.Announcements) Announcements.maybeShow();" in JS
+    assert 'id="onboardOpen"' in HTML
+    assert 'data-announcement-id="qq-group-2026-11"' in HTML
+
+
+def test_user_facing_copy_uses_plain_terms():
+    # Record ids, upload progress, credentials and the local service.
+    assert '<span>记录编号</span>' in HTML
+    assert '记录编号 <b>' in JS
+    assert '轨迹上传 ' in JS
+    assert "' · OBS '" in JS              # raw bridge text stays in 详情
+    assert '登录凭证有效' in JS
+    assert '该功能还没有接入本地服务' in JS
+    # Internal field names are tooltips/advanced labels, not main rows.
+    assert 'title="技术字段：unid"' in HTML
+    assert 'title="技术字段：DeviceId"' in HTML
+    assert 'title="技术字段：UA"' in HTML
+    assert '官方自由跑（技术字段 serviceType=3）' in HTML
+
+
+def test_submit_result_card_explains_failure_in_place():
+    assert 'id="submitResultExplain"' in HTML
+    assert 'id="submitResultDetails"' in HTML
+    assert '<summary>详情</summary>' in HTML
+    assert 'function renderSubmitExplain(r)' in JS
+    assert 'function explainSubmitResult(r)' in JS
+    assert "explainError(code, r.raw || r.detail || r.title || '', {source: 'submit'})" in JS
+    assert "const rawSummary = 'rrid='" in JS
+
+
+def test_docs_match_the_close_toggle_default():
+    usage = (ROOT.parent / 'docs' / 'usage.md').read_text(encoding='utf-8')
+    assert '闭合开关默认关' in usage
+    assert '闭合开关默认开' not in usage
+    assert '需要绕圈时手动打开「闭合」' in usage

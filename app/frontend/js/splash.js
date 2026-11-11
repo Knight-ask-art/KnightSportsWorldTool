@@ -1,10 +1,11 @@
 /* Boot splash controller.
  *
- * The construction sequence is pure CSS.  This file runs the access screen:
- * two deliberate confirmations, then three automatic read-out steps.  Click,
- * Esc or SKIP gets out; Enter confirms the visible button.  A session marker
- * stops it replaying after a soft reload.  If this file never loads, the CSS
- * failsafe hides the splash after sixty seconds.
+ * The construction sequence is pure CSS.  This file runs the intro screen:
+ * one "进入" confirmation, then a few automatic read-out steps.  Click, Esc
+ * or 跳过 gets out immediately; Enter confirms the visible button.  A saved
+ * local session skips the whole intro after a short same-origin probe.  A
+ * session marker stops it replaying after a soft reload.  If this file never
+ * loads, the CSS failsafe hides the splash after sixty seconds.
  */
 (function () {
   'use strict';
@@ -71,66 +72,55 @@
 
   var STEPS = [
     {
-      title: 'ACCESS PERMISSION REQUIRED',
-      sub: 'LOCAL WORKBENCH ACCESS',
-      log: 'AWAITING OPERATOR CONSENT',
-      logEn: 'GRANT ACCESS TO CONTINUE',
-      tag: 'AUTHORIZATION',
-      btn: 'GRANT ACCESS',
-      stamp: 'AUTHORIZED',
-      progress: 8,
+      title: '好想跑 · 本地工作台',
+      sub: 'LOCAL WORKBENCH · RUN OS',
+      log: '准备画路线、核对并提交',
+      logEn: 'READY WHEN YOU ARE',
+      tag: '准备',
+      btn: '进入',
+      stamp: 'READY',
+      progress: 10,
       wait: true
     },
     {
-      title: 'IDENTITY VERIFICATION',
-      sub: 'LOCAL OPERATOR CONFIRMATION',
-      log: 'MATCHING LOCAL SESSION',
-      logEn: 'CONFIRM IDENTITY TO CONTINUE',
-      tag: 'IDENTITY',
-      btn: 'CONFIRM IDENTITY',
-      stamp: 'VERIFIED',
-      progress: 26,
-      wait: true
-    },
-    {
-      title: 'ACCESS REQUEST RECEIVED',
-      sub: 'HANDSHAKE ESTABLISHED',
-      log: 'SESSION CHANNEL OPEN',
-      logEn: 'ACCESS REQUEST RECEIVED',
-      tag: 'REQUEST',
-      progress: 48,
-      hold: 850
-    },
-    {
-      title: 'READING LOCAL PROFILE',
-      sub: 'INDEXING RUN DATA AND SETTINGS',
-      log: 'READING LOCAL STORE',
+      title: '正在读取本地设置',
+      sub: 'READING LOCAL PROFILE',
+      log: '读取路线、参数和学校要求',
       logEn: 'INDEXING WORKBENCH',
-      tag: 'READ',
-      progress: 70,
-      hold: 950
+      tag: '读取',
+      progress: 40,
+      hold: 700
     },
     {
-      title: 'READ COMPLETE · VERIFIED',
-      sub: 'LOCAL PROFILE VERIFIED',
-      log: 'PERMISSION GRANTED',
-      logEn: 'READ COMPLETE',
-      tag: 'VERIFY',
-      progress: 88,
-      hold: 950
+      title: '正在检查登录状态',
+      sub: 'CHECKING LOCAL SESSION',
+      log: '检查登录凭证',
+      logEn: 'CHECKING SESSION',
+      tag: '检查',
+      progress: 64,
+      hold: 800
     },
     {
-      title: 'WELCOME TO HAOXIANGPAO',
+      title: '本地工作台已就绪',
       sub: 'LOCAL WORKBENCH IS READY',
-      log: 'STARTING WORKBENCH',
-      logEn: 'WELCOME',
-      tag: 'WELCOME',
+      log: '准备完成',
+      logEn: 'READY',
+      tag: '就绪',
+      progress: 88,
+      hold: 700
+    },
+    {
+      title: '欢迎使用好想跑',
+      sub: 'WELCOME TO HAOXIANGPAO',
+      log: '正在打开工作台',
+      logEn: 'OPENING WORKBENCH',
+      tag: '进入',
       progress: 100,
-      hold: 1500
+      hold: 900
     }
   ];
 
-  var PANEL_AT = 4200;
+  var PANEL_AT = 1200;
   var index = -1;
   var done = false;
   var timer = null;
@@ -161,7 +151,7 @@
   function render(i) {
     index = i;
     var step = STEPS[i];
-    stepLabel.textContent = '[ 0' + (i + 1) + ' / 06 ] ' + step.tag;
+    stepLabel.textContent = '[ 0' + (i + 1) + ' / 0' + STEPS.length + ' ] ' + step.tag;
     title.textContent = step.title;
     sub.textContent = step.sub;
     log.textContent = step.log;
@@ -172,11 +162,11 @@
     if (step.wait) {
       actionText.textContent = step.btn;
       action.hidden = false;
-      hint.textContent = 'PRESS ENTER / SPACE, OR CLICK TO CONTINUE';
+      hint.textContent = '按回车 / 空格，或点「进入」继续';
       try { action.focus({ preventScroll: true }); } catch (err) { action.focus(); }
     } else {
       action.hidden = true;
-      hint.textContent = i === STEPS.length - 1 ? 'LAUNCHING' : 'PLEASE WAIT';
+      hint.textContent = i === STEPS.length - 1 ? '正在打开工作台…' : '请稍候…';
     }
   }
 
@@ -207,6 +197,36 @@
     clock.textContent = [d.getHours(), d.getMinutes(), d.getSeconds()]
       .map(function (n) { return String(n).padStart(2, '0'); })
       .join(':');
+  }
+
+  /* A saved local session means there is nothing to authorise: skip the
+     whole intro.  The bridge serves this page, so a same-origin probe is
+     safe and does not need any new backend surface.  Any failure keeps the
+     normal (already short) intro. */
+  function hasLocalSession() {
+    if (!window.fetch) return Promise.resolve(false);
+    var timer = null;
+    var opts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"args":{}}'
+    };
+    try {
+      var ctl = new AbortController();
+      opts.signal = ctl.signal;
+      timer = setTimeout(function () { ctl.abort(); }, 1500);
+    } catch (err) { /* no AbortController: rely on the browser timeout */ }
+    return fetch('/bridge/real_get_session', opts)
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        return !!(j && j.code === 200 && j.data &&
+          (j.data.token_present || j.data.token) && !j.data.disabled);
+      })
+      .catch(function () { return false; })
+      .then(function (found) {
+        if (timer) clearTimeout(timer);
+        return found;
+      });
   }
 
   function showPanel() {
@@ -271,6 +291,12 @@
   action.addEventListener('click', confirmStep);
   skip.addEventListener('click', finish);
   document.addEventListener('keydown', onKey, true);
+
+  if (!force) {
+    hasLocalSession().then(function (found) {
+      if (found && !done) finish();
+    });
+  }
 
   panelTimer = setTimeout(showPanel, PANEL_AT);
 })();
