@@ -9,8 +9,8 @@
 | 任务 | 分支 | 工作树 | 状态 |
 |---|---|---|---|
 | T1 轨迹几何 | `task/rm-core` | `_worktrees/route-memory/t1` | ✅ 已合并 `b0e4e93` |
-| T2 路线记忆核心 | `task/rm-memory` | `_worktrees/route-memory/t2` | 🟡 独立复审中，未合并 |
-| T3 路线记忆 Bridge | `task/rm-bridge` | 待建 | ⏳ 等 T2 合并 |
+| T2 路线记忆核心 | `task/rm-memory` | `_worktrees/route-memory/t2` | ✅ 已合并 `b50c543`（复审 PASS） |
+| T3 路线记忆 Bridge | `task/rm-bridge` | `_worktrees/route-memory/t3` | 🟡 进行中 |
 | T4 路线库前端 | `task/rm-frontend` | `_worktrees/route-memory/t4` | 🟡 已实现，等 T2/T3 合并后再审 |
 | T5 Agent 后端 | `task/rm-agent` | 待建 | ⏳ 等 T3 |
 | T6 验收 | `task/rm-acceptance` | 待建 | ⏳ 等 T4/T5/T9 |
@@ -32,11 +32,11 @@
 
 ## 下一步
 
-1. T2 独立复审通过 → 逐条回应 findings → 合并到 `plan/route-memory`。
-2. T2 合并后建 `task/rm-bridge`，实现 T3 并单独复审、单独合并。
-3. T3 稳定后再审 T4（前端），合并后启动 T9。
-4. T5 Agent 后端在 T3 之后单独做、单独合并。
-5. 最后 T0 + T6：全量测试 + `node --check` + 端到端不提交验证，写验收报告。
+1. 等 T3 worker 完成 → 读完整 diff → 独立复审 → 合并。
+2. T3 合并后再审 T4（前端），合并后启动 T9。
+3. T5 Agent 后端在 T3 之后单独做、单独合并。
+4. T0 基准与 T6 验收最后做；T0 合成轨迹要保证采样间距 ≥ 15 m，
+   否则独立噪声会把路径长度抬高 10–100%，圈长断言失真。
 
 ## 验收命令
 
