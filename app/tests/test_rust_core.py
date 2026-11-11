@@ -145,6 +145,34 @@ def test_device_profile_can_route_through_the_native_core():
     assert "core.call('device_generate'" in src
 
 
+@needs_core
+def test_native_run_core_keeps_the_columns_closed():
+    core = rustcore.get()
+    assert core is not None
+    out = core.call(
+        'run_core', total_meters=1000, total_seconds=360,
+        seg_m=[1000.0], seg_t=[360], pace_min_per_km=6.0,
+        n_points=72, cadence=150, total_steps=900,
+        t0=1_794_411_506_893, seed=7)
+    assert len(out['cum_before']) == 361
+    assert out['cum_before'][-1] == pytest.approx(1000.0, abs=1e-6)
+    assert len(out['times']) == 72
+    assert out['times'][0] == 0.0
+    assert out['times'][-1] == 360.0
+    assert sum(x['distance'] for x in out['speed_json']) == \
+        pytest.approx(1000.0, abs=0.01)
+    assert sum(x['stepsNum'] for x in out['step_freq_json']) == 900
+    assert len(out['segment_json']) == 12
+    assert sum(x['distance'] for x in out['segment_json']) == \
+        pytest.approx(1000.0, abs=0.01)
+
+
+def test_run_core_can_route_through_the_native_core():
+    src = (ROOT / 'replica' / 'domain' / 'rundata.py').read_text(encoding='utf-8')
+    assert "'run_core'" in src
+    assert '_pace_core_py' in src
+
+
 def test_frozen_builds_require_the_native_core(monkeypatch):
     import os
 

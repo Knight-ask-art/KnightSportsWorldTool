@@ -720,4 +720,5 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 上传体字段映射迁入 native，轨迹生成留在 Python | 上传体是服务器直接评分的对象，字段顺序、嵌套 JSON 和 `speed` 两次取整错一处就静默返回 10003；生成器随机过程多，整体迁走会放大回归面 | `build_upload_entity` 只接收 run/ctx，不读本地文件；`_build_upload_entity` 保留 Python 参考实现，两边共用 fixture |
 | OBS 轨迹对象迁入 native，旧点位兜底留在 Python | 回放页读的是 OBS 对象，27 键点列、30 秒窗口和分段表要与提交体交叉一致；`wire_points` 路径覆盖全部正常生成 | `conv_point`/`_cumulative` 的几何兜底只为手写测试载荷保留；native 只接 `wire_points` |
 | 设备指纹生成与 schema 校验迁入 native，文件与迁移留在 Python | 机型/系统/分辨率必须成对，服务端按这套指纹聚账号；收紧 schema 能直接减少「看起来像模拟器」的档案 | I/O、legacy 迁移、`audit_profile` 和 UI catalog 仍在 Python；`JHP_IOS_CHANCE` 由 Python 决定后传入 |
+| 跑量核心（配速曲线、10 s 窗口、30 s 分段）迁入 native，分段/几何留在 Python | 提交体与 OBS 都会按这些列交叉校验；核心列同源生成后，距离、步数、分段不再各算一遍 | Python 用 `getrandbits(64)` 播种，Rust 用自己的 PRNG；`_pace_core_py` 保留回退，随机流不要求与 CPython 一致 |
 | 下一批只考虑 rundata 生成器、device_profile | 这两块体积大、状态多，需要先把随机语义和纯函数边界钉死再迁 | 按 `45-native-core.md` 的顺序推进，每块保留 golden vector |

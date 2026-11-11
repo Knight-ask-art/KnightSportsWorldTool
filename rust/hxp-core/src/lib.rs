@@ -10,6 +10,8 @@ pub mod gt4;
 pub mod netsec;
 pub mod obs;
 pub mod pyval;
+pub mod rng;
+pub mod runcore;
 pub mod rundata;
 pub mod sign;
 

@@ -11,7 +11,7 @@ use std::io::{self, BufRead, Write};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use hxp_core::{device, gt4, netsec, obs, rundata, sign};
+use hxp_core::{device, gt4, netsec, obs, runcore, rundata, sign};
 use serde_json::{json, Value};
 
 fn string_map(value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
@@ -245,6 +245,8 @@ fn handle(req: &Value) -> Result<Value, String> {
             let platform = arg_str(&args, "platform")?;
             device::generate(now_ms, source, platform)
         }
+
+        "run_core" => runcore::build(&args),
 
         "self_test" => Ok(self_test()),
 

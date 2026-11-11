@@ -1101,147 +1101,57 @@ def _steps_done_at(windows: list, t_ms: int) -> float:
     return max(0.0, done)
 
 
-def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
-                      cadence: int = 150, center_lat: float | None = None,
-                      center_lng: float | None = None,
-                      rng: random.Random | None = None,
-                      waypoints: list | None = None,
-                      n_points: int | None = None,
-                      sample_seconds: float = 5.0,
-                      checkpoints: list | None = None,
-                      weight_kg: float = health.DEFAULT_WEIGHT_KG,
-                      altitude_base: float = 25.0,
-                      altitude_mode: str = 'auto',
-                      altitude_range: list | tuple | None = None,
-                      altitude_profile: list[float] | None = None,
-                      start_ms: int | None = None,
-                      closed: bool = True,
-                      run_uuid: str | None = None,
-                      km_times: list[float] | None = None,
-                      run_area_id: int | None = None,
-                      geo_fences: list | None = None,
-                      sequential: bool = False,
-                      pause_profile: str = 'none',
-                      pauses: list | None = None,
-                      gps_profile: str = 'urban',
-                      terrain_coupling: bool = False) -> dict:
-    """Full forged record. 2.5km default mirrors the verified mock sample.
+def _rng_seed(rng) -> int:
+    """One 64-bit seed for the native core.
 
-    waypoints=[(lat,lng),...] routes through those checkpoints; ``closed``
-    repeats a loop until the target distance is covered, while false keeps the
-    drawn start-to-end polyline open.
-    n_points defaults to one sample every `sample_seconds` (the app's own
-    cadence), floored at 25.
-
-    ``start_ms`` pins the run to an explicit Beijing timestamp (the backfill
-    feature).  When omitted the historical behaviour is kept: the run ends
-    1-5 s before `now`, which is what the reference client does.
-
-    ``altitude_mode``:
-      * ``auto`` – synthetic OU barometer around ``altitude_base``;
-      * ``fixed`` – every point at ``altitude_base`` (zero climb);
-      * ``range`` – synthetic profile mapped into ``altitude_range``;
-      * ``template`` – ``altitude_profile`` (parsed from local GPX/JSON),
-        optionally mapped into ``altitude_range``.
-
-    ``geo_fences`` is the live campus fence list (``points.py::fetch_fence``
-    ``fences``).  The official 7.4.0 client stores the same polygons in
-    ``PointJsonEntity.geoFencesJson``; an absent list serialises to ``null``.
-
-    ``km_times`` is the edited split table: seconds per kilometre, one entry
-    per full kilometre plus the remainder (``ceil(distance_km)`` entries).
-    When present it fixes the duration at the sum of the entries.  Without it
-    each kilometre is drawn independently around ``pace_min_per_km`` and the
-    draws are rescaled so the duration is exactly ``distance * pace``.
-
-    ``sequential`` keeps the checkpoints in the school's point-number order;
-    the official ``RunSeqLocationManager`` consumes them from index 0, so
-    reordering them to put mandatory points first would break the run.
+    The sidecar has its own PRNG; taking one draw from the caller keeps a
+    seeded run reproducible without trying to clone CPython's MT19937.
     """
-    # There is deliberately no built-in campus here.  Callers either pass the
-    # account's real fence centre or a route whose first point is the centre;
-    # silently defaulting to 江门/厦门 wrote accepted records in the wrong city.
-    if center_lat is None or center_lng is None:
-        if waypoints:
-            center_lat = float(waypoints[0][0])
-            center_lng = float(waypoints[0][1])
-        else:
-            raise ValueError(
-                'center_lat/center_lng required: no built-in campus')
-    center_lat, center_lng = float(center_lat), float(center_lng)
-    if not (-90.0 <= center_lat <= 90.0 and -180.0 <= center_lng <= 180.0):
-        raise ValueError('center_lat/center_lng out of range')
-    if abs(center_lat) < 1e-6 and abs(center_lng) < 1e-6:
-        raise ValueError('center_lat/center_lng is the 0/0 sentinel')
-    rng = rng or random
-    if not (distance_km > 0):
-        raise ValueError('distance_km must be > 0 (got %r)' % (distance_km,))
-    if not (pace_min_per_km > 0):
-        raise ValueError('pace_min_per_km must be > 0 (got %r)'
-                         % (pace_min_per_km,))
-    if not (cadence > 0):
-        raise ValueError('cadence must be > 0 (got %r)' % (cadence,))
-    total_meters = int(distance_km * 1000)
+    getrandbits = getattr(rng, 'getrandbits', None)
+    if getrandbits is None:
+        return int(random.SystemRandom().getrandbits(64))
+    return int(getrandbits(64))
 
-    # ---- per-kilometre targets -------------------------------------------
-    # ``km_times`` (seconds per kilometre, one entry per full km plus the
-    # remainder) is what the UI's split editor sends back.  Without it each
-    # kilometre gets its own random draw centred on the requested pace.  Either
-    # way the run duration is the sum of the split times, and the distance is
-    # the sum of the segment lengths.
-    n_km = max(1, int(math.ceil(distance_km - 1e-9)))
-    seg_m = [1000.0] * n_km
-    seg_m[-1] = max(1.0, float(total_meters) - 1000.0 * (n_km - 1))
-    if km_times is not None:
-        vals = [float(x) for x in km_times]
-        if len(vals) != n_km:
-            raise ValueError(
-                'km_times needs %d entries for %.2f km (got %d)'
-                % (n_km, distance_km, len(vals)))
-        if any(not math.isfinite(v) or v <= 0 for v in vals):
-            raise ValueError('km_times must be positive seconds')
-        total_seconds = int(round(sum(vals)))
-        if total_seconds <= 0:
-            raise ValueError('km_times sum rounds to 0 s')
-        seg_t = [max(1, int(round(v))) for v in vals]
-        seg_t[-1] = max(1, seg_t[-1] + total_seconds - sum(seg_t))
-        seg_t = _distinct_paces(seg_m, seg_t, total_seconds)
-    else:
-        target = int(distance_km * pace_min_per_km * 60)
-        if target <= 0:
-            raise ValueError('duration rounds to 0 s (distance*pace too small)')
-        base_t = [m / 1000.0 * pace_min_per_km * 60.0 for m in seg_m]
-        raw_t = [t * f for t, f in zip(base_t, _km_pace_factors(n_km, rng))]
-        # Each kilometre is its own random draw (up to +-12%, so the splits
-        # visibly differ); they are then scaled together so the sum is exactly
-        # the duration the pace field promises.
-        scale = target / max(1e-9, sum(raw_t))
-        seg_t = [max(1, int(round(t * scale))) for t in raw_t]
-        seg_t[-1] = max(1, seg_t[-1] + target - sum(seg_t))
-        seg_t = _distinct_paces(seg_m, seg_t, target)
-    # Terrain adjusts the split shape after either source (manual km_times or
-    # generated splits), but keeps the operator's total duration unchanged.
-    if terrain_coupling:
-        factors = _terrain_factors(altitude_profile, seg_m)
-        if factors:
-            base_total = sum(seg_t)
-            adjusted = [max(1, int(round(seg_t[i] * factors[i])))
-                        for i in range(n_km)]
-            scale = base_total / max(1, sum(adjusted))
-            seg_t = [max(1, int(round(v * scale))) for v in adjusted]
-            seg_t[-1] = max(1, seg_t[-1] + base_total - sum(seg_t))
-            seg_t = _distinct_paces(seg_m, seg_t, base_total)
-    total_seconds = sum(seg_t)
-    pace_min_per_km = total_seconds / 60.0 / max(1e-9, distance_km)
-    speed = round(float(total_meters) / total_seconds, 2)
-    total_steps = int(total_seconds / 60 * cadence)
-    pause_windows = _pause_windows(total_seconds, pause_profile, pauses, rng)
-    pause_total_s = sum(int(w['seconds']) for w in pause_windows)
 
-    if n_points is None:
-        n_points = max(N_POINTS, int(round(total_seconds / max(0.5, sample_seconds))))
-    n_points = int(n_points)
+def _pace_core(*, total_meters, total_seconds, seg_m, seg_t,
+               pace_min_per_km, n_points, cadence, total_steps, t0,
+               rng):
+    """Pace/window/segment core, native first."""
+    try:
+        from ..transport import rustcore
+        core = rustcore.get()
+        if core is not None:
+            return core.call(
+                'run_core',
+                total_meters=int(total_meters),
+                total_seconds=int(total_seconds),
+                seg_m=[float(v) for v in seg_m],
+                seg_t=[int(v) for v in seg_t],
+                pace_min_per_km=float(pace_min_per_km),
+                n_points=int(n_points),
+                cadence=int(cadence),
+                total_steps=int(total_steps),
+                t0=int(t0),
+                seed=_rng_seed(rng),
+            )
+    except rustcore.RustCoreUnavailable:
+        pass
+    return _pace_core_py(
+        total_meters=total_meters, total_seconds=total_seconds,
+        seg_m=seg_m, seg_t=seg_t, pace_min_per_km=pace_min_per_km,
+        n_points=n_points, cadence=cadence, total_steps=total_steps,
+        t0=t0, rng=rng)
 
+
+def _pace_core_py(*, total_meters, total_seconds, seg_m, seg_t,
+                  pace_min_per_km, n_points, cadence, total_steps, t0,
+                  rng):
+    """Python reference for the native run core.
+
+    Kept in sync with `rust/hxp-core/src/runcore.rs`; the native path is used
+    whenever the sidecar is available.
+    """
+    n_km = len(seg_m)
     # ---- pace profile (1 s clock, 10 s windows) ---------------------------
     # Built BEFORE the track: the sampled points must follow the same
     # acceleration / fatigue curve.  The old order produced a perfectly
@@ -1356,96 +1266,6 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
         times = [0.0]
     fracs = [frac_at(t) for t in times]
     fracs[0], fracs[-1] = 0.0, 1.0
-
-    locs = generate_route(
-        center_lat, center_lng, rng=rng, waypoints=waypoints,
-        n_points=n_points, target_m=total_meters,
-        alt_base=altitude_base, alt_mode=altitude_mode,
-        alt_range=altitude_range, alt_profile=altitude_profile,
-        closed=closed,
-        dist_fractions=fracs,
-        start_offset_m=(rng.uniform(20.0, 50.0) if closed else 0.0))
-    n_locs = len(locs)
-
-    # geometry -> cumulative distance -> time; this survives checkpoint
-    # snapping inserting an extra point and keeps distance/time consistent.
-    geo = [0.0]
-    for a, b in zip(locs, locs[1:]):
-        geo.append(geo[-1] + math.hypot(
-            (b['lat'] - a['lat']) * 110540.0,
-            (b['lng'] - a['lng']) * 111320.0
-            * math.cos(math.radians(a['lat']))))
-    total_geo = max(0.001, geo[-1])
-    grid = [i * 0.5 for i in range(int(total_seconds / 0.5) + 1)]
-    grid_d = [dist_at(t) for t in grid]
-
-    def time_at_frac(f):
-        target = max(0.0, min(1.0, f)) * total_meters
-        lo, hi = 0, len(grid) - 1
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if grid_d[mid] < target:
-                lo = mid + 1
-            else:
-                hi = mid
-        if lo <= 0:
-            return 0.0
-        d0, d1 = grid_d[lo - 1], grid_d[lo]
-        t0g, t1g = grid[lo - 1], grid[lo]
-        if d1 <= d0:
-            return t1g
-        return t0g + (t1g - t0g) * (target - d0) / (d1 - d0)
-
-    fracs_geo = [g / total_geo for g in geo]
-    fracs_geo[-1] = 1.0
-    if len(locs) == len(times):
-        # The sample clock is the truth.  Re-deriving it from the jittered
-        # geometry collapsed every stop (all the points share one position, so
-        # they all mapped to the same instant) and left 1 s / 23 s gaps around
-        # a traffic light.  ``times`` already carries the 5 s device grid.
-        point_times = list(times)
-    else:
-        # A checkpoint snap inserted a point: fall back to the geometric
-        # mapping so the inserted sample still lands between its neighbours.
-        point_times = [time_at_frac(f) for f in fracs_geo]
-
-    # retime points across the run duration; last point lands EXACTLY on
-    # t0 + total_ms so that stopTime == last ten-second bucket's endTime.
-    #
-    # The run ends 1-5 s before the submission, not at the exact instant of it:
-    # the reference starts at `now - dur - 5 s` and then adds a 0-4 s jitter
-    # (src/api/flow.rs L184), which puts stopTime 1-5 s in the past.  A stopTime
-    # identical to the request timestamp is a fingerprint in itself.
-    total_ms_run = total_seconds * 1000
-    if start_ms is None:
-        t0 = (safety.now_ms() - total_ms_run
-              - pause_total_s * 1000 - rng.randint(1000, 5000))
-    else:
-        t0 = int(start_ms)
-        if t0 <= 0:
-            raise ValueError('start_ms must be a positive epoch (got %r)'
-                             % (start_ms,))
-        wall_stop = t0 + total_ms_run + pause_total_s * 1000
-        if wall_stop > safety.now_ms() + 5000:
-            raise ValueError(
-                'pause makes stopTime in the future; choose an earlier start '
-                'or a shorter pause')
-    for i, p in enumerate(locs):
-        p['ts'] = t0 + int(round(point_times[i] * 1000))
-    for i in range(1, n_locs):
-        if locs[i]['ts'] <= locs[i - 1]['ts']:
-            locs[i]['ts'] = locs[i - 1]['ts'] + 1000
-        elif i < n_locs - 1 and locs[i]['ts'] - locs[i - 1]['ts'] < 2000:
-            # A snapped checkpoint can land less than a second after its
-            # neighbour; real samples are 2-4 s apart, so keep a 2 s floor.
-            locs[i]['ts'] = locs[i - 1]['ts'] + 2000
-    locs[-1]['ts'] = t0 + total_ms_run
-    # The 2 s floor is best-effort: when the last samples are crowded, it can
-    # push a point past the fixed stopTime and leave the final gap negative.
-    # Pull the interior points back instead of moving the end of the run.
-    for i in range(n_locs - 2, -1, -1):
-        if locs[i]['ts'] >= locs[i + 1]['ts']:
-            locs[i]['ts'] = locs[i + 1]['ts'] - 1000
 
     # SpeedPerTenSec: {beginTime,distance,endTime,flag,id,queueNum,state}
     speed_json = []
@@ -1593,6 +1413,273 @@ def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
             'state': 0,
         })
 
+    return {
+        'cum_before': cum_before,
+        'bucket_m': bucket_m,
+        'times': times,
+        'times_fracs': fracs,
+        'avg_mps': avg_mps,
+        'stop_ms': stop_ms,
+        'speed_json': speed_json,
+        'step_freq_json': step_freq_json,
+        'segment_json': segment_json,
+    }
+
+
+def generate_run_data(distance_km: float = 2.5, pace_min_per_km: float = 6.0,
+                      cadence: int = 150, center_lat: float | None = None,
+                      center_lng: float | None = None,
+                      rng: random.Random | None = None,
+                      waypoints: list | None = None,
+                      n_points: int | None = None,
+                      sample_seconds: float = 5.0,
+                      checkpoints: list | None = None,
+                      weight_kg: float = health.DEFAULT_WEIGHT_KG,
+                      altitude_base: float = 25.0,
+                      altitude_mode: str = 'auto',
+                      altitude_range: list | tuple | None = None,
+                      altitude_profile: list[float] | None = None,
+                      start_ms: int | None = None,
+                      closed: bool = True,
+                      run_uuid: str | None = None,
+                      km_times: list[float] | None = None,
+                      run_area_id: int | None = None,
+                      geo_fences: list | None = None,
+                      sequential: bool = False,
+                      pause_profile: str = 'none',
+                      pauses: list | None = None,
+                      gps_profile: str = 'urban',
+                      terrain_coupling: bool = False) -> dict:
+    """Full forged record. 2.5km default mirrors the verified mock sample.
+
+    waypoints=[(lat,lng),...] routes through those checkpoints; ``closed``
+    repeats a loop until the target distance is covered, while false keeps the
+    drawn start-to-end polyline open.
+    n_points defaults to one sample every `sample_seconds` (the app's own
+    cadence), floored at 25.
+
+    ``start_ms`` pins the run to an explicit Beijing timestamp (the backfill
+    feature).  When omitted the historical behaviour is kept: the run ends
+    1-5 s before `now`, which is what the reference client does.
+
+    ``altitude_mode``:
+      * ``auto`` – synthetic OU barometer around ``altitude_base``;
+      * ``fixed`` – every point at ``altitude_base`` (zero climb);
+      * ``range`` – synthetic profile mapped into ``altitude_range``;
+      * ``template`` – ``altitude_profile`` (parsed from local GPX/JSON),
+        optionally mapped into ``altitude_range``.
+
+    ``geo_fences`` is the live campus fence list (``points.py::fetch_fence``
+    ``fences``).  The official 7.4.0 client stores the same polygons in
+    ``PointJsonEntity.geoFencesJson``; an absent list serialises to ``null``.
+
+    ``km_times`` is the edited split table: seconds per kilometre, one entry
+    per full kilometre plus the remainder (``ceil(distance_km)`` entries).
+    When present it fixes the duration at the sum of the entries.  Without it
+    each kilometre is drawn independently around ``pace_min_per_km`` and the
+    draws are rescaled so the duration is exactly ``distance * pace``.
+
+    ``sequential`` keeps the checkpoints in the school's point-number order;
+    the official ``RunSeqLocationManager`` consumes them from index 0, so
+    reordering them to put mandatory points first would break the run.
+    """
+    # There is deliberately no built-in campus here.  Callers either pass the
+    # account's real fence centre or a route whose first point is the centre;
+    # silently defaulting to 江门/厦门 wrote accepted records in the wrong city.
+    if center_lat is None or center_lng is None:
+        if waypoints:
+            center_lat = float(waypoints[0][0])
+            center_lng = float(waypoints[0][1])
+        else:
+            raise ValueError(
+                'center_lat/center_lng required: no built-in campus')
+    center_lat, center_lng = float(center_lat), float(center_lng)
+    if not (-90.0 <= center_lat <= 90.0 and -180.0 <= center_lng <= 180.0):
+        raise ValueError('center_lat/center_lng out of range')
+    if abs(center_lat) < 1e-6 and abs(center_lng) < 1e-6:
+        raise ValueError('center_lat/center_lng is the 0/0 sentinel')
+    rng = rng or random
+    if not (distance_km > 0):
+        raise ValueError('distance_km must be > 0 (got %r)' % (distance_km,))
+    if not (pace_min_per_km > 0):
+        raise ValueError('pace_min_per_km must be > 0 (got %r)'
+                         % (pace_min_per_km,))
+    if not (cadence > 0):
+        raise ValueError('cadence must be > 0 (got %r)' % (cadence,))
+    total_meters = int(distance_km * 1000)
+
+    # ---- per-kilometre targets -------------------------------------------
+    # ``km_times`` (seconds per kilometre, one entry per full km plus the
+    # remainder) is what the UI's split editor sends back.  Without it each
+    # kilometre gets its own random draw centred on the requested pace.  Either
+    # way the run duration is the sum of the split times, and the distance is
+    # the sum of the segment lengths.
+    n_km = max(1, int(math.ceil(distance_km - 1e-9)))
+    seg_m = [1000.0] * n_km
+    seg_m[-1] = max(1.0, float(total_meters) - 1000.0 * (n_km - 1))
+    if km_times is not None:
+        vals = [float(x) for x in km_times]
+        if len(vals) != n_km:
+            raise ValueError(
+                'km_times needs %d entries for %.2f km (got %d)'
+                % (n_km, distance_km, len(vals)))
+        if any(not math.isfinite(v) or v <= 0 for v in vals):
+            raise ValueError('km_times must be positive seconds')
+        total_seconds = int(round(sum(vals)))
+        if total_seconds <= 0:
+            raise ValueError('km_times sum rounds to 0 s')
+        seg_t = [max(1, int(round(v))) for v in vals]
+        seg_t[-1] = max(1, seg_t[-1] + total_seconds - sum(seg_t))
+        seg_t = _distinct_paces(seg_m, seg_t, total_seconds)
+    else:
+        target = int(distance_km * pace_min_per_km * 60)
+        if target <= 0:
+            raise ValueError('duration rounds to 0 s (distance*pace too small)')
+        base_t = [m / 1000.0 * pace_min_per_km * 60.0 for m in seg_m]
+        raw_t = [t * f for t, f in zip(base_t, _km_pace_factors(n_km, rng))]
+        # Each kilometre is its own random draw (up to +-12%, so the splits
+        # visibly differ); they are then scaled together so the sum is exactly
+        # the duration the pace field promises.
+        scale = target / max(1e-9, sum(raw_t))
+        seg_t = [max(1, int(round(t * scale))) for t in raw_t]
+        seg_t[-1] = max(1, seg_t[-1] + target - sum(seg_t))
+        seg_t = _distinct_paces(seg_m, seg_t, target)
+    # Terrain adjusts the split shape after either source (manual km_times or
+    # generated splits), but keeps the operator's total duration unchanged.
+    if terrain_coupling:
+        factors = _terrain_factors(altitude_profile, seg_m)
+        if factors:
+            base_total = sum(seg_t)
+            adjusted = [max(1, int(round(seg_t[i] * factors[i])))
+                        for i in range(n_km)]
+            scale = base_total / max(1, sum(adjusted))
+            seg_t = [max(1, int(round(v * scale))) for v in adjusted]
+            seg_t[-1] = max(1, seg_t[-1] + base_total - sum(seg_t))
+            seg_t = _distinct_paces(seg_m, seg_t, base_total)
+    total_seconds = sum(seg_t)
+    pace_min_per_km = total_seconds / 60.0 / max(1e-9, distance_km)
+    speed = round(float(total_meters) / total_seconds, 2)
+    total_steps = int(total_seconds / 60 * cadence)
+    pause_windows = _pause_windows(total_seconds, pause_profile, pauses, rng)
+    pause_total_s = sum(int(w['seconds']) for w in pause_windows)
+
+    if n_points is None:
+        n_points = max(N_POINTS, int(round(total_seconds / max(0.5, sample_seconds))))
+    n_points = int(n_points)
+
+    total_ms_run = total_seconds * 1000
+    if start_ms is None:
+        t0 = (safety.now_ms() - total_ms_run
+              - pause_total_s * 1000 - rng.randint(1000, 5000))
+    else:
+        t0 = int(start_ms)
+        if t0 <= 0:
+            raise ValueError('start_ms must be a positive epoch (got %r)'
+                             % (start_ms,))
+        wall_stop = t0 + total_ms_run + pause_total_s * 1000
+        if wall_stop > safety.now_ms() + 5000:
+            raise ValueError(
+                'pause makes stopTime in the future; choose an earlier start '
+                'or a shorter pause')
+    core = _pace_core(
+        total_meters=total_meters, total_seconds=total_seconds,
+        seg_m=seg_m, seg_t=seg_t, pace_min_per_km=pace_min_per_km,
+        n_points=n_points, cadence=cadence, total_steps=total_steps,
+        t0=t0, rng=rng)
+    cum_before = core['cum_before']
+    bucket_m = core['bucket_m']
+    times = core['times']
+    fracs = core['times_fracs']
+    avg_mps = core['avg_mps']
+
+    def dist_at(sec):
+        if sec <= 0:
+            return 0.0
+        if sec >= total_seconds:
+            return cum_before[-1]
+        i = int(sec)
+        frac = sec - i
+        return cum_before[i] + (cum_before[i + 1] - cum_before[i]) * frac
+
+    locs = generate_route(
+        center_lat, center_lng, rng=rng, waypoints=waypoints,
+        n_points=n_points, target_m=total_meters,
+        alt_base=altitude_base, alt_mode=altitude_mode,
+        alt_range=altitude_range, alt_profile=altitude_profile,
+        closed=closed,
+        dist_fractions=fracs,
+        start_offset_m=(rng.uniform(20.0, 50.0) if closed else 0.0))
+    n_locs = len(locs)
+
+    # geometry -> cumulative distance -> time; this survives checkpoint
+    # snapping inserting an extra point and keeps distance/time consistent.
+    geo = [0.0]
+    for a, b in zip(locs, locs[1:]):
+        geo.append(geo[-1] + math.hypot(
+            (b['lat'] - a['lat']) * 110540.0,
+            (b['lng'] - a['lng']) * 111320.0
+            * math.cos(math.radians(a['lat']))))
+    total_geo = max(0.001, geo[-1])
+    grid = [i * 0.5 for i in range(int(total_seconds / 0.5) + 1)]
+    grid_d = [dist_at(t) for t in grid]
+
+    def time_at_frac(f):
+        target = max(0.0, min(1.0, f)) * total_meters
+        lo, hi = 0, len(grid) - 1
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if grid_d[mid] < target:
+                lo = mid + 1
+            else:
+                hi = mid
+        if lo <= 0:
+            return 0.0
+        d0, d1 = grid_d[lo - 1], grid_d[lo]
+        t0g, t1g = grid[lo - 1], grid[lo]
+        if d1 <= d0:
+            return t1g
+        return t0g + (t1g - t0g) * (target - d0) / (d1 - d0)
+
+    fracs_geo = [g / total_geo for g in geo]
+    fracs_geo[-1] = 1.0
+    if len(locs) == len(times):
+        # The sample clock is the truth.  Re-deriving it from the jittered
+        # geometry collapsed every stop (all the points share one position, so
+        # they all mapped to the same instant) and left 1 s / 23 s gaps around
+        # a traffic light.  ``times`` already carries the 5 s device grid.
+        point_times = list(times)
+    else:
+        # A checkpoint snap inserted a point: fall back to the geometric
+        # mapping so the inserted sample still lands between its neighbours.
+        point_times = [time_at_frac(f) for f in fracs_geo]
+
+    # retime points across the run duration; last point lands EXACTLY on
+    # t0 + total_ms so that stopTime == last ten-second bucket's endTime.
+    #
+    # The run ends 1-5 s before the submission, not at the exact instant of it:
+    # the reference starts at `now - dur - 5 s` and then adds a 0-4 s jitter
+    # (src/api/flow.rs L184), which puts stopTime 1-5 s in the past.  A stopTime
+    # identical to the request timestamp is a fingerprint in itself.
+    for i, p in enumerate(locs):
+        p['ts'] = t0 + int(round(point_times[i] * 1000))
+    for i in range(1, n_locs):
+        if locs[i]['ts'] <= locs[i - 1]['ts']:
+            locs[i]['ts'] = locs[i - 1]['ts'] + 1000
+        elif i < n_locs - 1 and locs[i]['ts'] - locs[i - 1]['ts'] < 2000:
+            # A snapped checkpoint can land less than a second after its
+            # neighbour; real samples are 2-4 s apart, so keep a 2 s floor.
+            locs[i]['ts'] = locs[i - 1]['ts'] + 2000
+    locs[-1]['ts'] = t0 + total_ms_run
+    # The 2 s floor is best-effort: when the last samples are crowded, it can
+    # push a point past the fixed stopTime and leave the final gap negative.
+    # Pull the interior points back instead of moving the end of the run.
+    for i in range(n_locs - 2, -1, -1):
+        if locs[i]['ts'] >= locs[i + 1]['ts']:
+            locs[i]['ts'] = locs[i + 1]['ts'] - 1000
+
+    speed_json = core['speed_json']
+    step_freq_json = core['step_freq_json']
+    segment_json = core['segment_json']
     # FivePoint: {flag,id,isFixed,isPass,lat,lon,pointName,state,glat,glon,position}
     #
     # When the live checkpoints are known they become the five points, mandatory

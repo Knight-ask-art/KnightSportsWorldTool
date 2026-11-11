@@ -200,7 +200,9 @@ def test_runs_start_at_different_points():
                                    (a['lng'] - b['lng']) * 111320))
     # The start is rotated 20-50 m along the loop, so different runs must not
     # begin on the exact same coordinate; the pair distance itself is random.
-    assert min(gaps) > 0.5, gaps
+    # Two loops can still pass within a metre of each other, so this only
+    # guards against coincidence, not against a minimum separation.
+    assert min(gaps) > 0.01, gaps
     assert max(gaps) > 10.0, gaps
 
 
