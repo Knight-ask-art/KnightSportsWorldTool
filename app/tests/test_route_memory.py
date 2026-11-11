@@ -734,7 +734,7 @@ def test_learn_200m_loop_tracks_are_one_template():
         raw = _make_circle(laps=3, seed=900 + i)
         tracks.append(
             _track_dict(raw, rrid=f'c200_{i}',
-                        distance_m=T.polyline_length_m(raw) * 3.0,
+                        distance_m=T.polyline_length_m(raw),
                         duration_s=450, start_ms=now_ms - i * 3600_000)
         )
     doc = RM.learn_from_tracks(tracks, owner='200:loop')
@@ -745,3 +745,22 @@ def test_learn_200m_loop_tracks_are_one_template():
     assert tpl['samples'] == 5
     assert 180.0 <= tpl['lap_m'] <= 250.0
     assert RM.summarize(doc)['status'] == 'ok'
+
+
+def test_learn_skips_flying_point_spike_and_forged_distance():
+    good = [
+        _track_dict(_make_rect(per_edge=10, laps=2), rrid=f'spike_ok{i}')
+        for i in range(5)
+    ]
+    base = _make_rect(per_edge=10, laps=2)
+    spiked = list(base[:60]) + [
+        (base[60][0] + 0.018, base[60][1]),
+        base[60],
+    ] + list(base[61:])
+    forged = _track_dict(spiked, rrid='spike', distance_m=1400.0)
+    doc = RM.learn_from_tracks(good + [forged], owner='u:spike')
+    assert doc['records_seen'] == 6
+    assert doc['records_readable'] == 5
+    assert doc['records_skipped'] == 1
+    assert len(doc['templates']) == 1
+    assert doc['templates'][0]['samples'] == 5

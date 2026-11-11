@@ -183,7 +183,8 @@ def apply_template(doc: dict, template_id: str, km: float,
 
 `learn_from_tracks` 规则：
 
-1. 过滤：`source != 'tool'`、`is_cheat == 0`、`complete is True`、点数 >= 20、距离 0.5–20 km。
+1. 过滤：`source != 'tool'`、`is_cheat == 0`、`complete is True`、点数 >= 20、距离 0.5–20 km；
+   单点前后跳变都超过 1000 m 的“飞点”整条剔除。
 2. `line` 先 `simplify`，再判断闭环；闭环先 `extract_loop` 取候选段，
    再用“锚定周期性”把它裁成恰好一圈（首尾回到起点才计数），
    最后 `canonical_loop`。200 m / 400 m 小圈同样适用。

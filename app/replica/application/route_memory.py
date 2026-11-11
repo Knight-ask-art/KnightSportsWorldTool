@@ -151,6 +151,23 @@ def _close_ring(pts: Sequence[tuple[float, float]]) -> list[tuple[float, float]]
     return ring
 
 
+def _has_flying_spike(
+    pts: Sequence[tuple[float, float]],
+    jump_m: float = 1000.0,
+) -> bool:
+    """A point that jumps away and back is a GPS/forged spike, not a route."""
+    if len(pts) < 2:
+        return False
+    if T.haversine_m(pts[0], pts[1]) > jump_m:
+        return True
+    if T.haversine_m(pts[-2], pts[-1]) > jump_m:
+        return True
+    for a, b, c in zip(pts, pts[1:], pts[2:]):
+        if T.haversine_m(a, b) > jump_m and T.haversine_m(b, c) > jump_m:
+            return True
+    return False
+
+
 def _looks_like_point(item: Any) -> bool:
     if isinstance(item, dict):
         return _mapping_coord(item) is not None
@@ -474,6 +491,8 @@ def learn_from_tracks(
 
         cleaned = _clean_line(item.get('line'))
         if len(cleaned) < MIN_TRACK_POINTS:
+            continue
+        if _has_flying_spike(cleaned):
             continue
 
         simplified = T.simplify(cleaned, 2.5, 400)
