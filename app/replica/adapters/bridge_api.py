@@ -4485,3 +4485,44 @@ class ReplicaApi:
 
     def startResize(self, _edge):
         return _ok(True)
+
+    # -- LLM settings & connection probe ---------------------------------------
+    def real_llm_settings(self):
+        from ..application import llm_settings
+        return _ok({
+            'settings': llm_settings.load(self.store_dir),
+            'protocols': llm_settings.presets(),
+        })
+
+    def real_llm_settings_save(self, payload=None, **kw):
+        from ..application import llm_settings
+        from ..application.credentials import CredentialError
+        if payload is not None and not isinstance(payload, dict):
+            return _fail('LLM 设置参数格式无效')
+        merged = dict(payload) if isinstance(payload, dict) else {}
+        if kw:
+            merged.update(kw)
+        try:
+            saved = llm_settings.save(self.store_dir, merged)
+        except (ValueError, CredentialError) as e:
+            return _fail(str(e))
+        return _ok({
+            'settings': saved,
+            'protocols': llm_settings.presets(),
+        })
+
+    def real_llm_settings_clear(self):
+        from ..application import llm_settings
+        return _ok({'cleared': bool(llm_settings.clear(self.store_dir))})
+
+    def real_llm_test(self):
+        from ..application import llm_client, llm_settings
+        settings = llm_settings.effective(self.store_dir)
+        if settings is None:
+            return _fail('LLM 未启用或未配置 API Key')
+        proxy = (os.environ.get('JHP_PROXY') or '').strip()
+        proxies = {'http': proxy, 'https': proxy} if proxy else None
+        res = llm_client.test_connection(settings, proxies=proxies)
+        if res.get('ok'):
+            return _ok(res)
+        return _fail(res.get('error') or '连接测试失败', data=res)
