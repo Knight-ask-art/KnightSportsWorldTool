@@ -81,6 +81,32 @@ def test_upload_entity_can_route_through_the_native_core():
     assert "core.call('upload_entity'" in src
 
 
+@needs_core
+def test_native_obs_object_matches_the_python_builder():
+    import base64
+    import gzip
+    import random
+
+    from replica.domain.rundata import generate_run_data
+    from replica.transport import obs
+
+    run = generate_run_data(1.0, 6.0, 150, center_lat=22.4108,
+                            center_lng=112.9408, rng=random.Random(7))
+    native = obs.build_obs_object(run, 1344757460, 'uuid-1', '2023110421', '[]')
+    reference = obs._build_obs_object(run, 1344757460, 'uuid-1', '2023110421', '[]')
+    assert list(native) == list(reference)
+    assert len(native) == 11
+    for key in native:
+        assert gzip.decompress(base64.b64decode(native[key])) == \
+            gzip.decompress(base64.b64decode(reference[key])), key
+
+
+def test_obs_object_can_route_through_the_native_core():
+    src = (ROOT / 'replica' / 'transport' / 'obs.py').read_text(encoding='utf-8')
+    assert "core.call('obs_object'" in src
+    assert 'wire_points' in src
+
+
 def test_frozen_builds_require_the_native_core(monkeypatch):
     import os
 

@@ -3,7 +3,7 @@ name = "hxp-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "好想跑 native core: NetSecKit envelope, request signing"
+description = "好想跑 native core: NetSecKit envelope, request signing, upload bodies"
 publish = false
 
 [lib]
@@ -25,6 +25,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 rand = "0.8"
 num-bigint-dig = "0.8"
+flate2 = "1"
 
 [profile.release]
 opt-level = "s"

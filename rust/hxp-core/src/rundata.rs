@@ -10,69 +10,12 @@
 
 use serde_json::{json, Map, Value};
 
+use crate::pyval::{py_int, py_round, py_round_n, truthy};
+
 fn as_map<'a>(value: &'a Value, what: &str) -> Result<&'a Map<String, Value>, String> {
     value
         .as_object()
         .ok_or_else(|| format!("{what} must be an object"))
-}
-
-/// Python truthiness for the value shapes that appear in run/ctx.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
-        Value::String(s) => !s.is_empty(),
-        Value::Array(a) => !a.is_empty(),
-        Value::Object(o) => !o.is_empty(),
-    }
-}
-
-/// Python `int(x)` for the value shapes that appear in run/ctx.
-fn py_int(value: &Value) -> i64 {
-    match value {
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                i
-            } else if let Some(u) = n.as_u64() {
-                u as i64
-            } else {
-                n.as_f64().unwrap_or(0.0) as i64
-            }
-        }
-        Value::Bool(flag) => i64::from(*flag),
-        Value::String(text) => {
-            let trimmed = text.trim();
-            if let Ok(i) = trimmed.parse::<i64>() {
-                i
-            } else if let Ok(f) = trimmed.parse::<f64>() {
-                f as i64
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    }
-}
-
-/// Python `round(x)` — nearest integer, ties to even.
-fn py_round(value: f64) -> f64 {
-    let floor = value.floor();
-    if value - floor == 0.5 {
-        if (floor as i64) % 2 == 0 {
-            floor
-        } else {
-            floor + 1.0
-        }
-    } else {
-        value.round()
-    }
-}
-
-/// Python `round(x, 2)`: Rust's fixed formatting rounds the exact binary value
-/// with ties to even, which is the rule CPython uses.
-fn py_round2(value: f64) -> f64 {
-    format!("{value:.2}").parse().unwrap_or(value)
 }
 
 fn get_or(map: &Map<String, Value>, key: &str, default: Value) -> Value {
@@ -225,7 +168,7 @@ pub fn build_upload_entity(run: &Value, ctx: &Value) -> Result<Value, String> {
     ent.insert("signature".to_string(), json!(""));
     ent.insert(
         "speed".to_string(),
-        json!(py_round(py_round2(min_per_km) * 1000.0) as i64),
+        json!(py_round(py_round_n(min_per_km, 2) * 1000.0) as i64),
     );
     ent.insert(
         "speedPerTenSec".to_string(),

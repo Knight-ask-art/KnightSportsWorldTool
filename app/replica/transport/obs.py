@@ -307,6 +307,26 @@ def _obs_windows(values: list, start_ms: int, rrid: int | None = None) -> list:
 
 
 def build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
+    """Assemble the OBS object.
+
+    Native assembly requires `wire_points` (the 27-key point column produced
+    with the record); hand-built legacy payloads keep the Python path because
+    they need `conv_point`/`_cumulative`.
+    """
+    if run.get('wire_points'):
+        try:
+            from . import rustcore
+            core = rustcore.get()
+            if core is not None:
+                return core.call('obs_object', run=run, rrid=rrid, uuid=uuid,
+                                 uid=uid, five_point_json=five_point_json or '')
+        except rustcore.RustCoreUnavailable:
+            pass
+    return _build_obs_object(run, rrid, uuid, uid, five_point_json)
+
+
+def _build_obs_object(run, rrid, uuid, uid, five_point_json='') -> dict:
+    """Python reference implementation (legacy points and fallback)."""
     start_ms = run['allLocJson'][0]['ts']
 
     # Prefer the 27-key points built alongside the record column: they already

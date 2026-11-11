@@ -11,7 +11,7 @@ use std::io::{self, BufRead, Write};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use hxp_core::{gt4, netsec, rundata, sign};
+use hxp_core::{gt4, netsec, obs, rundata, sign};
 use serde_json::{json, Value};
 
 fn string_map(value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
@@ -213,6 +213,18 @@ fn handle(req: &Value) -> Result<Value, String> {
             let run = args.get("run").ok_or("run required")?;
             let ctx = args.get("ctx").cloned().unwrap_or_else(|| json!({}));
             rundata::build_upload_entity(run, &ctx)
+        }
+
+        "obs_object" => {
+            let run = args.get("run").ok_or("run required")?;
+            let rrid = args.get("rrid").cloned().unwrap_or(Value::Null);
+            let uuid = args.get("uuid").cloned().unwrap_or(Value::Null);
+            let uid = args.get("uid").cloned().unwrap_or(Value::Null);
+            let five = args
+                .get("five_point_json")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            obs::build_obs_object(run, &rrid, &uuid, &uid, five)
         }
 
         "self_test" => Ok(self_test()),

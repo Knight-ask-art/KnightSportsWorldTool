@@ -71,7 +71,7 @@
       "file": "45-native-core.md",
       "category": "protocol",
       "tags": ["Rust", "sidecar", "NetSecKit", "签名", "GT4", "打包", "防逆向"],
-      "summary": "NetSecKit 信封、签名、GeeTest v4 payload 与上传体迁入 Rust sidecar 的边界、JSON 协议、构建/回退方式和后续迁移顺序。",
+      "summary": "NetSecKit 信封、签名、GeeTest v4 payload、上传体与 OBS 轨迹对象迁入 Rust sidecar 的边界、JSON 协议、构建/回退方式和后续迁移顺序。",
       "level": "A",
       "updated": "2026-11-11",
       "sources": ["rust/hxp-core", "app/replica/transport/rustcore.py", "docs/packaging.md"]

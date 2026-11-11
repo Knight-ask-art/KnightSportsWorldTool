@@ -7,6 +7,8 @@
 
 pub mod gt4;
 pub mod netsec;
+pub mod obs;
+pub mod pyval;
 pub mod rundata;
 pub mod sign;
 

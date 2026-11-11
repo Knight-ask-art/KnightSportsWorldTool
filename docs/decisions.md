@@ -718,4 +718,5 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | `JHP_RUST_CORE` 自动探测，`0` 强制 Python，`1` 要求 native；Nuitka 构建默认置 `1` | 源码运行/CI 没有 Rust 也能跑；排错时可以一键回到 Python；发布包不会静默退回可读实现 | 打包脚本缺 cargo 直接失败；frozen 构建丢 exe 时第一次加密调用即报错 |
 | GT4 只迁字段构造、PoW、AES/RSA，不迁图像识别 | `w` 的字节布局和动态 key 是最容易被逐字节抄走的部分；图像 Canny/ZNCC 调参频繁，留在 Python 更好排错 | `gt4_image.py` 继续纯 Python；`build_w` 的 modulus 由 Python 传入，native 不内置私钥/公钥选择逻辑 |
 | 上传体字段映射迁入 native，轨迹生成留在 Python | 上传体是服务器直接评分的对象，字段顺序、嵌套 JSON 和 `speed` 两次取整错一处就静默返回 10003；生成器随机过程多，整体迁走会放大回归面 | `build_upload_entity` 只接收 run/ctx，不读本地文件；`_build_upload_entity` 保留 Python 参考实现，两边共用 fixture |
+| OBS 轨迹对象迁入 native，旧点位兜底留在 Python | 回放页读的是 OBS 对象，27 键点列、30 秒窗口和分段表要与提交体交叉一致；`wire_points` 路径覆盖全部正常生成 | `conv_point`/`_cumulative` 的几何兜底只为手写测试载荷保留；native 只接 `wire_points` |
 | 下一批只考虑 rundata 生成器、device_profile | 这两块体积大、状态多，需要先把随机语义和纯函数边界钉死再迁 | 按 `45-native-core.md` 的顺序推进，每块保留 golden vector |
