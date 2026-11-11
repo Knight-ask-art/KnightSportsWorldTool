@@ -85,6 +85,12 @@ def test_announcements_are_data_driven_and_use_the_bundled_qr():
     assert '加群暗号：皮卡丘' in catalog
     assert '1125996019' not in catalog
     assert 'announcementNote' in ann_js
+    assert 'announcement-head' in ann_js
+    assert 'announcement-kicker' in ann_js
+    assert '<figure class="announcement-image-wrap"' in ann_js
+    assert '.announcement-kicker' in CSS
+    assert '.announcement-image-wrap' in CSS
+    assert 'announcement-rise' in CSS
     assert (FRONTEND / 'assets' / 'qq-group.jpg').is_file()
 
 

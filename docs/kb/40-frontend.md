@@ -61,15 +61,14 @@ app/frontend/
 |---|---|---|
 | 数据 | `app/replica/application/announcements.py` | `ANNOUNCEMENTS` 元组、`current()`、`by_id()` |
 | 桥 | `bridge_api.py::real_get_announcements` | 原样透传，不丢字段 |
-| 渲染 | `app/frontend/js/announcements.js` | 弹窗、图片、暗号、已读 |
+| 渲染 | `app/frontend/js/announcements.js` | 编辑式公告卡：masthead、衬线标题、纸框图片、暗号 callout、已读 |
 | 入口 | 设置 → 关于「加入 QQ 群」 | `data-announcement-id` 打开指定公告 |
 | 已读 | `data/ui_state.json` 的 `announcement_seen` | `{id: version}` |
 
 ### 字段
 
 必填：`id`、`version`、`title`。
-可选：`kicker`、`body`、`note`、`image`、`image_alt`、`meta`、`copy`、
-`copy_label`、`dismiss`、`ok`、`enabled`。
+可选：`kicker`、`body`、`note`、`image`、`image_alt`、`dismiss`、`ok`、`enabled`。
 
 当前 QQ 群公告：
 

@@ -1963,29 +1963,87 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 }
 
 /* ---------- in-app announcements ---------- */
-.announcement-card{width:min(430px,100%);text-align:center}
-.announcement-card .onboard-head{text-align:left}
-.announcement-body h2{margin-bottom:6px}
-.announcement-body p{margin-bottom:0}
+/* A quiet editorial notice: masthead rule, serif title, matte image plate and
+   a receipt-style meta strip.  Skins keep their own border/shadow via
+   .onboard-card; this layer only controls rhythm and type. */
+.announcement-card{
+  width:min(600px,100%);padding:24px 30px 20px;text-align:left;
+  animation:announcement-rise .26s cubic-bezier(.22,.8,.36,1) both;
+}
+@keyframes announcement-rise{
+  from{opacity:0;transform:translateY(10px)}
+  to{opacity:1;transform:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .announcement-card{animation:none}
+}
+.announcement-head{display:flex;align-items:center;gap:13px;text-align:left}
+.announcement-head::after{content:'';flex:1;order:1;height:1px;background:var(--rule)}
+.announcement-kicker{
+  display:inline-flex;align-items:center;gap:8px;
+  font:500 10.5px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;
+  color:var(--stamp);white-space:nowrap;
+}
+.announcement-kicker::before{
+  content:'';width:16px;height:1px;background:var(--stamp);display:inline-block;
+}
+.announcement-card .onboard-x{
+  order:2;width:28px;height:28px;border:0;border-radius:0;background:transparent;
+  color:var(--faint);font-size:20px;line-height:1;
+}
+.announcement-card .onboard-x:hover{
+  background:transparent;color:var(--ink);transform:none;
+}
+.announcement-body{padding-top:4px}
+.announcement-body h2{
+  max-width:24ch;margin:20px 0 10px;
+  font:400 30px/1.24 var(--hand);letter-spacing:.015em;color:var(--ink);
+  text-wrap:balance;
+}
+.announcement-body p{
+  max-width:54ch;margin:0;font-size:13.5px;line-height:1.75;color:var(--pencil);
+}
 .announcement-image-wrap{
-  width:min(300px,100%);margin:14px auto 10px;padding:10px;
-  background:#17171c;border:1.5px solid var(--ink);border-radius:12px;
-  box-shadow:4px 5px 0 rgba(36,35,31,.16);
+  width:fit-content;max-width:100%;margin:20px auto 4px;padding:12px;
+  background:var(--paper-3);border:1px solid var(--rule);box-shadow:var(--shadow);
 }
-.announcement-image-wrap img{display:block;width:100%;height:auto;border-radius:7px}
-.announcement-meta-row{
-  display:flex;align-items:center;justify-content:center;gap:10px;
-  margin:0 0 2px;font-size:12px;color:var(--pencil);
+.announcement-image-wrap img{
+  display:block;width:auto;max-width:100%;max-height:44vh;height:auto;
+  background:#fff;
 }
-.announcement-meta-row #announcementMeta{
-  font:600 15px/1 var(--mono);letter-spacing:.08em;color:var(--ink);
-}
-.announcement-meta-row .mini-link{padding:2px 6px}
 .announcement-note{
-  display:inline-block;margin:10px auto 0;padding:7px 12px;
-  border:1px dashed var(--stamp);border-radius:8px;
-  background:rgba(182,72,60,.06);color:var(--ink);
-  font:600 13px/1.4 var(--mono);letter-spacing:.04em;
+  margin:15px 0 0;padding:11px 14px;
+  border-left:3px solid var(--stamp);background:var(--paper-3);
+  color:var(--ink);font:500 12.5px/1.65 var(--sans);letter-spacing:.01em;
+}
+.announcement-card .onboard-foot{
+  margin-top:20px;padding-top:14px;border-top:1px solid var(--rule);
+}
+.announcement-card .onboard-never{font-size:10.5px}
+.announcement-card .onboard-never input{accent-color:var(--stamp)}
+@media (max-width:620px){
+  .announcement-card{padding:20px 20px 16px}
+  .announcement-body h2{font-size:23px;margin-top:14px;line-height:1.3}
+  .announcement-image-wrap{padding:9px}
+  .announcement-image-wrap img{max-height:38vh}
+}
+
+html[data-skin="paper"] .announcement-card{
+  padding:30px 34px 24px;
+  box-shadow:0 24px 70px -40px rgba(28,28,28,.45);
+}
+html[data-skin="paper"] .announcement-body h2{font-size:32px;letter-spacing:-.01em}
+html[data-skin="paper"] .announcement-kicker{letter-spacing:.24em}
+html[data-skin="paper"] .announcement-image-wrap{
+  background:#f1efeb;border-color:rgba(28,28,28,.12);box-shadow:none;
+}
+html[data-skin="paper"] .announcement-note{
+  background:#f1efeb;border-left-width:2px;
+  font-family:var(--sans);font-size:12.5px;letter-spacing:.01em;
+}
+@media (max-width:620px){
+  html[data-skin="paper"] .announcement-card{padding:22px 22px 18px}
+  html[data-skin="paper"] .announcement-body h2{font-size:25px}
 }
 
 /* ---------- official-style data preview ---------- */

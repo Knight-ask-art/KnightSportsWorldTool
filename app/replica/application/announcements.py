@@ -17,8 +17,7 @@ import time
 
 #: Publish a new notice by appending a dict here.
 #: Required keys: id, version, title.
-#: Optional keys: kicker, body, note, image, image_alt, meta, copy, copy_label,
-#: dismiss, ok, enabled.
+#: Optional keys: kicker, body, note, image, image_alt, dismiss, ok, enabled.
 ANNOUNCEMENTS = (
     {
         'id': 'qq-group-2026-11',

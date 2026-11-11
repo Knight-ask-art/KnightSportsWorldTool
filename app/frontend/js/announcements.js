@@ -50,20 +50,16 @@
     modal.innerHTML = `
       <div class="onboard-veil" data-ann-close></div>
       <section class="onboard-card announcement-card">
-        <header class="onboard-head">
-          <span class="tag ok" id="announcementKicker">公告</span>
+        <header class="announcement-head">
+          <span class="announcement-kicker" id="announcementKicker">公告</span>
           <button type="button" class="onboard-x" id="announcementClose" aria-label="关闭公告">×</button>
         </header>
         <div class="onboard-body announcement-body">
           <h2 id="announcementTitle"></h2>
           <p id="announcementText"></p>
-          <div class="announcement-image-wrap" id="announcementImageWrap" hidden>
+          <figure class="announcement-image-wrap" id="announcementImageWrap" hidden>
             <img id="announcementImage" alt="">
-          </div>
-          <div class="announcement-meta-row" id="announcementMetaRow" hidden>
-            <span id="announcementMeta"></span>
-            <button type="button" class="mini-link" id="announcementCopy" hidden></button>
-          </div>
+          </figure>
           <div class="announcement-note" id="announcementNote" hidden></div>
         </div>
         <footer class="onboard-foot">
@@ -82,14 +78,6 @@
     $('#announcementOk').addEventListener('click', () => close(true));
     modal.querySelector('[data-ann-close]').addEventListener(
       'click', () => close(true));
-    $('#announcementCopy').addEventListener('click', async () => {
-      const value = state.current && state.current.copy;
-      if(!value) return;
-      const ok = (typeof copyPlainText === 'function')
-        ? await copyPlainText(value) : false;
-      if(typeof toast === 'function')
-        toast(ok ? '已复制' : '复制失败，请手动选择');
-    });
     modal.addEventListener('keydown', ev => {
       if(ev.key === 'Escape'){ ev.preventDefault(); close(true); }
       else if(ev.key === 'Tab') trapTab(modal, ev);
@@ -123,6 +111,7 @@
     const wrap = $('#announcementImageWrap');
     const image = $('#announcementImage');
     if(item.image && safeImage(item.image)){
+      image.onerror = () => { wrap.hidden = true; };
       image.src = item.image;
       image.alt = item.image_alt || item.title || '公告图片';
       wrap.hidden = false;
@@ -130,14 +119,6 @@
       image.removeAttribute('src');
       wrap.hidden = true;
     }
-
-    const row = $('#announcementMetaRow');
-    const meta = $('#announcementMeta');
-    const copy = $('#announcementCopy');
-    meta.textContent = item.meta || '';
-    copy.textContent = item.copy_label || '复制';
-    copy.hidden = !item.copy;
-    row.hidden = !(item.meta || item.copy);
 
     const note = $('#announcementNote');
     note.textContent = item.note || '';
