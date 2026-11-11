@@ -141,7 +141,7 @@ def point_to_polyline_m(point: Point, line: Sequence[Point]) -> float:
 ```python
 SCHEMA_VERSION = 1
 THRESHOLD_M = 50.0
-MIN_LAP_M = 500.0
+MIN_LAP_M = 200.0
 MIN_TRACK_POINTS = 20
 MIN_DISTANCE_M = 500.0
 MAX_DISTANCE_M = 20000.0
