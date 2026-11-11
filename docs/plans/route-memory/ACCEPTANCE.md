@@ -9,7 +9,7 @@
 ```powershell
 cd app
 python -m pytest tests -q
-# 829 passed, 8 skipped
+# 832 passed, 8 skipped
 
 node --check frontend/js/app.js
 # exit 0
