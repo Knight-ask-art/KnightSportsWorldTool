@@ -278,6 +278,7 @@
           <div class="head-row">
             <h1><span id="ovGreeting">早上好</span><span class="date" id="ovDate"></span></h1>
             <div class="head-actions">
+              <img class="line-field-mark" src="line-field.svg" alt="" aria-hidden="true">
               <button class="btn small ghost" id="ovRefresh">刷新</button>
             </div>
           </div>
@@ -967,7 +968,7 @@
           <div class="head-row">
             <h1>记录<span class="date" id="recCount">—</span></h1>
             <div class="head-actions">
-              <button class="btn small ghost" id="recExport">导出 CSV</button>
+              <button class="btn small ghost" id="recExport" title="导出最近记录（最多 200 条）">导出 CSV</button>
               <button class="btn small ghost" id="recFit" disabled title="从选中的记录导出 FIT">FIT</button>
               <button class="btn small ghost" id="recStats" title="按本机回执与服务器记录统计（只读）">统计</button>
               <button class="btn small ghost" id="recDiagZip" disabled title="生成脱敏诊断 ZIP，不含 token/坐标">诊断包</button>
@@ -1090,6 +1091,7 @@
             <span class="chip" id="profUidChip">uid —</span>
             <span class="chip" id="profUnidChip">unid —</span>
           </div>
+          <img class="line-field-mark profile-line-field" src="line-field.svg" alt="" aria-hidden="true">
         </div>
 
         <div class="cols">
@@ -1169,6 +1171,11 @@
             <button type="button" class="skin-card" data-skin="paper" role="radio" aria-checked="true">
               <span class="skin-preview" aria-hidden="true"><span class="sp-side"></span><span class="sp-main"><span class="sp-line w72"></span><span class="sp-line w46"></span><span class="sp-cards"><i></i><i></i></span></span></span>
               <span class="skin-meta"><b>编辑杂志</b><small>暖米纸 · 衬线 · 发丝线</small></span>
+              <span class="skin-mark">已选</span>
+            </button>
+            <button type="button" class="skin-card" data-skin="manuscript" role="radio" aria-checked="false">
+              <span class="skin-preview" aria-hidden="true"><span class="sp-side"></span><span class="sp-main"><span class="sp-line w58"></span><span class="sp-line w72"></span><span class="sp-cards"><i></i><i></i></span></span></span>
+              <span class="skin-meta"><b>手稿笔记</b><small>Notion 式留白 · 楷体 · 荧光笔</small></span>
               <span class="skin-mark">已选</span>
             </button>
             <button type="button" class="skin-card" data-skin="poster" role="radio" aria-checked="false">

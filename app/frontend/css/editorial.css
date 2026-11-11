@@ -69,11 +69,12 @@ html[data-skin="paper"] .sheet.wide{max-width:1200px}
 html[data-skin="paper"] .cols{gap:48px}
 
 /* No rounded corners, no shadows anywhere in the redesigned surfaces. */
-html[data-skin="paper"] :is(#page-overview,#page-accounts,#page-run,#page-routes,#page-settings,#loginGate,.sidebar) *{
+html[data-skin="paper"] :is(#page-overview,#page-accounts,#page-run,#page-routes,#page-records,#page-profile,#page-settings,#loginGate,.sidebar) *{
   border-radius:0!important;
   box-shadow:none!important;
 }
 html[data-skin="paper"] :is(#page-overview,#page-accounts,#page-run,#page-routes,#page-settings,#loginGate,.sidebar) :is(.ink-ripple){border-radius:50%!important}
+html[data-skin="paper"] #page-overview .today-ring{border-radius:50%!important}
 
 /* ---------- sidebar ------------------------------------------------------ */
 html[data-skin="paper"] .sidebar{
@@ -166,10 +167,8 @@ html[data-skin="paper"] .sec-head{gap:12px;margin-bottom:16px}
 html[data-skin="paper"] .sec-head h2{
   font:400 28px/1.2 var(--hand);letter-spacing:-.01em;
 }
-html[data-skin="paper"] .sec-head h2::before{
-  content:"";display:inline-block;width:24px;height:1px;background:currentColor;
-  vertical-align:middle;margin-right:12px;opacity:.55;
-}
+/* Section headings stay plain: no dash/rule marker before the title. */
+html[data-skin="paper"] .sec-head h2::before{display:none}
 html[data-skin="paper"] .sec-head h2::after{display:none}
 html[data-skin="paper"] .sec-head .mini,
 html[data-skin="paper"] .mini,
@@ -224,58 +223,114 @@ html[data-skin="paper"] .btn.danger{color:var(--stamp)}
 html[data-skin="paper"] .btn:disabled{opacity:.35;background:transparent;color:var(--faint)}
 html[data-skin="paper"] .btn:disabled::before{display:none}
 
-/* 主行动按钮：黑框 + 左侧短线 + 上/下 key；hover 整块反色、key 收起。 */
-html[data-skin="paper"] .btn.primary,
+/* Login page only: brown-otter-21 black frame, left tick and key. */
 html[data-skin="paper"] .login-submit{
   border:2px solid var(--ink);background:transparent;color:var(--ink);
   padding:16px 30px 16px 48px;
   font:500 10.5px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;
   transition:background .3s ease,color .3s ease,padding .3s ease,border-color .3s ease;
 }
-html[data-skin="paper"] .btn.primary::before,
 html[data-skin="paper"] .login-submit::before{
   content:"";position:absolute;left:18px;top:50%;width:18px;height:2px;
   background:currentColor;transform:translateY(-50%);
   transition:width .3s linear,background .3s linear;
 }
-html[data-skin="paper"] .btn.primary::after,
 html[data-skin="paper"] .login-submit::after{
   content:"";position:absolute;right:28px;bottom:-2px;width:18px;height:2px;
   background:var(--paper);transition:width .5s ease-out,right .3s ease-out;
 }
-html[data-skin="paper"] .btn.primary:hover,
 html[data-skin="paper"] .login-submit:hover:not(:disabled){
   background:var(--ink);color:var(--paper);padding-left:40px;
 }
-html[data-skin="paper"] .btn.primary:hover::before,
 html[data-skin="paper"] .login-submit:hover:not(:disabled)::before{width:11px;background:var(--paper)}
-html[data-skin="paper"] .btn.primary:hover::after,
 html[data-skin="paper"] .login-submit:hover:not(:disabled)::after{width:0;right:0}
-html[data-skin="paper"] .btn.primary .btn-key,
 html[data-skin="paper"] .login-submit .btn-key{
   position:absolute;top:-2px;left:10px;width:18px;height:2px;background:var(--paper);
   transition:width .5s ease-out,left .3s ease-out;pointer-events:none;
 }
-html[data-skin="paper"] .btn.primary:hover .btn-key,
 html[data-skin="paper"] .login-submit:hover .btn-key{width:0;left:-2px}
-html[data-skin="paper"] .btn.primary:disabled{
-  border-color:rgba(28,28,28,.25);color:var(--faint);background:transparent;
+
+/* App primary buttons: quiet hairline rectangle; hover fills ink.  The loud
+   marquee is reserved for the run submit button only. */
+html[data-skin="paper"] .btn.primary{
+  position:relative;
+  border:1px solid var(--ink);border-radius:0;background:transparent;color:var(--ink);
+  padding:16px 34px;min-height:48px;
+  font:500 10px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;
+  transition:background .2s ease,color .2s ease,border-color .2s ease;
 }
-html[data-skin="paper"] .btn.small.primary{padding:12px 20px 12px 38px;font-size:10px}
-html[data-skin="paper"] .btn.small.primary::before{left:14px;width:14px}
-html[data-skin="paper"] .btn.small.primary:hover{padding-left:32px}
+html[data-skin="paper"] .btn.primary::before{display:none}
+html[data-skin="paper"] .btn.primary .btn-key{display:none}
+html[data-skin="paper"] .btn.primary:hover:not(:disabled){
+  background:var(--ink);color:var(--paper);padding:16px 34px;
+}
+html[data-skin="paper"] .btn.primary:disabled{
+  opacity:1;border-color:rgba(28,28,28,.22);background:transparent;
+  color:rgba(28,28,28,.45);
+}
+html[data-skin="paper"] .btn.small.primary{padding:11px 20px;min-height:40px;font-size:9.5px}
+/* One strong action on the overview: solid ink, then back to an outline. */
+html[data-skin="paper"] .today-actions .btn.primary{
+  border-color:var(--ink);background:var(--ink);color:var(--paper);
+}
+html[data-skin="paper"] .today-actions .btn.primary:hover:not(:disabled){
+  background:transparent;color:var(--ink);
+}
+
+/* Run panel submit keeps the Uiverse doniaskima/btn-23 marquee (MIT). */
+html[data-skin="paper"] #submitRun{
+  overflow:hidden;border:0;background:var(--ink);color:var(--paper);
+  padding:17px 38px;min-height:52px;
+}
+html[data-skin="paper"] #submitRun .text{
+  position:relative;z-index:1;display:grid;place-items:center;
+  transition:opacity .2s ease;
+}
+html[data-skin="paper"] #submitRun .marquee{
+  --spacing:10em;--start:0em;--end:10em;
+  position:absolute;inset:0;display:grid;place-items:center;
+  white-space:nowrap;opacity:0;pointer-events:none;
+  animation:editorial-marquee 1s linear infinite;
+  animation-play-state:paused;
+  transition:opacity .2s ease;
+  text-shadow:var(--paper) var(--spacing) 0,
+              var(--paper) calc(var(--spacing) * -1) 0,
+              var(--paper) calc(var(--spacing) * -2) 0;
+}
+html[data-skin="paper"] #submitRun:hover:not(:disabled){
+  background:var(--ink);color:var(--paper);padding:17px 38px;
+}
+html[data-skin="paper"] #submitRun:hover:not(:disabled) .text{opacity:0}
+html[data-skin="paper"] #submitRun:hover:not(:disabled) .marquee{
+  opacity:1;animation-play-state:running;
+}
+html[data-skin="paper"] #submitRun:disabled{
+  opacity:1;border:1px solid rgba(28,28,28,.22);background:transparent;
+  color:rgba(28,28,28,.45);
+}
+html[data-skin="paper"] #submitRun:disabled .marquee{display:none}
+@keyframes editorial-marquee{
+  0%{transform:translateX(var(--start))}
+  100%{transform:translateX(var(--end))}
+}
 
 /* ---------- links, filters, tabs ---------------------------------------- */
 html[data-skin="paper"] a{color:var(--ink);border-bottom:1px solid rgba(28,28,28,.3)}
 html[data-skin="paper"] a:hover{background:transparent;border-bottom-color:var(--stamp);color:var(--stamp)}
 html[data-skin="paper"] .filter-row{gap:20px;border-bottom:1px solid rgba(28,28,28,.1);padding-bottom:0;margin-bottom:24px}
 html[data-skin="paper"] .filter{
-  border:0;background:transparent;color:var(--faint);padding:8px 0 10px;
+  border:0;background:transparent;color:var(--faint);padding:10px 0 12px;
   font:500 9.5px/1.4 var(--sans);letter-spacing:.18em;text-transform:uppercase;
-  border-bottom:2px solid transparent;margin-bottom:-1px;
+  border-bottom:1px solid transparent;margin-bottom:-1px;
 }
 html[data-skin="paper"] .filter:hover{background:transparent;color:var(--ink)}
-html[data-skin="paper"] .filter.active{background:transparent;color:var(--ink);border-bottom-color:var(--stamp)}
+html[data-skin="paper"] .filter.active{
+  background:transparent;color:var(--ink);border-bottom-color:var(--ink);
+}
+html[data-skin="paper"] .filter.active::before{
+  content:"";display:inline-block;width:5px;height:5px;background:var(--stamp);
+  margin-right:7px;vertical-align:1px;
+}
 
 /* ---------- forms ------------------------------------------------------- */
 html[data-skin="paper"] .field-line label,
@@ -327,11 +382,29 @@ html[data-skin="paper"] .today-panel{
 }
 html[data-skin="paper"] .today-main h2{font:400 36px/1.15 var(--hand);letter-spacing:-.01em;margin:4px 0 6px}
 html[data-skin="paper"] .today-main p{font-size:12px;color:var(--pencil)}
+html[data-skin="paper"] .today-actions{gap:18px;align-items:center}
+html[data-skin="paper"] .today-actions .btn{margin-left:0}
+html[data-skin="paper"] .today-actions .btn.ghost{
+  padding:6px 0;color:var(--pencil);
+  border-bottom:1px solid rgba(28,28,28,.25);
+}
+html[data-skin="paper"] .today-actions .btn.ghost:hover{
+  color:var(--ink);border-bottom-color:var(--ink);
+}
 html[data-skin="paper"] .today-ring{
-  width:78px;height:78px;transform:none;border:1px solid rgba(28,28,28,.4);
+  position:relative;width:84px;height:84px;transform:none;
+  border:1px solid rgba(28,28,28,.35);border-radius:50%;
   background:transparent;
 }
-html[data-skin="paper"] .today-ring b{font:400 30px/1 var(--hand)}
+html[data-skin="paper"] .today-ring::before{
+  content:"";position:absolute;inset:5px;border-radius:50%;
+  border:1px solid rgba(28,28,28,.12);pointer-events:none;
+}
+html[data-skin="paper"] .today-ring b{font:400 32px/1 var(--hand);letter-spacing:-.02em}
+html[data-skin="paper"] .today-ring span{
+  display:block;margin-top:3px;font:500 8.5px/1.2 var(--sans);
+  letter-spacing:.12em;color:var(--faint);
+}
 html[data-skin="paper"] .stat-strip{border-top:1px solid rgba(28,28,28,.1);padding-top:20px}
 html[data-skin="paper"] .stat{border-left:1px solid rgba(28,28,28,.1);padding:0 20px}
 html[data-skin="paper"] .stat:first-child{padding-left:0;border-left:0}
@@ -466,7 +539,6 @@ html[data-skin="paper"] .login-card.loading{
 html[data-skin="paper"] .login-card.loading > :not(.login-loader){display:none!important}
 
 /* ---------- overview specifics ----------------------------------------- */
-html[data-skin="paper"] .today-actions .btn{margin-left:8px}
 html[data-skin="paper"] .plan-row{border-top:1px solid rgba(28,28,28,.1);padding:8px 0}
 html[data-skin="paper"] .plan-row .pf{border-bottom:1px solid rgba(28,28,28,.3);color:var(--ink);font-size:9px}
 html[data-skin="paper"] .inspect-list,
@@ -673,6 +745,52 @@ html[data-skin="paper"] .account-hero .avatar.big{width:64px;height:64px;font-si
 html[data-skin="paper"] .account-hero .chips{gap:8px}
 html[data-skin="paper"] .simple-table .trow{padding:12px 4px}
 
+/* ---------- quantized line field ---------------------------------------- */
+/* The brand mark sampled into four stroke widths (1–4px).  Decorative only:
+   the overview header and the profile hero carry the motif, not every screen. */
+html[data-skin="paper"] .line-field-mark{
+  width:150px;height:82px;margin-right:18px;opacity:.85;user-select:none;
+}
+html[data-skin="paper"] .profile-line-field{
+  width:132px;height:72px;margin:0 0 0 12px;opacity:.7;
+  animation:line-field-drift 28s ease-in-out infinite alternate;
+}
+@keyframes line-field-drift{
+  from{transform:translate3d(0,0,0)}
+  to{transform:translate3d(-10px,4px,0)}
+}
+
+/* ---------- typography corrections -------------------------------------- */
+/* Georgia's old-style figures turn 800 into 8oo; force lining/tabular. */
+html[data-skin="paper"]{
+  font-variant-numeric:lining-nums tabular-nums;
+  font-feature-settings:"lnum" 1,"tnum" 1;
+}
+html[data-skin="paper"] :is(.stat b,.today-ring b,.semester-stats b,.route-km,
+  .map-note b,.model-score,.record-row .rkm,.simple-table .trow,.mono,
+  .param-hero b,.split-chip b){
+  font-variant-numeric:lining-nums tabular-nums;
+  font-feature-settings:"lnum" 1,"tnum" 1;
+}
+/* Chinese words should not carry Western display tracking. */
+html[data-skin="paper"] :is(.eyebrow,.nav-label,.side-meta,.sec-head .mini,
+  .stat span,.tag,.chip,.filter,.rtab,.btn,.btn.primary,.field-line label,
+  .detail-row span,.mini,.hint,.summary,.route-tag,.skin-meta small,
+  .account-hero .meta,.adv-box summary,.alt-modes button){
+  letter-spacing:.04em;
+}
+html[data-skin="paper"] :is(.mono,.date,.nav-count,.rrid){letter-spacing:.08em}
+/* Keep the smallest Chinese labels legible. */
+html[data-skin="paper"] :is(.tag,.chip,.route-tag){font-size:11px}
+html[data-skin="paper"] :is(.eyebrow,.side-meta,.stat span,.account-hero .meta){
+  font-size:10.5px;
+}
+html[data-skin="paper"] :is(.filter,.rtab,.btn,.btn.primary,.adv-box summary,
+  .alt-modes button){font-size:11px}
+/* Switch state must read at a glance: filled track = on. */
+html[data-skin="paper"] .switch{border-color:rgba(28,28,28,.35);background:rgba(28,28,28,.06)}
+html[data-skin="paper"] .switch.on{background:var(--stamp);border-color:var(--stamp)}
+
 /* ---------- interactions ------------------------------------------------ */
 html[data-skin="paper"] .page.active:not(.page-run) > .sheet > *{
   animation:editorial-rise .5s cubic-bezier(.16,1,.3,1) both;
@@ -683,17 +801,22 @@ html[data-skin="paper"] .page.active:not(.page-run) > .sheet > *{
 }
 @media (prefers-reduced-motion:reduce){
   html[data-skin="paper"] .page.active:not(.page-run) > .sheet > *{animation:none}
+  html[data-skin="paper"] .profile-line-field{animation:none!important}
   html[data-skin="paper"] .btn,
   html[data-skin="paper"] .btn::before,
-  html[data-skin="paper"] .btn.primary::before,
-  html[data-skin="paper"] .btn.primary::after,
+  html[data-skin="paper"] #submitRun .marquee,
   html[data-skin="paper"] .btn-key,
   html[data-skin="paper"] .login-submit,
   html[data-skin="paper"] .login-submit::before,
   html[data-skin="paper"] .login-submit::after{transition:none!important}
+  html[data-skin="paper"] #submitRun .marquee{animation:none!important;opacity:0!important}
+  html[data-skin="paper"] #submitRun:hover:not(:disabled) .text{opacity:1}
 }
 
 /* ---------- responsive -------------------------------------------------- */
+@media (max-width:1100px){
+  html[data-skin="paper"] .line-field-mark{display:none}
+}
 @media (max-width:980px){
   html[data-skin="paper"] .sheet{padding:32px 24px 72px}
   html[data-skin="paper"] .cols{gap:32px}

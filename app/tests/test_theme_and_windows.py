@@ -243,6 +243,8 @@ def test_ui_state_skin_roundtrip(tmp_path):
     api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
                      str(tmp_path))
     assert api.real_get_ui_state()['data']['skin'] == 'paper'
+    assert api.real_set_ui_state(skin='manuscript')['code'] == 200
+    assert api.real_get_ui_state()['data']['skin'] == 'manuscript'
     assert api.real_set_ui_state(skin='poster')['code'] == 200
     assert api.real_get_ui_state()['data']['skin'] == 'poster'
     assert api.real_set_ui_state(skin='not-a-skin')['code'] != 200
@@ -283,6 +285,10 @@ def test_index_loads_skin_system_before_styles():
     assert index.index('css/skins.css') < index.index('css/editorial.css')
     assert 'id="skinGrid"' in index
     assert 'id="windowRows"' in index
+    # The quantized line field is limited to the overview header and profile hero.
+    assert 'class="line-field-mark"' in index
+    assert 'class="line-field-mark profile-line-field"' in index
+    assert 'line-field.svg' in index
 
 
 def test_editorial_skin_uses_the_magazine_tokens_and_keeps_splash_out():
@@ -299,18 +305,41 @@ def test_editorial_skin_uses_the_magazine_tokens_and_keeps_splash_out():
     assert '.login-card.collapsed .login-tape::before' in css
     assert '.login-card.collapsed .login-tape::after' in css
     assert 'translateX(100%)' in css
+    # Only the run submit uses the marquee; the login button keeps the key.
+    assert 'editorial-marquee' in css
+    assert '#submitRun .marquee' in css
+    assert '.login-submit .btn-key' in css
+    # Records/profile keep the same square corners; filters use a straight rule.
+    assert '#page-records,#page-profile' in css
+    assert '.filter.active::before' in css
+    # Lining figures and a Chinese-friendly tracking cap.
+    assert 'lining-nums' in css
+    assert 'letter-spacing:.04em' in css
+    assert 'line-field-drift' in css
     # The startup animation is intentionally untouched.
     assert '#bootSplash' not in css
     assert '.boot' not in css
 
 
-def test_primary_button_uses_the_fancy_key_interaction():
+def test_quantized_line_field_asset_uses_four_stroke_widths():
+    with open(os.path.join(ROOT, 'frontend', 'line-field.svg'),
+              encoding='utf-8') as fh:
+        svg = fh.read()
+    assert 'viewBox="0 0 220 120"' in svg
+    for width in (1, 2, 3, 4):
+        assert f'width="{width}"' in svg
+
+
+def test_login_keeps_the_key_and_only_submit_uses_the_marquee():
     with open(os.path.join(ROOT, 'frontend', 'js', 'app.js'),
               encoding='utf-8') as fh:
         app = fh.read()
     assert 'function decoratePrimaryButtons' in app
-    assert "querySelectorAll('.btn.primary, .login-submit')" in app
+    assert "querySelectorAll('.login-submit')" in app
+    assert "querySelectorAll('#submitRun')" in app
     assert "className = 'btn-key'" in app
+    assert "className = 'marquee'" in app
+    assert "setAttribute('aria-hidden', 'true')" in app
 
 
 def _luminance(hex_color):
@@ -341,6 +370,27 @@ def test_altitude_chart_autofits_instead_of_starting_at_zero():
               encoding='utf-8') as fh:
         app = fh.read()
     assert "tight:true, minSpan:4" in app
+
+
+def test_manuscript_skin_stays_available_in_appearance():
+    # The original paper look (KaiTi + highlighter + sketch borders) must stay
+    # selectable after the editorial paper rework.
+    with open(os.path.join(ROOT, 'frontend', 'index.html'),
+              encoding='utf-8') as fh:
+        index = fh.read()
+    with open(os.path.join(ROOT, 'frontend', 'js', 'app.js'),
+              encoding='utf-8') as fh:
+        app = fh.read()
+    with open(os.path.join(ROOT, 'frontend', 'css', 'skins.css'),
+              encoding='utf-8') as fh:
+        css = fh.read()
+    assert 'data-skin="manuscript"' in index
+    assert '手稿笔记' in index
+    assert "manuscript: {name: '手稿笔记'" in app
+    assert '[data-skin="manuscript"]' in css
+    assert 'html:not([data-skin="paper"]) .line-field-mark' in css
+    from replica.application import preferences
+    assert 'manuscript' in preferences.SKINS
 
 
 def test_new_skins_keep_small_text_above_aa_contrast():

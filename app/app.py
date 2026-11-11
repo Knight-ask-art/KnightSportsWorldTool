@@ -121,6 +121,10 @@ def main():
         return
 
     import webview
+    # pywebview cancels every download by default, so the CSV / FIT / GPX /
+    # diagnostics exports silently did nothing in the desktop window.  The
+    # handler then shows a native Save-As dialog.
+    webview.settings['ALLOW_DOWNLOADS'] = True
     webview.create_window('好想跑', url,
                           width=1280, height=820, min_size=(980, 640))
     # pywebview's WinForms backend loads this into Form.Icon.  Without it the

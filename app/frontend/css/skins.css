@@ -28,8 +28,34 @@
   --skin-texture:none;
 }
 
-/* ---------- paper / default --------------------------------------------- */
-[data-skin="paper"]{
+/* The quantized line field belongs to the editorial paper skin only; other
+   skins should not stretch the raw SVG in the header or profile hero. */
+html:not([data-skin="paper"]) .line-field-mark{display:none}
+
+/* ---------- paper / default --------------------------------------------- */[data-skin="paper"]{
+  --surface:var(--paper-2);
+  --surface-2:var(--paper-3);
+  --card-bg:#FBF8F0;
+  --card-line:#E4D9C3;
+  --sidebar-bg:#F7F2E4;
+  --sidebar-ink:#5D594D;
+  --sidebar-muted:#6A6458;
+  --sidebar-line:#E7DECA;
+  --sidebar-hover:#EFE7D5;
+  --nav-active:#F6E2A4;
+  --accent:var(--ink-blue);
+  --accent-2:var(--stamp);
+  --radius-card:10px;
+  --radius-control:6px;
+  --skin-texture:none;
+}
+
+/* ---------- manuscript / 手稿笔记 ---------------------------------------- */
+/* The original paper look: warm paper, KaiTi titles, highlighter, sketchy
+   borders.  Kept as its own skin so the editorial paper skin does not erase
+   the earlier direction.  No extra rules needed: this is the app.css baseline
+   plus the shared aliases above. */
+[data-skin="manuscript"]{
   --surface:var(--paper-2);
   --surface-2:var(--paper-3);
   --card-bg:#FBF8F0;
@@ -325,7 +351,8 @@ html[data-skin="poster"] .login-submit:active:not(:disabled){transform:translate
 
 /* Boot splash follows the same skin so a night-time poster user does not get
    a white flash before the login gate. */
-[data-skin="paper"] .boot{
+[data-skin="paper"] .boot,
+[data-skin="manuscript"] .boot{
   --boot-ink:#24231f;
   --boot-paper-2:#ffffff;
   --boot-stamp:#b6483c;

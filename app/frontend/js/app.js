@@ -2810,10 +2810,11 @@ const LIVE = {
 
 /* ---------------- appearance skins ---------------- */
 const SKIN_META = {
-  paper:   {name: '编辑杂志', hint: '暖米纸 · 衬线 · 发丝线'},
-  poster:  {name: '赛场海报', hint: '粗体 · 硬边 · 信号红'},
-  minimal: {name: '极简白',   hint: '留白 · 细线 · 单强调色'},
-  archive: {name: '复古档案', hint: '牛皮纸 · 打字机 · 红章'}
+  paper:      {name: '编辑杂志', hint: '暖米纸 · 衬线 · 发丝线'},
+  manuscript: {name: '手稿笔记', hint: 'Notion 式留白 · 楷体 · 荧光笔'},
+  poster:     {name: '赛场海报', hint: '粗体 · 硬边 · 信号红'},
+  minimal:    {name: '极简白',   hint: '留白 · 细线 · 单强调色'},
+  archive:    {name: '复古档案', hint: '牛皮纸 · 打字机 · 红章'}
 };
 const SKIN_KEY = 'hxp_skin';
 function normalizeSkin(skin){
@@ -6446,13 +6447,33 @@ async function selectRecord(i){
   $('#rdCopy').dataset.rrid = x.rrid || r.rrid || '';
   renderRecordMap(d);
 }
-function exportRecordsCsv(){
-  if(!LIVE.records.length){ toast('没有可导出的记录'); return; }
-  const rows = [['date','distance_km','duration_s','pace_min_per_km','state','complete','normal_run','status_code','rrid']];
-  LIVE.records.forEach(r => rows.push([r.date || '', (+r.distance_km || 0).toFixed(3), r.duration_s || 0, (+r.pace_min_per_km || 0).toFixed(2), recordState(r), r.complete ? 1 : 0, r.normal_run === null || r.normal_run === undefined ? '' : r.normal_run, r.status_code === null || r.status_code === undefined ? '' : r.status_code, r.rrid || '']));
-  const csv = rows.map(x => x.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join(String.fromCharCode(13,10));
-  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
-  saveBlob(blob, 'haoxiangpao-records.csv');
+async function exportRecordsCsv(){
+  const btn = $('#recExport');
+  const fallback = LIVE.records || [];
+  if(!fallback.length && !hasSession()){ toast('没有可导出的记录'); return; }
+  if(btn){ btn.disabled = true; btn.textContent = '读取中…'; }
+  try{
+    // The table only loads the newest 20 rows.  Export should cover the
+    // operator's own runs, so ask the backend for the full recent list
+    // (capped at 200) and fall back to whatever is already on screen.
+    let records = fallback;
+    if(hasSession()){
+      const j = await liveMaybe('real_recent_records', {limit: 200}, 120000);
+      if(liveOk(j) && j.data && Array.isArray(j.data.records) && j.data.records.length){
+        records = j.data.records;
+      }
+    }
+    if(!records.length){ toast('没有可导出的记录'); return; }
+    const rows = [['date','distance_km','duration_s','pace_min_per_km','state','complete','normal_run','status_code','rrid']];
+    records.forEach(r => rows.push([r.date || '', (+r.distance_km || 0).toFixed(3), r.duration_s || 0, (+r.pace_min_per_km || 0).toFixed(2), recordState(r), r.complete ? 1 : 0, r.normal_run === null || r.normal_run === undefined ? '' : r.normal_run, r.status_code === null || r.status_code === undefined ? '' : r.status_code, r.rrid || '']));
+    const csv = rows.map(x => x.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join(String.fromCharCode(13,10));
+    const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+    saveBlob(blob, 'haoxiangpao-records.csv');
+    liveLog('导出 CSV', records.length + ' 条记录', 'ok');
+    toast('已导出 ' + records.length + ' 条记录');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '导出 CSV'; }
+  }
 }
 
 /* ---------------- route library ---------------- */
@@ -9759,12 +9780,31 @@ document.addEventListener('keydown', ev => {
    short paper-coloured key that retracts on hover.  The bottom key is drawn
    with ::after; the top one needs a real node. */
 function decoratePrimaryButtons(root){
-  (root || document).querySelectorAll('.btn.primary, .login-submit').forEach(btn => {
+  const scope = root || document;
+  // The login gate keeps the brown-otter key segment.
+  scope.querySelectorAll('.login-submit').forEach(btn => {
     if(btn.querySelector('.btn-key')) return;
     const key = document.createElement('span');
     key.className = 'btn-key';
     key.setAttribute('aria-hidden', 'true');
     btn.appendChild(key);
+  });
+  // Only the run submit button carries the Uiverse marquee duplicate.  Other
+  // primary buttons stay quiet; the marquee must not spread across the app.
+  scope.querySelectorAll('#submitRun').forEach(btn => {
+    if(btn.querySelector(':scope > .text') &&
+       btn.querySelector(':scope > .marquee')) return;
+    const label = (btn.textContent || '').trim();
+    btn.textContent = '';
+    const text = document.createElement('span');
+    text.className = 'text';
+    text.textContent = label;
+    const marquee = document.createElement('span');
+    marquee.className = 'marquee';
+    marquee.setAttribute('aria-hidden', 'true');
+    marquee.textContent = label;
+    btn.appendChild(text);
+    btn.appendChild(marquee);
   });
 }
 let primaryKeyFrame = 0;

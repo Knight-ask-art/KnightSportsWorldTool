@@ -10,7 +10,7 @@ FILENAME = 'settings.json'
 
 #: Curated, whole-application visual skins.  These are not dark/light modes:
 #: each one changes type, shape, texture and accents together.
-SKINS = ('paper', 'poster', 'minimal', 'archive')
+SKINS = ('paper', 'manuscript', 'poster', 'minimal', 'archive')
 DEFAULT_SKIN = 'paper'
 
 

@@ -49,14 +49,16 @@
 | 日期 | 来源 | 用在 | 改动文件 | 许可 / 备注 |
 |---|---|---|---|---|
 | 2026-11-11 | 编辑杂志设计系统（本项目自定） | paper 皮肤整体 | `app/frontend/css/editorial.css` | 暖米纸 `#f9f8f6`、墨黑 `#1c1c1c`、石墨 `#6b7280`、陈玫 `#816d70`；无圆角/无阴影，标题衬线、正文无衬线 |
-| 2026-11-11 | Uiverse `cssbuttons-io/brown-otter-21` | 主按钮（`.btn.primary`、登录按钮） | `editorial.css` + `app.js` 的 `decoratePrimaryButtons()` | MIT；黑框直角、左侧短线、上下 key；hover 反色且 key 收起 |
+| 2026-11-11 | Uiverse `cssbuttons-io/brown-otter-21` | 登录页的登录按钮（仅 `.login-submit`） | `editorial.css` + `app.js` 的 `decoratePrimaryButtons()` | MIT；黑框直角、左侧短线、上下 key；hover 反色且 key 收起 |
+| 2026-11-11 | Uiverse `doniaskima/btn-23` | 跑步面板的提交按钮（仅 `#submitRun`） | `editorial.css` + `app.js` 的 `decoratePrimaryButtons()` | MIT；黑底直角、hover 文字淡出、重复文字横向滚动；其余主按钮改为细线描边 |
 | 2026-11-11 | Uiverse `Cornerstone-04/bitter-impala-54` | 收起后的登录按钮 | `editorial.css` 的 `.login-card.collapsed .login-tape` | MIT；两段边框从两侧滑入并长成完整框 |
 | 2026-11-11 | Uiverse `alexruix/tame-fly-42` | 登录/解极验等待动画 | `app.css` 的 `.login-loader` | MIT；弹跳球踩阶梯，球改为墨黑 `#1c1c1c`，阶梯用 `rgba(28,28,28,.35)` 保证纸面可见；等待时登录面板只显示该动画 |
+| 2026-11-11 | 量化线场（用户提供的风格参考） | 总览页标题右侧 + 「我的」头像区 | `app/frontend/line-field.svg`、`editorial.css` 的 `.line-field-mark` / `.profile-line-field` | 把品牌标记采样成四档竖线（1–4px），只用墨色；缓慢漂移，`prefers-reduced-motion` 下停止；不透传到其它页面 |
 
 ## 5. 什么时候看
 
 - 新增页面、改首屏、改弹窗动效之前；
-- 做视觉翻新或皮肤时（现有 4 套皮肤见 `decisions.md`）；
+- 做视觉翻新或皮肤时（现有 5 套皮肤见 `decisions.md`）；
 - 用户反馈「动画卡 / 看着乱」时，先对照第 3 节排查。
 
 这份清单没有自动检查脚本；协议参考的自动检查仍然只跑

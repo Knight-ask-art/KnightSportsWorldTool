@@ -40,7 +40,7 @@
 | **10121** | 账号在其它设备登录 |
 | **10175** | 密码错误 |
 | **bridge** | 前端 → Python 的本地 JSON 接口 `/bridge/<method>` |
-| **skin** | 皮肤：`paper` / `poster` / `minimal` / `archive` |
+| **skin** | 皮肤：`paper` / `manuscript` / `poster` / `minimal` / `archive` |
 | **announcement_seen** | `data/ui_state.json` 里的公告已读映射 `{id: version}` |
 | **latest.json** | 自动更新清单，客户端按版本/大小/SHA-256 校验 |
 | **rollback** | 清单里的上一稳定版，手动回滚用 |

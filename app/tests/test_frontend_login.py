@@ -212,6 +212,21 @@ def test_window_icon_comes_from_a_high_resolution_file():
     assert "webview.start(icon=" in (ROOT / 'app.py').read_text(encoding='utf-8')
 
 
+def test_desktop_downloads_are_enabled_for_exports():
+    # pywebview cancels every download unless ALLOW_DOWNLOADS is on; CSV / FIT /
+    # GPX / diagnostics exports are all anchor downloads.
+    app_py = (ROOT / 'app.py').read_text(encoding='utf-8')
+    assert "webview.settings['ALLOW_DOWNLOADS'] = True" in app_py
+
+
+def test_csv_export_covers_more_than_the_visible_table():
+    # The records table only loads 20 rows; the export asks for the full list.
+    assert 'async function exportRecordsCsv' in JS
+    assert "liveMaybe('real_recent_records', {limit: 200}" in JS
+    assert 'haoxiangpao-records.csv' in JS
+    assert "toast('已导出 '" in JS
+
+
 def test_freeze_and_face_warnings_are_wired():
     assert 'LIVE.freezeSeconds' in SOURCE
     assert 'LIVE.faceRequired' in SOURCE

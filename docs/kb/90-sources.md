@@ -73,7 +73,8 @@
 | GeeTest v4 FAQ | 极验如何识别协议破解/模拟器 | <https://docs.geetest.com/gt4/faq/other> |
 | GeeTest Glossary | `w`、二次校验、验证参数的生命周期 | <https://docs.geetest.com/gt4/help/glossary> |
 | GeeTest 官网 | 风控产品定位 | <https://www.geetest.com/> |
-| Uiverse `cssbuttons-io/brown-otter-21` | 主按钮的黑框/短线/key 交互，MIT | <https://uiverse.io/cssbuttons-io/brown-otter-21> |
+| Uiverse `cssbuttons-io/brown-otter-21` | 登录页登录按钮的黑框/短线/key 交互，MIT | <https://uiverse.io/cssbuttons-io/brown-otter-21> |
+| Uiverse `doniaskima/btn-23` | 跑步面板提交按钮的 hover 滚动文字，MIT | <https://uiverse.io/doniaskima/btn-23> |
 | Uiverse `Cornerstone-04/bitter-impala-54` | 收起登录按钮的边框滑入效果，MIT | <https://uiverse.io/Cornerstone-04/bitter-impala-54> |
 | Uiverse `alexruix/tame-fly-42` | 登录等待动画（弹跳球 + 阶梯），MIT | <https://uiverse.io/alexruix/tame-fly-42> |
 

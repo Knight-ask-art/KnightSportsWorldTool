@@ -10,7 +10,7 @@ app/frontend/
 ├─ index.html          单页骨架 + 七页 nav
 ├─ css/
 │  ├─ app.css          主样式、布局、组件
-│  ├─ skins.css        四套皮肤（data-skin）
+│  ├─ skins.css        五套皮肤（data-skin）
 │  ├─ editorial.css    paper=编辑杂志风的全部覆盖（最后加载）
 │  ├─ fonts.css        本地字体，不发网络请求
 │  └─ splash.css       启动页
@@ -105,8 +105,9 @@ app/frontend/
 
 ## 5. 皮肤与动效
 
-四套皮肤：`paper`（**编辑杂志**，默认）、`poster`（赛场海报）、
-`minimal`（极简白）、`archive`（复古档案）。
+五套皮肤：`paper`（**编辑杂志**，默认）、`manuscript`（**手稿笔记**，保留原来的
+楷体 + 荧光笔 + 手绘边框方向）、`poster`（赛场海报）、`minimal`（极简白）、
+`archive`（复古档案）。
 
 - 皮肤只改 CSS 变量和少量纹理，不改 DOM 结构。
 - 选择存 localStorage，同时写 `data/ui_state.json`（服务端生成首屏样式）。
@@ -118,7 +119,10 @@ app/frontend/
 
 - 暖米纸 `#f9f8f6`、墨黑 `#1c1c1c`、石墨 `#6b7280`、陈玫 `#816d70`（只用于选中/引文）。
 - 标题衬线，正文/按钮无衬线；8px 基准、发丝线、无圆角、无阴影。
-- 主按钮参考 Uiverse `brown-otter-21`：黑框、左侧短线、上下 key；hover 反色并收起 key。
+- 工作台主按钮：细线描边、hover 反色，保持安静；只有跑步面板的 `#submitRun` 用 `doniaskima/btn-23` 的黑底滚动文字。
+- 登录页的登录按钮参考 Uiverse `brown-otter-21`：黑框、左侧短线、上下 key；hover 反色并收起 key。这套样式只给 `.login-submit`，不再用于工作台主按钮。
+- 量化线场：品牌标记采样成 1–4px 四档竖线（`line-field.svg`），只放在总览标题右侧和「我的」头像区；缓慢漂移，减少动效时停止。
+- 数字统一 `lining-nums tabular-nums`（避免 Georgia 旧式数字把 0 读成 o）；中文标签字距收回到 `.04em`。
 - 收起后的登录按钮参考 `Cornerstone-04/bitter-impala-54`：两段边框滑入并长成完整框。
 - 登录/解极验等待用 `alexruix/tame-fly-42` 的弹跳球 + 阶梯，球改为墨黑，阶梯用墨色半透明；等待时登录面板只显示该动画。
 - 覆盖页面：概览、账号、跑步、路线库、设置、登录面板；开屏动画不改。
@@ -131,7 +135,13 @@ app/frontend/
 3. 不用 WebGL、常驻 `requestAnimationFrame`、大图序列帧；
 4. 不引 CDN；需要库就 vendor 到 `app/frontend/vendor/` 并保留 LICENSE。
 
-## 6. 设计参考怎么用
+## 6. 文件导出与下载
+
+- CSV（记录）、FIT、GPX、诊断包都由前端生成 Blob，再用 `<a download>` 交给浏览器/桌面壳保存。
+- pywebview 默认 `ALLOW_DOWNLOADS = False`，会静默取消所有下载；`app/app.py` 必须在 `webview.start()` 前打开它，否则按钮看起来“没反应”。
+- CSV 导出会额外请求 `real_recent_records(limit=200)`，覆盖比表格 20 条更多的本人记录；请求失败时退回当前表格数据。
+
+## 7. 设计参考怎么用
 
 [`../design-references.md`](../design-references.md) 里的 6 个站点只做参考：
 
@@ -140,7 +150,7 @@ app/frontend/
 - **React Bits / Aceternity UI** 是 React/Tailwind，不能直接装，只能参考效果；
 - **Motion Sites / Showreel Design** 只借版式和风格，不抄品牌。
 
-## 7. 测试
+## 8. 测试
 
 | 测试 | 覆盖 |
 |---|---|
