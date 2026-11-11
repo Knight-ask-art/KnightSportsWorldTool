@@ -5156,7 +5156,18 @@ class ReplicaApi:
             if not isinstance(res, dict) or not res.get('ok'):
                 err = (res.get('error') if isinstance(res, dict) else '') or 'LLM 调用失败'
                 raise RuntimeError(err)
-            return llm_settings.parse_choice(res.get('text') or '', candidates)
+            picked = llm_settings.parse_choice(res.get('text') or '', candidates)
+            if not picked:
+                return {
+                    'template_id': '',
+                    'model': str(settings.get('model') or ''),
+                    'error': '模型返回无效候选序号',
+                }
+            return {
+                'template_id': picked,
+                'model': str(settings.get('model') or ''),
+                'error': '',
+            }
 
         return {
             'route_memory_status': self.real_route_memory_status,
@@ -5201,17 +5212,22 @@ class ReplicaApi:
 
     def _agent_current_session(self):
         """Return the session only while it still belongs to the active account."""
-        session = getattr(self, '_agent_session', None)
-        if session is None:
-            return None
-        if getattr(session, 'owner', '') != self._agent_owner():
-            try:
-                session.cancel()
-            except Exception:  # noqa: BLE001
-                pass
-            self._agent_session = None
-            return None
-        return session
+        lock = getattr(self, '_agent_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            self._agent_lock = lock
+        with lock:
+            session = getattr(self, '_agent_session', None)
+            if session is None:
+                return None
+            if getattr(session, 'owner', '') != self._agent_owner():
+                try:
+                    session.cancel()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._agent_session = None
+                return None
+            return session
 
     def real_agent_status(self):
         from ..application.agent import _idle_status

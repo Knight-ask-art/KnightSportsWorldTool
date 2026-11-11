@@ -214,6 +214,16 @@ def parse_distance_km(text: str) -> float | None:
         except ValueError:
             return None
 
+    # 用户只回了一个数字（例如在“想跑多少公里？”之后回“2.5”或“3”）。
+    m = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*', s)
+    if m:
+        try:
+            return _valid_km(float(m.group(1)))
+        except ValueError:
+            return None
+    if s == '半':
+        return 0.5
+
     return None
 
 
@@ -379,6 +389,7 @@ class AgentSession:
         self._closed = True
         self._preview: dict | None = None
         self._audit: dict | None = None
+        self._audit_ok = False
         self._preview_args: dict | None = None
         self._llm: dict[str, Any] = {'used': False, 'model': '', 'error': ''}
         self._error = ''
@@ -550,6 +561,7 @@ class AgentSession:
             self._closed = True
             self._preview = None
             self._audit = None
+            self._audit_ok = False
             self._preview_args = None
             self._llm = {'used': False, 'model': '', 'error': ''}
             self._error = ''
@@ -932,6 +944,24 @@ class AgentSession:
                         )
                 else:
                     llm_info = {'used': False, 'model': model, 'error': err_txt}
+                    if err_txt:
+                        with self._lock:
+                            if self._is_stale(gen, cancel_event):
+                                return
+                            self._append_log(
+                                'warn',
+                                '模型未给出有效候选，已回退到本地推荐第 1 条',
+                                tool='llm_choose',
+                                data={'used': False, 'selected': selected_id,
+                                      'error': err_txt},
+                            )
+                            self._write_trace(
+                                'suggest',
+                                'llm_choose',
+                                False,
+                                {'used': False, 'selected': selected_id,
+                                 'error': err_txt},
+                            )
 
         with self._lock:
             if self._is_stale(gen, cancel_event):
@@ -1140,6 +1170,7 @@ class AgentSession:
             if self._is_stale(gen, cancel_event):
                 return
             self._audit = audit_data
+            self._audit_ok = audit_ok
             self._append_log(
                 'info' if audit_ok else 'warn',
                 f'本地审计完成（通过 {passed} 项，失败 {failed} 项）',
@@ -1178,6 +1209,15 @@ class AgentSession:
             state = self._state
             if any(k in msg for k in ('取消', '算了')):
                 return self.cancel()
+
+            if state in ('idle', 'cancelled', 'confirmed'):
+                self._append_log(
+                    'warn',
+                    '当前会话已结束，请重新发送目标开始新的规划',
+                    tool='message',
+                )
+                self._updated_at_ms = _now_ms()
+                return self.status()
 
             if state in TRANSIENT_STATES:
                 self._append_log('info', '还在处理上一条请求，请稍候', tool='message')
@@ -1219,6 +1259,11 @@ class AgentSession:
                     tool='message',
                     data={'index': idx_num, 'template_id': tpl_id},
                 )
+                self._state = 'adapt'
+                self._preview = None
+                self._audit = None
+                self._audit_ok = False
+                self._preview_args = None
             elif any(k in msg for k in ('换一条', '下一条', '换一个')):
                 if state != 'wait_confirm':
                     self._append_log('warn', '当前不在等待确认阶段，不能换一条', tool='message')
@@ -1245,6 +1290,11 @@ class AgentSession:
                     tool='message',
                     data={'index': nxt_idx + 1, 'template_id': tpl_id},
                 )
+                self._state = 'adapt'
+                self._preview = None
+                self._audit = None
+                self._audit_ok = False
+                self._preview_args = None
             elif any(k in msg for k in ('反向', '反着跑')):
                 if state != 'wait_confirm':
                     self._append_log('warn', '当前不在等待确认阶段，不能反向', tool='message')
@@ -1276,6 +1326,11 @@ class AgentSession:
                 cancel_event = self._cancel_event
                 m_mode = 'reverse'
                 rev_pair = (rev, True)
+                self._state = 'adapt'
+                self._preview = None
+                self._audit = None
+                self._audit_ok = False
+                self._preview_args = None
             elif any(k in msg for k in ('重新学习', '再学一次')):
                 gen = self._generation
                 cancel_event = self._cancel_event
@@ -1283,6 +1338,14 @@ class AgentSession:
                 if self._goal.get('km') is None:
                     self._raw_km = 2.5
                 m_mode = 'relearn'
+                self._state = 'learn'
+                self._candidates = []
+                self._selected = ''
+                self._waypoints = []
+                self._preview = None
+                self._audit = None
+                self._audit_ok = False
+                self._preview_args = None
             else:
                 new_km = parse_distance_km(msg)
                 if new_km is not None:
@@ -1292,6 +1355,14 @@ class AgentSession:
                     self._goal['km'] = new_km
                     m_mode = 'distance'
                     skip_learn_flag = state == 'wait_confirm'
+                    self._state = 'suggest'
+                    self._candidates = []
+                    self._selected = ''
+                    self._waypoints = []
+                    self._preview = None
+                    self._audit = None
+                    self._audit_ok = False
+                    self._preview_args = None
                 else:
                     self._append_log(
                         'info',
@@ -1344,6 +1415,16 @@ class AgentSession:
                 snap['error'] = err
                 return snap
 
+            if not self._audit_ok:
+                err = '本地审计未通过，不能确认；请换一条或重新规划'
+                self._append_log('error', err, tool='confirm')
+                self._write_trace(self._state, 'confirm', False, {'error': err})
+                self._updated_at_ms = _now_ms()
+                snap = self.status()
+                snap['ok'] = False
+                snap['error'] = err
+                return snap
+
             preview_args = {
                 'km': self._preview_args['km'],
                 'pace': self._preview_args['pace'],
@@ -1388,6 +1469,7 @@ class AgentSession:
             self._waypoints = []
             self._preview = None
             self._audit = None
+            self._audit_ok = False
             self._preview_args = None
             self._error = ''
             self._fallback = ''

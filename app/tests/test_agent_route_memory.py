@@ -700,3 +700,69 @@ def test_agent_status_hides_session_after_account_switch(tmp_path, monkeypatch):
     assert idle['state'] == 'idle'
     assert idle['session_id'] == ''
     assert api.real_agent_message('换一条')['code'] != 200
+
+
+def test_message_after_cancel_or_confirm_is_rejected(tmp_path):
+    tools, calls = _make_fake_tools(templates=2)
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+
+    session.cancel()
+    res = session.message('五公里')
+    assert res['state'] == 'cancelled'
+    assert res['goal']['km'] == 2.5
+    assert any('会话已结束' in e['text'] for e in res['log'])
+    assert [c[1]['km'] for c in calls if c[0] == 'suggest'] == [2.5]
+
+    tools2, _ = _make_fake_tools(templates=2)
+    session2 = AgentSession(tools2, str(tmp_path), '1001:2002')
+    session2.start('帮我跑 2.5 公里')
+    _wait_terminal(session2)
+    assert session2.confirm()['ok'] is True
+    res2 = session2.message('五公里')
+    assert res2['state'] == 'confirmed'
+    assert res2['goal']['km'] == 2.5
+
+
+def test_failed_distance_change_clears_old_preview(tmp_path):
+    tools, _ = _make_fake_tools(templates=2)
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+    assert st['preview'] and st['audit']
+
+    session._tools['route_memory_suggest'] = lambda **kw: _ok({
+        'candidates': [], 'status': 'ok', 'message': '没有匹配路线',
+    })
+    res = session.message('19公里')
+    assert res['state'] == 'error'
+    assert res['preview'] is None
+    assert res['audit'] is None
+    conf = session.confirm()
+    assert conf['ok'] is False
+
+
+def test_confirm_refuses_when_local_audit_failed(tmp_path):
+    tools, _ = _make_fake_tools(templates=2)
+    tools['audit_run'] = lambda *a, **kw: _ok({
+        'summary': {'ok': False, 'passed': 9, 'failed': 1, 'warned': 0},
+        'checks': [],
+    })
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+    res = session.confirm()
+    assert res['ok'] is False
+    assert '审计' in res['error']
+    assert session.status()['state'] == 'wait_confirm'
+
+
+def test_parse_bare_distance_and_half():
+    assert parse_distance_km('3') == 3.0
+    assert parse_distance_km('2.5') == 2.5
+    assert parse_distance_km('半') == 0.5
+    assert parse_distance_km('半马') is None
