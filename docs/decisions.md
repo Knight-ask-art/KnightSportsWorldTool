@@ -717,4 +717,5 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 用常驻 sidecar（行式 JSON）而不是 PyO3/ctypes | 进程边界清楚，崩溃不会带崩 UI；打包只需复制一个 exe；不绑定 Python ABI | 每次调用有 IPC 开销；只传最小参数，不把 token 或 data/ 交给 native |
 | `JHP_RUST_CORE` 自动探测，`0` 强制 Python，`1` 要求 native | 源码运行/CI 没有 Rust 也能跑；排错时可以一键回到 Python | 打包脚本缺 cargo 直接失败，避免静默降级 |
 | GT4 只迁字段构造、PoW、AES/RSA，不迁图像识别 | `w` 的字节布局和动态 key 是最容易被逐字节抄走的部分；图像 Canny/ZNCC 调参频繁，留在 Python 更好排错 | `gt4_image.py` 继续纯 Python；`build_w` 的 modulus 由 Python 传入，native 不内置私钥/公钥选择逻辑 |
-| 下一批只考虑 device_profile、rundata | 这两块体积大、状态多，需要先拆出纯函数边界再迁 | 按 `45-native-core.md` 的顺序推进，每块保留 golden vector |
+| 上传体字段映射迁入 native，轨迹生成留在 Python | 上传体是服务器直接评分的对象，字段顺序、嵌套 JSON 和 `speed` 两次取整错一处就静默返回 10003；生成器随机过程多，整体迁走会放大回归面 | `build_upload_entity` 只接收 run/ctx，不读本地文件；`_build_upload_entity` 保留 Python 参考实现，两边共用 fixture |
+| 下一批只考虑 rundata 生成器、device_profile | 这两块体积大、状态多，需要先把随机语义和纯函数边界钉死再迁 | 按 `45-native-core.md` 的顺序推进，每块保留 golden vector |

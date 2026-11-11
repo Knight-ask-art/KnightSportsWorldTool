@@ -2392,9 +2392,25 @@ def _submit_windows(values: list) -> list:
 
 def build_upload_entity(run: dict, ctx: dict) -> dict:
     """Map forged run_data + submit context to the official 47-field
-    UploadFormatEntity shape (Coaixy 7.2.70 source). JSON-string fields
-    (allLocJson/fivePointJson/segmentJson) are stringified like Gson does.
+    UploadFormatEntity shape (Coaixy 7.2.70 source).
+
+    The native core owns the exact field set and ordering; this wrapper keeps
+    the Python reference in `_build_upload_entity` for source checkouts and
+    tests.
     """
+    try:
+        from ..transport import rustcore
+        core = rustcore.get()
+        if core is not None:
+            return core.call('upload_entity', run=run, ctx=ctx)
+    except rustcore.RustCoreUnavailable:
+        pass
+    return _build_upload_entity(run, ctx)
+
+
+def _build_upload_entity(run: dict, ctx: dict) -> dict:
+    """Python reference: field order, nesting and rounding must stay usable
+    when the native core is missing."""
     import json as _json
     locs = run['allLocJson']
     t0 = locs[0]['ts']

@@ -7,6 +7,7 @@
 
 pub mod gt4;
 pub mod netsec;
+pub mod rundata;
 pub mod sign;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

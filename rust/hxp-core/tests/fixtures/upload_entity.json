@@ -1,0 +1,44 @@
+{
+  "run": {
+    "allLocJson": [
+      {"lat": 22.4108, "lng": 112.9408, "ts": 1794411504998},
+      {"lat": 22.4111, "lng": 112.9412, "ts": 1794411864998}
+    ],
+    "locJsonEntity": {
+      "useZip": false,
+      "allLocJson": "[{\"avgSpeed\":0.0,\"lat\":22.4108}]"
+    },
+    "fivePointJson": {
+      "useZip": false,
+      "fivePointJson": "[{\"id\":1,\"pointName\":\"A\"}]",
+      "runAreaId": null,
+      "geoFencesJson": "[]",
+      "freedomShowFence": 0
+    },
+    "speed_json": [
+      {"beginTime": 1, "endTime": 2, "distance": 25.6868, "flag": 1, "id": 1, "queueNum": 0, "state": 0}
+    ],
+    "step_freq_json": [
+      {"stepsNum": 23, "beginTime": 1, "endTime": 2, "flag": 1, "id": 1, "maxDiff": 0.0, "minDiff": 1000.0, "avgDiff": 0.0, "state": 0, "queueNum": 0}
+    ],
+    "juli": 1000,
+    "sportTime": 360,
+    "wall_stop_ms": 1794411864998,
+    "total_steps": 900,
+    "calorie": 65,
+    "avgPower": 208,
+    "totalAscent": 13.4,
+    "sportunid": "ae179892-9491-4551-9c2b-57f2d675b8aa"
+  },
+  "ctx": {
+    "uid": "u1",
+    "address": "测试地址",
+    "geeToken": "g",
+    "faceCheck": 0,
+    "policy": 1,
+    "selDistance": 1000,
+    "selectedUnid": 0,
+    "sportType": 1
+  },
+  "expected_sha256": "7a1ab50f837b41ef2b1b2eb05ef2c4586e7f1e08cc1c46f98ba21aac162695c4"
+}

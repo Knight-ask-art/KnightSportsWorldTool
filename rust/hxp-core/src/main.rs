@@ -11,7 +11,7 @@ use std::io::{self, BufRead, Write};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use hxp_core::{gt4, netsec, sign};
+use hxp_core::{gt4, netsec, rundata, sign};
 use serde_json::{json, Value};
 
 fn string_map(value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
@@ -209,6 +209,12 @@ fn handle(req: &Value) -> Result<Value, String> {
             )?))
         }
 
+        "upload_entity" => {
+            let run = args.get("run").ok_or("run required")?;
+            let ctx = args.get("ctx").cloned().unwrap_or_else(|| json!({}));
+            rundata::build_upload_entity(run, &ctx)
+        }
+
         "self_test" => Ok(self_test()),
 
         other => Err(format!("unknown op {other:?}")),
@@ -303,6 +309,31 @@ fn self_test() -> Value {
         }
         Err(err) => results.push(json!({
             "name": "gt4 payload byte-identical", "ok": false, "detail": err,
+        })),
+    }
+
+    let run = json!({
+        "allLocJson": [{"lat": 22.4108, "lng": 112.9408, "ts": 1794411504998i64}],
+        "locJsonEntity": {"useZip": false, "allLocJson": "[]"},
+        "fivePointJson": {"useZip": false, "fivePointJson": "[]"},
+        "speed_json": [{"beginTime": 1, "id": 1, "queueNum": 0}],
+        "step_freq_json": [{"stepsNum": 23, "id": 1, "queueNum": 0}],
+        "juli": 1000, "sportTime": 360, "total_steps": 900,
+        "calorie": 65, "avgPower": 208, "totalAscent": 13.4,
+        "sportunid": "self-test",
+    });
+    match rundata::build_upload_entity(&run, &json!({"uid": "self"})) {
+        Ok(ent) => {
+            let fields = ent.as_object().map(|o| o.len()).unwrap_or(0);
+            let speed = ent.get("speed").and_then(Value::as_i64).unwrap_or(0);
+            results.push(json!({
+                "name": "upload entity shape",
+                "ok": fields == 43 && speed == 6000,
+                "detail": format!("{fields} fields, speed {speed}"),
+            }));
+        }
+        Err(err) => results.push(json!({
+            "name": "upload entity shape", "ok": false, "detail": err,
         })),
     }
 

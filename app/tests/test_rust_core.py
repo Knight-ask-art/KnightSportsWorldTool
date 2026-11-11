@@ -18,6 +18,8 @@ from replica.transport import netsec, rustcore  # noqa: E402
 
 CORE = rustcore.find_core()
 needs_core = pytest.mark.skipif(CORE is None, reason='hxp-core not built')
+UPLOAD_FIXTURE = (ROOT.parent / 'rust' / 'hxp-core' / 'tests' / 'fixtures'
+                  / 'upload_entity.json')
 
 
 def test_packaging_builds_and_bundles_the_native_core():
@@ -53,6 +55,30 @@ def test_native_gt4_payload_matches_the_golden_digest():
                      pow_sign='sign', passtime=1887)
     digest = hashlib.sha256(text.encode()).hexdigest()
     assert digest == gt4_payload.GOLDEN_SHA256
+
+
+@needs_core
+def test_native_upload_entity_matches_the_python_builder():
+    import hashlib
+    import json
+
+    from replica.domain import rundata
+
+    fixture = json.loads(UPLOAD_FIXTURE.read_text(encoding='utf-8'))
+    core = rustcore.get()
+    assert core is not None
+    native = core.call('upload_entity', run=fixture['run'], ctx=fixture['ctx'])
+    reference = rundata._build_upload_entity(fixture['run'], fixture['ctx'])
+    assert native == reference
+    assert list(native)[:2] == ['address', 'allLocJson']
+    text = json.dumps(native, ensure_ascii=False, separators=(',', ':'))
+    assert hashlib.sha256(text.encode()).hexdigest() == fixture['expected_sha256']
+
+
+def test_upload_entity_can_route_through_the_native_core():
+    src = (ROOT / 'replica' / 'domain' / 'rundata.py').read_text(encoding='utf-8')
+    assert 'rustcore' in src
+    assert "core.call('upload_entity'" in src
 
 
 @needs_core
