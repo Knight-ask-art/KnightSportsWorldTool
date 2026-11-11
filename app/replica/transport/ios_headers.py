@@ -16,7 +16,6 @@ iOS identity.  That chain has been verified on a real device (rrid
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 import uuid
@@ -26,7 +25,6 @@ import uuid
 #: captured; keeping it after the 7.4.0 client shipped makes the signed
 #: ``appVersion`` and UA older than the data shape we send.
 IOS_APP_VERSION = '7.4.0'
-TOKEN_SIGN_SUFFIX = '2slhe02lsfiwowlcixisla_sls-_slaor'
 
 #: Fallback install age when the profile has no appInstallTime (the reference
 #: builder uses 3 days on iOS and 90 days on Android).  Sending 0 would be the
@@ -39,16 +37,9 @@ _FALLBACK_DEVICE_ID = str(uuid.uuid4()).upper()
 
 
 def token_sign(ts: str, token: str, uid) -> str:
-    try:
-        from ..transport import rustcore
-        core = rustcore.get()
-        if core is not None:
-            return core.call('token_sign_ios', ts=str(ts), token=str(token),
-                             uid=str(uid))
-    except rustcore.RustCoreUnavailable:
-        pass
-    link = f'timeStamp={ts}&token={token}&uid={uid}'
-    return hashlib.md5((link + TOKEN_SIGN_SUFFIX).encode()).hexdigest()
+    """MD5('timeStamp=..&token=..&uid=..' + suffix), native in a release."""
+    from ..domain.crypto import sign_with_suffix
+    return sign_with_suffix(str(ts), str(token), str(uid))
 
 
 def _uid_int(uid) -> int:
@@ -134,3 +125,10 @@ def ios_header_json(headers: dict) -> str:
     typed value into a string and break the iOS signature.
     """
     return json.dumps(headers, separators=(',', ':'), ensure_ascii=False)
+
+
+def __getattr__(name: str):
+    if name == 'TOKEN_SIGN_SUFFIX':
+        from ..domain.crypto import dev_fallback
+        return dev_fallback('RUNSCHOOL_SECRET')
+    raise AttributeError('module %r has no attribute %r' % (__name__, name))

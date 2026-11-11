@@ -38,7 +38,6 @@ consequences drive the v0.1.7 rules:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -57,7 +56,6 @@ POINTS_PATH_PREFIX = '/api/v560/get/1/distance/'
 # Kept for callers that only need a sentinel path; real requests must use
 # points_path(target_distance_m).
 POINTS_PATH = POINTS_PATH_PREFIX + '1'
-SALT = '2slhe02lsfiwowlcixisla_sls-_slaor'   # same as SKEY5
 
 
 def points_path(distance_m: float) -> str:
@@ -403,7 +401,8 @@ def store_points(uid, unid, run_area_id, lat, lon, points,
 
 def url_sign(host: str, path: str) -> str:
     """md5 over the http:// variant of the URL plus the shared salt."""
-    return hashlib.md5(('http://%s%s%s' % (host, path, SALT)).encode()).hexdigest()
+    from ..domain.crypto import points_sign
+    return points_sign(host, path)
 
 
 def build_body(acct, lat: float, lon: float, session: netsec.EnvelopeSession,
@@ -435,8 +434,8 @@ def build_body(acct, lat: float, lon: float, session: netsec.EnvelopeSession,
 
 
 def _host() -> str:
-    from ..transport.realclient import HOST
-    return HOST
+    from ..transport.realclient import host
+    return host()
 
 
 # --------------------------------------------------------------------------
@@ -1171,6 +1170,15 @@ def _raises(fn) -> bool:
         return False
     except Exception:  # noqa: BLE001
         return True
+
+
+def __getattr__(name: str):
+    # Source compatibility: the salt is dev-only and fails closed in a frozen
+    # build.  New code should call ``crypto.points_sign``.
+    if name == 'SALT':
+        from ..domain.crypto import dev_fallback
+        return dev_fallback('RUNSCHOOL_SECRET')
+    raise AttributeError('module %r has no attribute %r' % (__name__, name))
 
 
 if __name__ == '__main__':

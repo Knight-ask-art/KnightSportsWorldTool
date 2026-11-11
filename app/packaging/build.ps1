@@ -161,6 +161,7 @@ if ($Backend -eq 'nuitka') {
             '--nofollow-import-to=pytest',
             '--nofollow-import-to=tests',
             '--nofollow-import-to=tools',
+            '--nofollow-import-to=replica.domain._dev_secrets',
             '--windows-console-mode=disable',
             ('--windows-icon-from-ico=' + (Join-Path $PSScriptRoot 'assets\logo.ico')),
             '--windows-company-name=Haoxiangpao',
@@ -231,6 +232,18 @@ if ($leaks.Count -gt 0) {
            (($leaks | ForEach-Object { $_.FullName }) -join '; '))
 }
 Write-Host '   no replica/*.py or app.py in package'
+
+# Release gate: the plaintext protocol constants are dev-only.  A hit means
+# --nofollow-import-to / excludes stopped working (or a new literal slipped
+# into a production module).  The scanner prints labels, never context.
+Write-Host '== release secret scan =='
+$scanner = Join-Path $REPO 'scripts\scan_release_secrets.py'
+if (-not (Test-Path $scanner)) { throw "release secret scanner missing: $scanner" }
+python $scanner $EXE
+if ($LASTEXITCODE -ne 0) {
+    throw ('release secret scan failed (exit {0}); see HIT labels above' -f $LASTEXITCODE)
+}
+Write-Host '   no plaintext protocol constants in 好想跑.exe'
 
 Write-Host '== 2/5 Frozen import check =='
 $check = Start-Process -FilePath $EXE -ArgumentList '--check' -Wait -PassThru

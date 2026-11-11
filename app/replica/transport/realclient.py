@@ -2,7 +2,7 @@
 
 REAL mode only — no mocks. Every request goes through:
   headers(24 fields, tokenSign=MD5) + headerSign=w30f(headers) [unidbg]
-  body=w3270(base64(signed entity)) [unidbg]  ->  POST https://run.gxapp.iydsj.com/...
+  body=w3270(base64(signed entity)) [unidbg]  ->  POST the official host/...
 
 Response classification (from archive/unidbg-era/STATUS.md, all real-observed):
   200 + 0 bytes            -> soft reject (stale timeStamp etc.)
@@ -10,7 +10,6 @@ Response classification (from archive/unidbg-era/STATUS.md, all real-observed):
   200/4xx + Spring JSON    -> explicit error
 """
 import base64
-import hashlib
 import json
 import os
 import time
@@ -25,15 +24,32 @@ from ..domain import clock as _clock
 from .routes import request_user_info
 from .sidecar import get_sidecar
 
-HOST = 'run.gxapp.iydsj.com'
-BASE = f'https://{HOST}'
-SUBMIT_URL = f'{BASE}/api/v70260/runnings/save/record'
-LOGIN_URL = f'{BASE}/api/v70100/login'
+#: The official host is owned by the native core in a frozen build and by the
+#: dev-only module in a source checkout.  Keep the URL builders lazy so no
+#: plaintext endpoint sits in the compiled Python unit.
+def host() -> str:
+    from ..domain.crypto import protocol_constant
+    return protocol_constant('host')
+
+
+def base_url() -> str:
+    return 'https://' + host()
+
+
+def submit_url() -> str:
+    return base_url() + '/api/v70260/runnings/save/record'
+
+
+def login_url() -> str:
+    return base_url() + '/api/v70100/login'
+
+
 # Session teardown.  Official APK endpoint (v6), not a v70100 guess:
-#   POST https://run.gxapp.iydsj.com/api/v6/user/logout
+#   POST /api/v6/user/logout
 # It uses the normal signed headers (uid/token/tokenSign) and a `{}` body.
-LOGOUT_URL = f'{BASE}/api/v6/user/logout'
-SALT5 = '2slhe02lsfiwowlcixisla_sls-_slaor'
+def logout_url() -> str:
+    return base_url() + '/api/v6/user/logout'
+
 
 
 @dataclass
@@ -82,8 +98,9 @@ class Account:
 
 
 def token_sign(ts: str, token: str, uid: str) -> str:
-    link = f'timeStamp={ts}&token={token}&uid={uid}'
-    return hashlib.md5((link + SALT5).encode()).hexdigest()
+    # SALT5 is byte-identical to the iOS token suffix; the native core owns it.
+    from ..domain.crypto import sign_with_suffix
+    return sign_with_suffix(ts, token, uid)
 
 
 def _http_date_ms(text) -> int | None:
@@ -515,7 +532,7 @@ class RealClient:
         wire['headerSign'] = signature
         if timeout is None:
             timeout = self.timeout
-        url = f'{BASE}/{path.lstrip("/")}'
+        url = f'{base_url()}/{path.lstrip("/")}'
         if method.upper() == 'GET':
             req = urllib.request.Request(url, headers=wire, method='GET')
         else:
@@ -622,7 +639,7 @@ class RealClient:
             f'{username}:{password}'.encode()).decode()
         plain = json.dumps(body_obj, separators=(',', ':'))
         body = self.encrypt_body(plain)
-        status, data = self._post(LOGIN_URL, headers, body, platform=platform,
+        status, data = self._post(login_url(), headers, body, platform=platform,
                                   extra_headers={'Authorization': auth},
                                   acct=acct)
         verdict, detail = classify(status, data)
@@ -660,7 +677,7 @@ class RealClient:
                                               headers['uid'])
         body = self.encrypt_body(json.dumps({}, separators=(',', ':')))
         try:
-            status, data = self._post(LOGOUT_URL, headers, body,
+            status, data = self._post(logout_url(), headers, body,
                                       platform=platform, acct=acct)
         except Exception as e:
             return {'ok': False, 'error': repr(e)}
@@ -867,6 +884,26 @@ def self_test() -> list[tuple[str, bool, str]]:
                 other_device['ok'] and other_device['stage'] == 'verified',
                 other_device['stage']))
     return out
+
+
+# ---- source compatibility -------------------------------------------------
+# The URL constants are derived lazily; a frozen build asks the native core
+# for the host.  ``SALT5`` is dev-only and fails closed in a frozen build.
+def __getattr__(name: str):
+    if name == 'HOST':
+        return host()
+    if name == 'BASE':
+        return base_url()
+    if name == 'SUBMIT_URL':
+        return submit_url()
+    if name == 'LOGIN_URL':
+        return login_url()
+    if name == 'LOGOUT_URL':
+        return logout_url()
+    if name == 'SALT5':
+        from ..domain.crypto import dev_fallback
+        return dev_fallback('RUNSCHOOL_SECRET')
+    raise AttributeError('module %r has no attribute %r' % (__name__, name))
 
 
 if __name__ == '__main__':

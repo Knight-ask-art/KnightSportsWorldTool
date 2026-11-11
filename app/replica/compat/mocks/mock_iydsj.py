@@ -1,4 +1,4 @@
-"""Mock 运动世界校园 school-server (run.gxapp.iydsj.com).
+"""Mock 运动世界校园 school-server (official submit endpoint).
 
 Endpoint set: 00201.0.0 binary evidence PLUS 7.3.70 fields extracted from the
 phone APK's plaintext string pool (reverse-engineering/dexblob_strings.txt). Old versioned

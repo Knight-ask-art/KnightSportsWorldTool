@@ -131,7 +131,7 @@ fn handle(req: &Value) -> Result<Value, String> {
             let salt = args
                 .get("salt")
                 .and_then(Value::as_str)
-                .unwrap_or(sign::TOKEN_SIGN_SALT);
+                .unwrap_or(sign::SIGN_SALT_STANDIN);
             Ok(Value::String(sign::official_sign(&params, salt)))
         }
 
@@ -139,6 +139,18 @@ fn handle(req: &Value) -> Result<Value, String> {
             let params = string_map(args.get("params"))?;
             Ok(Value::String(sign::runschool_sign(&params)))
         }
+
+        "points_sign" => {
+            let host = arg_str(&args, "host")?;
+            let path = arg_str(&args, "path")?;
+            Ok(Value::String(sign::points_sign(host, path)))
+        }
+
+        "protocol_constants" => Ok(json!({
+            "host": sign::HOST,
+            "app_id": sign::APP_ID,
+            "runec_key": sign::RUNEC_KEY,
+        })),
 
         "gt4_str16" => Ok(Value::String(gt4::str16())),
 

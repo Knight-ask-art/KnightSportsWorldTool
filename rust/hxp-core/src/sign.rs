@@ -8,7 +8,19 @@ use std::collections::BTreeMap;
 use crate::netsec::md5_hex;
 
 pub const TOKEN_SIGN_SALT: &str = "&wh2016_swcampus";
-pub const IOS_TOKEN_SIGN_SUFFIX: &str = "2slhe02lsfiwowlcixisla_sls-_slaor";
+/// Shared by the iOS token suffix, the Android `SALT5` token sign and the
+/// campus-checkpoint URL sign.  Kept here so the Python release unit never
+/// carries the plaintext.
+pub const RUNSCHOOL_SECRET: &str = "2slhe02lsfiwowlcixisla_sls-_slaor";
+pub const IOS_TOKEN_SIGN_SUFFIX: &str = RUNSCHOOL_SECRET;
+/// Submit-signature salt stand-in (native SportJniUtils.getSecretKey(5)).
+pub const SIGN_SALT_STANDIN: &str = RUNSCHOOL_SECRET;
+
+// Endpoint / app identity ownership.  The Python side asks for these through
+// the `protocol_constants` opcode so a packed `好想跑.exe` stays clean.
+pub const APP_ID: &str = "prj7sr2xk2bntjccmzbjckps7m9ogmlz";
+pub const RUNEC_KEY: &str = "d8dba5641eace5ea41cc502ae30d3bb2";
+pub const HOST: &str = "run.gxapp.iydsj.com";
 
 /// SignCode's case-insensitive link string; `sign` is filtered out.
 pub fn official_link_string(params: &BTreeMap<String, String>) -> String {
@@ -50,6 +62,11 @@ pub fn runschool_sign(params: &BTreeMap<String, String>) -> String {
     md5_hex(query.as_bytes())
 }
 
+/// Campus checkpoint sign: `md5("http://" + host + path + salt)`.
+pub fn points_sign(host: &str, path: &str) -> String {
+    md5_hex(format!("http://{}{}{}", host, path, RUNSCHOOL_SECRET).as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +98,14 @@ mod tests {
         params.insert("b".to_string(), "2".to_string());
         params.insert("a".to_string(), "1".to_string());
         assert_eq!(runschool_sign(&params), "ed04c91cf6f6ab5a01a31c0295c5da34");
+    }
+
+    #[test]
+    fn points_sign_matches_python() {
+        assert_eq!(
+            points_sign("run.gxapp.iydsj.com", "/api/v560/get/1/distance/2000"),
+            "45732c140c185c94e096316a297a6065"
+        );
     }
 
     #[test]

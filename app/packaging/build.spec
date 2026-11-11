@@ -28,7 +28,10 @@ hiddenimports = [
     'Crypto',
     'requests',
 ]
-hiddenimports += collect_submodules('replica')
+hiddenimports += [
+    module for module in collect_submodules('replica')
+    if module != 'replica.domain._dev_secrets'
+]
 
 a = Analysis(
     [os.path.join(APP_ROOT, 'app.py')],
@@ -36,7 +39,8 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=['tkinter', 'matplotlib', 'PIL'],
+    excludes=['tkinter', 'matplotlib', 'PIL',
+              'replica.domain._dev_secrets'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
