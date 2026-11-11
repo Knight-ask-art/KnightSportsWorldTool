@@ -371,7 +371,7 @@ def test_custom_device_is_advanced_and_explicit():
     assert 'id="customDeviceConfirm"' in HTML
     assert 'id="customDeviceSave"' in HTML
     assert "/bridge/real_device_options" not in HTML
-    assert "liveApi('real_device_options'" in JS
+    assert "liveApi('real_get_device_options'" in JS
     assert "liveApi('real_set_custom_device'" in JS
     assert "confirmInput.value.trim() !== '自定义'" in JS
     assert "typed === '自定义'" in JS

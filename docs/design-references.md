@@ -48,7 +48,8 @@
 
 | 日期 | 来源 | 用在 | 改动文件 | 许可 / 备注 |
 |---|---|---|---|---|
-| — | — | — | — | 暂无 |
+| 2026-11-11 | 编辑杂志设计系统（本项目自定） | paper 皮肤整体 | `app/frontend/css/editorial.css` | 暖米纸 `#f9f8f6`、墨黑 `#1c1c1c`、石墨 `#6b7280`、陈玫 `#816d70`；无圆角/无阴影，标题衬线、正文无衬线 |
+| 2026-11-11 | Uiverse `cssbuttons-io/brown-otter-21` | 主按钮（`.btn.primary`、登录按钮） | `editorial.css` + `app.js` 的 `decoratePrimaryButtons()` | MIT；黑框直角、左侧短线、上下 key；hover 反色且 key 收起 |
 
 ## 5. 什么时候看
 

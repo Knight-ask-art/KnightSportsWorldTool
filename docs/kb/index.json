@@ -59,8 +59,8 @@
       "title": "前端与公告",
       "file": "40-frontend.md",
       "category": "frontend",
-      "tags": ["UI", "公告", "皮肤", "动效", "announcements", "设备指纹"],
-      "summary": "原生 JS 前端结构、公告数据驱动模块、设置页设备面板、皮肤和视觉/动效约束。",
+      "tags": ["UI", "公告", "皮肤", "动效", "announcements", "设备指纹", "编辑杂志"],
+      "summary": "原生 JS 前端结构、编辑杂志风 paper 皮肤、公告数据驱动模块、设置页设备面板、动效约束。",
       "level": "A",
       "updated": "2026-11-11",
       "sources": ["app/frontend", "docs/decisions.md", "docs/design-references.md"]

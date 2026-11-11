@@ -73,6 +73,7 @@
 | GeeTest v4 FAQ | 极验如何识别协议破解/模拟器 | <https://docs.geetest.com/gt4/faq/other> |
 | GeeTest Glossary | `w`、二次校验、验证参数的生命周期 | <https://docs.geetest.com/gt4/help/glossary> |
 | GeeTest 官网 | 风控产品定位 | <https://www.geetest.com/> |
+| Uiverse `cssbuttons-io/brown-otter-21` | 主按钮的黑框/短线/key 交互，MIT | <https://uiverse.io/cssbuttons-io/brown-otter-21> |
 
 ## 6. 历史/社区实现（C 级，不要照抄）
 

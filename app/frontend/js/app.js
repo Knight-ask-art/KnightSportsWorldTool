@@ -2810,7 +2810,7 @@ const LIVE = {
 
 /* ---------------- appearance skins ---------------- */
 const SKIN_META = {
-  paper:   {name: '纸感手账', hint: '暖纸 · 手写 · 荧光笔'},
+  paper:   {name: '编辑杂志', hint: '暖米纸 · 衬线 · 发丝线'},
   poster:  {name: '赛场海报', hint: '粗体 · 硬边 · 信号红'},
   minimal: {name: '极简白',   hint: '留白 · 细线 · 单强调色'},
   archive: {name: '复古档案', hint: '牛皮纸 · 打字机 · 红章'}
@@ -2905,7 +2905,7 @@ function wireSkinCards(){
   if($('#skinReset')){
     $('#skinReset').addEventListener('click', () => {
       applySkin('paper', {save: true, toast: true});
-      liveLog('外观已恢复默认', '纸感手账', 'ok');
+      liveLog('外观已恢复默认', '编辑杂志', 'ok');
     });
   }
 }
@@ -4616,7 +4616,7 @@ async function loadDeviceOptions(){
   if(LIVE.deviceCatalogLoading) return;
   LIVE.deviceCatalogLoading = true;
   try{
-    const j = await liveApi('real_device_options', {}, 15000);
+    const j = await liveApi('real_get_device_options', {}, 15000);
     if(!liveOk(j)){
       LIVE.deviceCatalogError = (j && j.message) || '设备目录读取失败';
       if($('#customDeviceHint')) $('#customDeviceHint').textContent = LIVE.deviceCatalogError;
@@ -9744,6 +9744,32 @@ document.addEventListener('keydown', ev => {
     return;
   }
 });
+
+/* Uiverse brown-otter-21 style: the primary button's border is broken by a
+   short paper-coloured key that retracts on hover.  The bottom key is drawn
+   with ::after; the top one needs a real node. */
+function decoratePrimaryButtons(root){
+  (root || document).querySelectorAll('.btn.primary, .login-submit').forEach(btn => {
+    if(btn.querySelector('.btn-key')) return;
+    const key = document.createElement('span');
+    key.className = 'btn-key';
+    key.setAttribute('aria-hidden', 'true');
+    btn.appendChild(key);
+  });
+}
+let primaryKeyFrame = 0;
+function queuePrimaryButtonKeys(){
+  if(primaryKeyFrame) return;
+  primaryKeyFrame = requestAnimationFrame(() => {
+    primaryKeyFrame = 0;
+    decoratePrimaryButtons();
+  });
+}
+decoratePrimaryButtons();
+if(document.body){
+  new MutationObserver(queuePrimaryButtonKeys).observe(
+    document.body, {childList: true, subtree: true});
+}
 
 // Local file status only; this does not probe the real server.  It keeps the
 // account card in sync when the background keeper auto-relogins.

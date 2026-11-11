@@ -11,6 +11,7 @@ app/frontend/
 ├─ css/
 │  ├─ app.css          主样式、布局、组件
 │  ├─ skins.css        四套皮肤（data-skin）
+│  ├─ editorial.css    paper=编辑杂志风的全部覆盖（最后加载）
 │  ├─ fonts.css        本地字体，不发网络请求
 │  └─ splash.css       启动页
 ├─ js/
@@ -104,12 +105,22 @@ app/frontend/
 
 ## 5. 皮肤与动效
 
-四套皮肤：`paper`（纸感手账，默认）、`poster`（赛场海报）、
+四套皮肤：`paper`（**编辑杂志**，默认）、`poster`（赛场海报）、
 `minimal`（极简白）、`archive`（复古档案）。
 
 - 皮肤只改 CSS 变量和少量纹理，不改 DOM 结构。
 - 选择存 localStorage，同时写 `data/ui_state.json`（服务端生成首屏样式）。
 - 字体全部本地打包，离线可用。
+
+### 编辑杂志风（paper）
+
+`css/editorial.css` 在 `skins.css` 之后加载，只作用于 `html[data-skin="paper"]`：
+
+- 暖米纸 `#f9f8f6`、墨黑 `#1c1c1c`、石墨 `#6b7280`、陈玫 `#816d70`（只用于选中/引文）。
+- 标题衬线，正文/按钮无衬线；8px 基准、发丝线、无圆角、无阴影。
+- 主按钮参考 Uiverse `brown-otter-21`：黑框、左侧短线、上下 key；hover 反色并收起 key。
+- 覆盖页面：概览、账号、跑步、路线库、设置、登录面板；开屏动画不改。
+- 所有新动效在 `prefers-reduced-motion` 下关闭。
 
 动效约束（详见 [`../design-references.md`](../design-references.md)）：
 

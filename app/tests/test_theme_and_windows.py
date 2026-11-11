@@ -279,8 +279,33 @@ def test_index_loads_skin_system_before_styles():
     assert '/theme-boot.js' in index
     assert index.index('/theme-boot.js') < index.index('css/app.css')
     assert 'css/skins.css' in index
+    assert 'css/editorial.css' in index
+    assert index.index('css/skins.css') < index.index('css/editorial.css')
     assert 'id="skinGrid"' in index
     assert 'id="windowRows"' in index
+
+
+def test_editorial_skin_uses_the_magazine_tokens_and_keeps_splash_out():
+    with open(os.path.join(ROOT, 'frontend', 'css', 'editorial.css'),
+              encoding='utf-8') as fh:
+        css = fh.read()
+    for token in ('#1c1c1c', '#f9f8f6', '#6b7280', '#816d70'):
+        assert token in css
+    assert '--radius-card:0' in css
+    assert '--shadow:none' in css
+    assert 'prefers-reduced-motion' in css
+    # The startup animation is intentionally untouched.
+    assert '#bootSplash' not in css
+    assert '.boot' not in css
+
+
+def test_primary_button_uses_the_fancy_key_interaction():
+    with open(os.path.join(ROOT, 'frontend', 'js', 'app.js'),
+              encoding='utf-8') as fh:
+        app = fh.read()
+    assert 'function decoratePrimaryButtons' in app
+    assert "querySelectorAll('.btn.primary, .login-submit')" in app
+    assert "className = 'btn-key'" in app
 
 
 def _luminance(hex_color):
