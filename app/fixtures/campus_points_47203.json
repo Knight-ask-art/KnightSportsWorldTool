@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "source": "points_cache d2500",
+  "unid": 47203,
+  "center": [
+    22.4108,
+    112.9408
+  ],
+  "points": [
+    {
+      "lat": 22.411344,
+      "lon": 112.941001,
+      "isMustPoint": false,
+      "name": "点位2"
+    },
+    {
+      "lat": 22.410867,
+      "lon": 112.9411,
+      "isMustPoint": false,
+      "name": "点位3"
+    },
+    {
+      "lat": 22.41129,
+      "lon": 112.94032,
+      "isMustPoint": false,
+      "name": "点位1"
+    },
+    {
+      "lat": 22.410824,
+      "lon": 112.940376,
+      "isMustPoint": false,
+      "name": "点位7"
+    },
+    {
+      "lat": 22.410582,
+      "lon": 112.941215,
+      "isMustPoint": false,
+      "name": "点位4"
+    }
+  ]
+}
