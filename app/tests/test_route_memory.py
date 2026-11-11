@@ -792,3 +792,22 @@ def test_six_lap_400m_noisy_track_cuts_one_lap():
     assert single is not None
     lap_m = T.polyline_length_m(RM._close_ring(single))
     assert 380.0 <= lap_m <= 480.0, lap_m
+
+
+def test_out_and_back_track_is_stored_as_open_half():
+    now_ms = int(time.time() * 1000)
+    one_way = _make_out_and_back(steps=40, noise_m=0.0)
+    ring = one_way + one_way[-2::-1]
+    tracks = [
+        _track_dict(ring, rrid=f'ob{i}',
+                    distance_m=T.polyline_length_m(ring),
+                    duration_s=600, start_ms=now_ms - i * 3600_000)
+        for i in range(5)
+    ]
+    doc = RM.learn_from_tracks(tracks, owner='u:ob')
+    assert doc['records_readable'] == 5
+    assert len(doc['templates']) == 1
+    tpl = doc['templates'][0]
+    assert tpl['closed'] is False
+    assert tpl['lap_m'] < T.polyline_length_m(ring) * 0.6
+    assert tpl['samples'] == 5

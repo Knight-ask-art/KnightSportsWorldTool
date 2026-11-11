@@ -247,6 +247,37 @@ def _cut_one_lap(
     return T.resample(ring, count)[:per_lap + 1]
 
 
+def _out_and_back_half(
+    points: Sequence[tuple[float, float]],
+    max_distance_m: float = 30.0,
+) -> list[tuple[float, float]] | None:
+    """Return the outbound half when a closed track is an out-and-back.
+
+    A user who runs out and back returns to the start, so the record is
+    ``is_closed``.  Treating the whole retrace as a 2 km lap makes
+    ``build_loop`` double it; the outbound half is the real route shape.
+    """
+    ring = _close_ring(points)
+    if len(ring) < 8:
+        return None
+    total = T.polyline_length_m(ring)
+    if total < MIN_LAP_M * 2.0:
+        return None
+    samples = T.resample(ring, 129)
+    outbound = samples[:65]
+    inbound = samples[64:]
+    a = T.resample(outbound, 128)
+    b = T.resample(inbound, 128)
+    # Direction-sensitive: the inbound must be the outbound in reverse order.
+    # Chamfer would also match the second lap of a normal loop.
+    reverse_gap = sum(
+        T.haversine_m(a[i], b[-1 - i]) for i in range(128)
+    ) / 128.0
+    if reverse_gap > max_distance_m:
+        return None
+    return outbound
+
+
 def _extract_single_lap(
     simplified: list[tuple[float, float]],
 ) -> list[tuple[float, float]] | None:
@@ -505,13 +536,20 @@ def learn_from_tracks(
             continue
 
         if T.is_closed(simplified):
-            loop = _extract_single_lap(simplified)
-            if loop is None:
-                continue
-            line = T.canonical_loop(loop)
-            if len(line) < 2:
-                continue
-            closed = True
+            half = _out_and_back_half(cleaned)
+            if half is not None:
+                line = T.simplify(half, 2.5, 200)
+                if len(line) < 2:
+                    continue
+                closed = False
+            else:
+                loop = _extract_single_lap(simplified)
+                if loop is None:
+                    continue
+                line = T.canonical_loop(loop)
+                if len(line) < 2:
+                    continue
+                closed = True
         else:
             line = simplified
             closed = False

@@ -19,7 +19,11 @@ node --check frontend/js/app.js
 
 ## 2. 路线学习 P0（合成基准）
 
-见 `docs/plans/route-memory/P0-REPORT.md`（T0 生成）。
+见 `docs/plans/route-memory/P0-REPORT.md`（由 `tools/route_memory_spike.py`
+生成，20/20 断言通过）。
+
+补充单测：`test_out_and_back_track_is_stored_as_open_half` 验证“跑到折返点再原路
+返回”的记录会存成 open 的单程模板，而不是把整条往返当成一个闭合圈。
 
 真实记录复验仍未完成：本机备份 token 返回 `Unauthorized token有误或缓存中token不存在`，
 本机也没有 GPX/FIT/TCX 轨迹。报告必须明确写“未验证”，不得把合成结果当成真实数据结论。
@@ -36,10 +40,10 @@ python tools/agent_e2e_check.py --json
 {
   "state": "wait_confirm",
   "candidates": 1,
-  "selected": "lr_9975257c",
+  "selected": "lr_b7364844",
   "audit": {"ok": true, "passed": 32, "failed": 0, "warned": 0},
   "km": 2.5,
-  "waypoints": 16,
+  "waypoints": 130,
   "closed": true,
   "checkpoints": 5,
   "submitted": false,
