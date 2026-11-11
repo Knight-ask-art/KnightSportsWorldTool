@@ -46,11 +46,11 @@
 | apply waypoints <=400 | PASS | 130 | <=400 |
 | apply laps 1-30 | PASS | 11 | 1-30 |
 | apply missed 0 | PASS | 0 | 0 |
-| learning time <300 ms | PASS | 261.6 | <300 ms |
+| learning time <300 ms | PASS | 261.8 | <300 ms |
 
 ## 4. 性能
 
-- 学习 24 条（18 有效）耗时：261.6 ms（门限 300 ms）
+- 学习 24 条（18 有效）耗时：261.8 ms（门限 300 ms）
 
 ## 5. 真实数据复验
 
