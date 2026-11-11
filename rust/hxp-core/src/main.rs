@@ -11,7 +11,7 @@ use std::io::{self, BufRead, Write};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use hxp_core::{gt4, netsec, obs, rundata, sign};
+use hxp_core::{device, gt4, netsec, obs, rundata, sign};
 use serde_json::{json, Value};
 
 fn string_map(value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
@@ -225,6 +225,25 @@ fn handle(req: &Value) -> Result<Value, String> {
                 .and_then(Value::as_str)
                 .unwrap_or("");
             obs::build_obs_object(run, &rrid, &uuid, &uid, five)
+        }
+
+        "device_validate" => {
+            let profile = args.get("profile").ok_or("profile required")?;
+            let now_ms = args.get("now_ms").and_then(Value::as_i64).unwrap_or(0);
+            device::validate_profile(profile, now_ms)
+        }
+
+        "device_generate" => {
+            let now_ms = args
+                .get("now_ms")
+                .and_then(Value::as_i64)
+                .ok_or("now_ms required")?;
+            let source = args
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or("generated");
+            let platform = arg_str(&args, "platform")?;
+            device::generate(now_ms, source, platform)
         }
 
         "self_test" => Ok(self_test()),

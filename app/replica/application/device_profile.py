@@ -228,8 +228,40 @@ def _as_digits(value, label: str) -> str:
     return text
 
 
+def _native_core():
+    """Shared sidecar, or None when this checkout has no binary.
+
+    `JHP_RUST_CORE=1` (and frozen builds) must fail loudly, so
+    `RustCoreRequired` is not swallowed.
+    """
+    from ..transport import rustcore
+    try:
+        return rustcore.get()
+    except rustcore.RustCoreRequired:
+        raise
+    except rustcore.RustCoreUnavailable:
+        return None
+
+
 def validate_profile(profile) -> dict:
     """Return a normalised copy, or raise if the file is not usable.
+
+    The native core owns the schema checks; `_validate_profile` is the Python
+    reference for source checkouts and tests.
+    """
+    from ..transport import rustcore
+    core = _native_core()
+    if core is not None:
+        try:
+            return core.call('device_validate', profile=profile,
+                             now_ms=_now_ms())
+        except rustcore.RustCoreError as exc:
+            raise DeviceProfileError(str(exc))
+    return _validate_profile(profile)
+
+
+def _validate_profile(profile) -> dict:
+    """Python reference implementation of the profile schema.
 
     Failing closed matters: silently generating a new profile on a corrupt
     file would rotate the device without the operator seeing it.
@@ -358,6 +390,10 @@ def generate_android_profile(*, now_ms: int | None = None,
                              source: str = 'generated') -> dict:
     """Create one coherent Android profile.  Never called per request."""
     now = int(now_ms if now_ms is not None else _now_ms())
+    core = _native_core()
+    if core is not None:
+        return core.call('device_generate', now_ms=now, source=source,
+                         platform='android')
     model, os_choices, physic, logic = secrets.choice(ANDROID_MODELS)
     os_version = secrets.choice(os_choices)
     # A real installation is older than the first run.  30-400 days keeps
@@ -393,6 +429,10 @@ def generate_ios_profile(*, now_ms: int | None = None,
                          source: str = 'generated') -> dict:
     """Create one coherent iOS profile.  Never called per request."""
     now = int(now_ms if now_ms is not None else _now_ms())
+    core = _native_core()
+    if core is not None:
+        return core.call('device_generate', now_ms=now, source=source,
+                         platform='ios')
     model, os_choices, physic, logic = secrets.choice(IOS_MODELS)
     os_version = secrets.choice(os_choices)
     # Fresh installs are common on iOS; keep install/update equal because the

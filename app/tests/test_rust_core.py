@@ -107,6 +107,44 @@ def test_obs_object_can_route_through_the_native_core():
     assert 'wire_points' in src
 
 
+@needs_core
+def test_native_device_validate_matches_the_python_reference():
+    from replica.application import device_profile as DP
+
+    sample = {
+        'version': 1,
+        'platform': 'iOS',
+        'source': 'rotated',
+        'created_at': 1_792_800_000_000,
+        'DeviceId': 'AFA505AE-1E60-3779-7256-4C220FB24311',
+        'deviceName': 'iPhone 15',
+        'osVersion': '18.1',
+        'cpuModel': 'arm64e',
+        'physicPixel': '1179x2556',
+        'logicPixel': '393x852',
+        'isRoot': '0',
+        'idfa': '00000000-0000-0000-0000-000000000000',
+        'appInstallTime': '1785436971435',
+        'appUpdateTime': '1788581965711',
+        'rotated_at': 1_792_900_000_000,
+        'rotated_from': 'afa505ae1e60377972564c220fb24311',
+        'previous_device_masked': 'afa5…4311',
+    }
+    core = rustcore.get()
+    assert core is not None
+    native = core.call('device_validate', profile=sample,
+                       now_ms=1_792_800_000_000)
+    reference = DP._validate_profile(sample)
+    assert native == reference
+
+
+def test_device_profile_can_route_through_the_native_core():
+    src = (ROOT / 'replica' / 'application' / 'device_profile.py').read_text(
+        encoding='utf-8')
+    assert "core.call('device_validate'" in src
+    assert "core.call('device_generate'" in src
+
+
 def test_frozen_builds_require_the_native_core(monkeypatch):
     import os
 
