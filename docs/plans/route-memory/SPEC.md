@@ -786,7 +786,7 @@ def test_connection(settings: dict, proxies: dict | None = None) -> dict:
    - 使用真实校园中心、`points_cache.json` 里的真实打卡点、`campus_fence_47203.json` 围栏。
    - 生成 4 组路线族：操场闭环（8 条，正反跑、2–3 圈、GPS 噪声 σ≈8 m、起点抖动 80 m）、折返（4 条）、8 字（3 条）、400 m 标准跑道（3 条，4–6 圈）。
    - 混入 6 条脏数据：工具生成、`isCheat=1`、`complete=false`、点数不足、距离越界、飞点。
-   - 断言：4 个模板；400 m 跑道模板圈长 380–420 m；方向不变；2.5/3.0 km 同模板；top1 点位 ≥ 4/5，snap 后 5/5；围栏 100%；medoid 是真实轨迹。
+   - 断言：4 个模板；400 m 跑道模板圈长 380–430 m（含 GPS 噪声）；方向不变；2.5/3.0 km 同模板；top1 点位 ≥ 4/5，snap 后 5/5；围栏 100%；medoid 是真实轨迹。
 2. **真实数据复验（等用户重新登录）**
    `tools/route_memory_spike.py --account <accounts_emu.json> --limit 20`
    - 只读；不打印 token/坐标；输出聚类报告到 `docs/plans/route-memory/P0-REPORT.md`。
