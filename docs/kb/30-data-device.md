@@ -31,9 +31,9 @@
 ## 2. 设备指纹
 
 - 每个 `data` 目录只生成一次，登录、保活、提交、OBS、注销共用同一份，不会逐请求漂移。
-- 新安装从 Android / iOS 随机池抽取；iOS 占比 `JHP_IOS_CHANCE`，默认 30，`0` 关闭。
+- 新安装默认 Android；iOS 占比由 `JHP_IOS_CHANCE` 控制（默认 0，`100` 强制 iOS）。
 - iOS 7.3.40 已真机验证；当前商店 7.4.0，**iOS 提交/OBS 未重新验证**。
-  生产保守可先 `JHP_IOS_CHANCE=0`。
+  默认已是 Android；需要 iOS 时才开。
 - 设备指纹不合法（共享常量、`x86_64`、`isRoot=1`、机型/系统/像素不一致）时
   拒绝保存/提交。
 - 已有 Android 账号不要随手切 iOS；跨平台切换比同平台换机型更显眼。
@@ -70,12 +70,13 @@ python -m replica.application.device_profile --data-dir data --rotate --platform
 
 - 只读区：设备、脱敏 DeviceId、平台、屏幕、缩放、来源、环境自检、UA。
 - **高级功能：更换设备指纹**：随机 / Android / iOS，输入“更换”二次确认。
-- **高级功能：自定义设备**：平台、机型、系统版本从受支持列表选择，屏幕/CPU/root
-  由机型自动匹配；只填 DeviceId 和安装天数（可选）。
+- **高级功能：自定义设备**：平台可选 Android / iOS；机型、系统版本、物理/逻辑
+  分辨率、CPU 都自己填写，保存前按平台规则校验。
 
 约束：
 
-- 自定义机型不能自由输入，否则 `audit_profile` 会判为未知机型，保存后无法登录/提交。
+- 自定义机型可以自由输入；`audit_profile` 对 `source=custom` 检查竖屏、比例、
+  iOS 2x/3x 和 CPU 家族，不再要求机型在示例表内。
 - 自定义 DeviceId 仍拒绝旧版共享常量。
 - 保存前先校验，校验通过才退出登录；保存后旧指纹备份、强制重新登录。
 - 自定义来源记为 `source=custom`，UI 显示“自定义”。

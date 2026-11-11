@@ -73,9 +73,9 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 | **我的** | 个人资料、本学期进度、违规自查 | 资料来自 `user/info`；违规只读，`unknown` 不会显示成正常 |
 | **设置** | 11 项学校要求、代理/高德 Key、诊断包 | 登录后优先从服务器自动读取；未返回项留空，不猜规则 |
 
-> **设备指纹**：每个 `data` 目录首次运行生成一份随机指纹（Android 或 iOS），
+> **设备指纹**：每个 `data` 目录首次运行生成一份随机指纹（默认 Android），
 > 保存在 `data/device_profile.json`；登录、提交、OBS 回读共用同一份。iOS 进入
-> 随机池由 `JHP_IOS_CHANCE` 控制（默认 30，`0` 关闭，`100` 强制 iOS）。iOS 7.3.40
+> iOS 仍可选：`JHP_IOS_CHANCE=1..100` 开启随机池（默认 0，100 强制 iOS），或在更换/自定义设备里选 iOS。iOS 7.3.40
 > 已真机验证；当前 App Store 为 7.4.0，提交链需要重新验证；求稳可先把
 > `JHP_IOS_CHANCE=0`。**旧版共享指纹不再冻结**：`source=legacy-default` 或
 > `DeviceId` 等于旧共享常量（带 `x86_64`/`isRoot=1`）时，启动会一次性生成唯一、
@@ -94,9 +94,9 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
 > 换了一台手机。
 >
 > **自定义设备（高级）**：设置 →「设备指纹」→「高级功能：自定义设备」。
-> 平台、机型、系统版本从受支持列表里选，屏幕/CPU/root 由机型自动匹配；只自定义
-> DeviceId 和安装天数。保存后旧指纹先备份，并退出登录。不要填不存在的机型组合，
-> 也不要把别的账号用过的 DeviceId 拿来复用。
+> 平台可选 Android / iOS，机型、系统版本、物理/逻辑分辨率和 CPU 都自己填写；
+> 保存前会校验竖屏、像素比例（iOS 必须 2x/3x）和 CPU。保存后旧指纹先备份，并退出登录。
+> 不要填真机不会出现的组合，也不要把别的账号用过的 DeviceId 拿来复用。
 >
 > **自查指纹是否自洽**：
 > `python -m replica.application.device_profile --data-dir <data> --audit`。
@@ -115,7 +115,7 @@ DPAPI 加密保存在本机 `data/saved_login.json`，只有当前 Windows 用�
    「导入」（GPX / GeoJSON / JSON / CSV，本地解析）。
 5. 需要贴真实道路时点「吸附」（要 `JHP_AMAP_KEY` 或 `--amap-key`）。
 6. 目标距离默认 **0**，画好路线后按线路长度自动填写：开放路线填全长，闭合路线
-   填单圈长度；手动改过之后保留你的值，点「按线路填」可恢复自动。删除最后一点或
+   填单圈长度；手动改过之后保留你的值，不会覆盖。删除最后一点或
    清空路线会回到 0。闭合路线绕几圈由目标距离决定。
    点位不会在绘制过程中反复请求；关画笔、切出「路线」页、导入/载入路线、拖动结束
    或手改距离后，按最终距离请求一次。若 5 分钟预算/10603 不允许重拉，点位徽标、
@@ -517,7 +517,7 @@ python -m app.replica.pipeline --plan 14
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `JHP_DATA_DIR` | `app/data` | 回执、每日上限、会话、设备指纹 `device_profile.json` 的根目录 |
-| `JHP_IOS_CHANCE` | `30` | 新安装随机到 iOS 的百分比（0–100）；`0` 只用 Android，`100` 强制 iOS。iOS 全链已真机验证（rrid `1344757460`） |
+| `JHP_IOS_CHANCE` | `0` | 新安装随机到 iOS 的百分比（0–100）；默认 Android，`100` 强制 iOS。iOS 全链已真机验证（rrid `1344757460`） |
 | `JHP_POINTS_CACHE` | `app/data/points_cache.json` | 点位缓存文件 |
 | `JHP_AMAP_KEY` | — | 高德 Web 服务 Key（吸附道路用） |
 | `JHP_PROXY` | — | 同 `--proxy` |

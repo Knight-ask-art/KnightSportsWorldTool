@@ -32,9 +32,9 @@
 > `disabled: true` 的会话不会被探测或重登——这是停用旧账号的硬开关。
 >
 > **设备指纹**：`device_profile.json` 每个 data 目录只生成一次，之后登录、提交、回读
-> 都读同一份，不会逐请求漂移。新安装从 Android / iOS 随机池里抽一份；iOS 占比由
-> `JHP_IOS_CHANCE` 控制（默认 30，`0` 关闭）。iOS 7.3.40 已真机验证；当前 App Store
-> 为 7.4.0，提交链需要重新验证，生产上要保守可先设 `JHP_IOS_CHANCE=0`。
+> 都读同一份，不会逐请求漂移。新安装默认 Android；iOS 仍可选，用
+> `JHP_IOS_CHANCE=1..100` 开启随机池，或在更换/自定义设备里选 iOS。iOS 7.3.40 已真机验证；
+> 当前 App Store 为 7.4.0，提交链需要重新验证。
 > **旧版共享指纹不再冻结**：`source=legacy-default` 或 `DeviceId` 等于旧共享常量
 > （`afa505…4311`，带 `x86_64`/`isRoot=1`）时，启动会一次性生成唯一、自洽的新指纹，
 > 先备份为 `device_profile.backup-*.json`，并强制退出本机登录。旧 token 不会与新设备

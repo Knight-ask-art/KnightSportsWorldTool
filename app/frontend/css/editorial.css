@@ -639,12 +639,6 @@ html[data-skin="paper"] .mini-link{
   color:var(--ink);border-bottom:1px solid rgba(28,28,28,.3);background:transparent;
 }
 html[data-skin="paper"] .mini-link:hover{border-bottom-color:var(--stamp);color:var(--stamp)}
-html[data-skin="paper"] .chip-btn{
-  border:1px solid rgba(28,28,28,.2);background:transparent;color:var(--ink);
-  font:400 11px/1.4 var(--sans);padding:4px 9px;transition:background .2s,color .2s;
-}
-html[data-skin="paper"] .chip-btn:hover{background:var(--ink);color:var(--paper)}
-html[data-skin="paper"] .chip-btn.active{background:var(--stamp);border-color:var(--stamp);color:var(--paper)}
 html[data-skin="paper"] .alt-modes{border:1px solid rgba(28,28,28,.15);background:transparent}
 html[data-skin="paper"] .alt-modes button{color:var(--faint);font:500 8.5px/1.4 var(--sans);letter-spacing:.12em;text-transform:uppercase}
 html[data-skin="paper"] .alt-modes button.on{background:var(--ink);color:var(--paper);font-weight:500}

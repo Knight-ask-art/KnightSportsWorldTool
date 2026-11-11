@@ -695,32 +695,6 @@
                 <div class="hint" id="presetHint" style="margin:4px 0 0">保存当前距离、配速、步频、海拔与路线；最多 30 条，只存本机，不保存任何账号信息。</div>
               </div>
 
-              <div class="quick-card">
-                <div class="quick-head"><b>快速填充</b><span>点一下写入参数</span></div>
-                <div class="quick-row">
-                  <span class="quick-label">距离</span>
-                  <div class="quick-chips">
-                    <button class="chip-btn" data-km="2.0">2.0</button>
-                    <button class="chip-btn" data-km="2.5">2.5</button>
-                    <button class="chip-btn" data-km="3.0">3.0</button>
-                    <button class="chip-btn" data-km="5.0">5.0</button>
-                  </div>
-                </div>
-                <div class="quick-row">
-                  <span class="quick-label">配速</span>
-                  <div class="quick-chips">
-                    <button class="chip-btn" data-pace="6.0">6'00"</button>
-                    <button class="chip-btn" data-pace="6.5">6'30"</button>
-                    <button class="chip-btn" data-pace="7.0">7'00"</button>
-                  </div>
-                </div>
-                <div class="quick-actions">
-                  <button class="btn small" id="randomParams">随机档位</button>
-                  <button class="btn small ghost" id="planFill">按计划填</button>
-                  <button class="btn small ghost" id="fillRouteDistance" title="用当前路线的长度重新填写目标距离">按线路填</button>
-                </div>
-              </div>
-
               <div class="param-summary">
                 <div><span>预计时长</span><b id="sumTime">—</b></div>
                 <div><span>热量</span><b id="sumKcal">—</b></div>
@@ -730,7 +704,7 @@
 
               <div class="param-note">
                 <span class="note-mark" aria-hidden="true">i</span>
-                <span>画好路线后会自动按线路长度填写目标距离；手动改过可点「按线路填」恢复。闭合路线按单圈长度绕圈。</span>
+                <span>画好路线后会自动按线路长度填写目标距离；手动改过则保留你的值。闭合路线按单圈长度绕圈。</span>
               </div>
               <div class="param-note subtle" id="paceSpeedHint">填写目标后显示配速、速度与步幅一致性提示。</div>
 
@@ -1299,8 +1273,8 @@
 
           <details class="adv-box" id="customDeviceBox">
             <summary>高级功能：自定义设备</summary>
-            <p>从受支持的机型里选，再填自己的 <b>DeviceId</b>。像素、CPU、root 状态会按机型自动匹配，
-              避免出现“机型 + 系统 + 分辨率”对不上的组合。保存后旧指纹先备份，并需要重新登录。</p>
+            <p>机型、系统、分辨率和 CPU 都自己填写；保存前会检查平台、像素比例和 CPU 是否自洽。
+              不再从固定机型里选，但也不要填真机不会出现的组合。保存后旧指纹先备份，并需要重新登录。</p>
             <div class="form-grid">
               <div class="field-line">
                 <label for="customDevicePlatform">平台</label>
@@ -1311,11 +1285,33 @@
               </div>
               <div class="field-line">
                 <label for="customDeviceModel">机型</label>
-                <select id="customDeviceModel"></select>
+                <input id="customDeviceModel" type="text" maxlength="64"
+                       autocomplete="off" spellcheck="false"
+                       placeholder="例如 23127PN0CC / iPhone 15">
               </div>
               <div class="field-line">
                 <label for="customDeviceOs">系统版本</label>
-                <select id="customDeviceOs"></select>
+                <input id="customDeviceOs" type="text" maxlength="16"
+                       autocomplete="off" spellcheck="false"
+                       placeholder="例如 14 / 18.1">
+              </div>
+              <div class="field-line">
+                <label for="customDevicePhysic">物理分辨率</label>
+                <input id="customDevicePhysic" type="text" maxlength="11"
+                       autocomplete="off" spellcheck="false"
+                       placeholder="例如 1200x2670">
+              </div>
+              <div class="field-line">
+                <label for="customDeviceLogic">逻辑分辨率</label>
+                <input id="customDeviceLogic" type="text" maxlength="11"
+                       autocomplete="off" spellcheck="false"
+                       placeholder="例如 400x890">
+              </div>
+              <div class="field-line">
+                <label for="customDeviceCpu">CPU 型号</label>
+                <input id="customDeviceCpu" type="text" maxlength="32"
+                       autocomplete="off" spellcheck="false"
+                       placeholder="arm64-v8a / arm64e">
               </div>
               <div class="field-line">
                 <label for="customDeviceId">DeviceId</label>
@@ -1334,7 +1330,7 @@
                        autocomplete="off" spellcheck="false" placeholder="自定义">
               </div>
             </div>
-            <p class="hint" id="customDeviceHint">选择机型和系统后，这里会显示自动匹配的屏幕与 CPU。</p>
+            <p class="hint" id="customDeviceHint">Android 逻辑像素填 dp；iOS 物理像素必须是逻辑像素的 2x/3x。</p>
             <div class="form-actions">
               <button class="btn small danger" id="customDeviceSave" disabled>保存自定义设备</button>
               <span class="hint" id="customDeviceResult" style="margin:0"></span>

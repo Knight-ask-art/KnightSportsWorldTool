@@ -100,11 +100,11 @@ app/frontend/
 
 - 只读：设备、脱敏 DeviceId、平台、屏幕、缩放、来源、环境自检、UA。
 - **高级功能：更换设备指纹**：随机 / Android / iOS，输入“更换”确认。
-- **高级功能：自定义设备**：机型/系统从 `real_get_device_options` 返回的受支持
-  列表选择，像素/CPU/root 自动匹配；只自定义 DeviceId 和安装天数。
+- **高级功能：自定义设备**：平台可选 Android / iOS；机型、系统、物理/逻辑分辨率、
+  CPU 都是文本输入，`real_get_device_options` 只提供默认像素/CPU 建议。
 
-自定义设备写入 `source=custom`，保存前先校验，校验通过才退出登录；旧指纹备份，
-保存后必须重新登录。前端不复制机型常量，避免和 `device_profile.py` 漂移。
+自定义设备写入 `source=custom`，保存前先校验（竖屏、比例、iOS 2x/3x、CPU），
+校验通过才退出登录；旧指纹备份，保存后必须重新登录。前端不复制机型常量。
 
 ## 5. 皮肤与动效
 

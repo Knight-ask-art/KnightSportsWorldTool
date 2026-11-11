@@ -18,9 +18,10 @@ cannot coexist (``x86_64`` CPU, ``isRoot=1``, wrong model/OS/pixels).  Those are
 migrated once on load, with a ``device_profile.backup-*.json`` backup and a
 forced re-login.  A valid profile with a unique ``DeviceId`` is never changed.
 
-New installations draw from a coherent Android/iOS pool (``JHP_IOS_CHANCE``,
-default 30).  Once written, the profile is stable regardless of platform: the
-same DeviceId and device fields are used for login, submission and readback.
+New installations default to Android.  ``JHP_IOS_CHANCE`` can opt into a
+mixed pool, and iOS remains selectable when rotating or defining a custom
+device.  Once written, the profile is stable regardless of platform: the same
+DeviceId and device fields are used for login, submission and readback.
 
 Reference points (checked 2026-10-24)
 -------------------------------------
@@ -137,7 +138,10 @@ IOS_MODELS = (
      '1320x2868', '440x956'),
 )
 IOS_CPU_MODEL = 'arm64e'
-IOS_CHANCE_DEFAULT = 30
+#: New installations default to Android.  iOS stays available through the
+#: rotate dialog (`platform=ios`), the custom-device form, or
+#: `JHP_IOS_CHANCE=1..100` for operators who explicitly want the iOS share.
+IOS_CHANCE_DEFAULT = 0
 #: Most real iPhones deny App Tracking Transparency, so IDFA is all zeros.
 _IDFA_ZERO = '00000000-0000-0000-0000-000000000000'
 
@@ -371,11 +375,11 @@ def _validate_profile(profile) -> dict:
 
 
 def _ios_chance() -> int:
-    """iOS share for new random profiles (0-100, default 30).
+    """iOS share for new random profiles (0-100, default 0).
 
-    Both platforms are verified end-to-end, so this only decides the mix.  Set
-    ``JHP_IOS_CHANCE=50`` for an even split, ``0`` to always use Android, or
-    ``100`` to force iOS on new installs.
+    New installations default to Android.  iOS still has three entry points:
+    ``JHP_IOS_CHANCE=1..100`` for a mixed pool, ``rotate(platform='ios')``, and
+    the custom-device form.  ``100`` forces iOS on new installs.
     """
     raw = os.environ.get('JHP_IOS_CHANCE')
     if raw is None or str(raw).strip() == '':
@@ -465,7 +469,7 @@ def generate_profile(*, now_ms: int | None = None,
     """Create a random Android or iOS profile.
 
     ``platform`` forces one platform (used by rotate / tests).  When omitted,
-    ``JHP_IOS_CHANCE`` controls the iOS share (default 30).
+    the pool is Android by default; ``JHP_IOS_CHANCE`` opts into a mixed pool.
     """
     if platform is None:
         platform = ('ios' if secrets.randbelow(100) < _ios_chance()
@@ -643,12 +647,12 @@ def rotate(store_dir: str, legacy_session: dict | None = None,
 
 
 def device_catalog() -> dict:
-    """Supported model/OS combinations for the custom-device UI.
+    """Example model/OS combinations for the custom-device form.
 
-    The custom form deliberately picks from this catalog instead of accepting
-    free-form model strings: ``audit_profile`` refuses unknown models and
-    impossible model/OS/pixel pairs, so a hand-written combination would be
-    saved and then block login/submit.  DeviceId stays editable.
+    The form is free-form now: this catalog only supplies default pixel/CPU
+    suggestions and the rotate presets.  ``audit_profile`` validates custom
+    profiles against platform rules (aspect ratio, 2x/3x scale, CPU) instead
+    of requiring a known model.
     """
     android = []
     for name, versions, physic, logic in ANDROID_MODELS:
@@ -680,26 +684,36 @@ def device_catalog() -> dict:
 
 def build_custom_profile(*, platform, device_name, os_version, device_id,
                          install_days=None, idfa=None,
+                         physic_pixel=None, logic_pixel=None,
+                         cpu_model=None,
                          now_ms: int | None = None) -> dict:
     """Validate a custom device without writing it.
 
-    Raises :class:`DeviceProfileError` with a user-facing message.  The caller
-    can then end the session and call :func:`set_custom` only after the
-    candidate is known to be coherent.
+    Model, OS, pixels and CPU are operator-supplied.  Missing pixel/CPU values
+    fall back to the matching catalog row (or the platform default) so older
+    callers keep working.  Raises :class:`DeviceProfileError` with a
+    user-facing message when the combination is not sendable.
     """
     platform = str(platform or '').strip().lower()
     if platform not in ('android', 'ios'):
         raise DeviceProfileError('平台必须是 android 或 ios')
     name = str(device_name or '').strip()
     os_version = str(os_version or '').strip()
+    if not name:
+        raise DeviceProfileError('请填写机型')
+    if not os_version:
+        raise DeviceProfileError('请填写系统版本')
     rows = ANDROID_MODELS if platform == 'android' else IOS_MODELS
     row = next((r for r in rows if r[0] == name), None)
-    if row is None:
-        raise DeviceProfileError('不支持的机型；请从列表中选择')
-    versions, physic, logic = row[1], row[2], row[3]
-    if os_version not in versions:
-        raise DeviceProfileError(
-            f'{name} 不支持 {os_version}；可选: {", ".join(versions)}')
+    fallback = {
+        'android': ('1080x2400', '393x873', 'arm64-v8a'),
+        'ios': ('1179x2556', '393x852', IOS_CPU_MODEL),
+    }[platform]
+    physic = str(physic_pixel if physic_pixel not in (None, '') else
+                 (row[2] if row else fallback[0])).strip()
+    logic = str(logic_pixel if logic_pixel not in (None, '') else
+                (row[3] if row else fallback[1])).strip()
+    cpu = str(cpu_model if cpu_model not in (None, '') else fallback[2]).strip()
 
     device_id = str(device_id or '').strip()
     if not _DEVICE_ID_RE.match(device_id):
@@ -726,7 +740,7 @@ def build_custom_profile(*, platform, device_name, os_version, device_id,
         'DeviceId': device_id,
         'deviceName': name,
         'osVersion': os_version,
-        'cpuModel': 'arm64-v8a' if platform == 'android' else IOS_CPU_MODEL,
+        'cpuModel': cpu,
         'physicPixel': physic,
         'logicPixel': logic,
         'isRoot': '0',
@@ -941,6 +955,60 @@ def repair_pixels(store_dir: str) -> tuple[dict, str | None, list[str]]:
         return save_profile(store_dir, profile), backup, changes
 
 
+def _pixel_pair(text) -> tuple[int, int]:
+    try:
+        width, height = str(text).strip().lower().split('x', 1)
+        return int(width), int(height)
+    except (TypeError, ValueError):
+        return 0, 0
+
+
+def _audit_custom_device(p: dict) -> list[str]:
+    """Platform rules for free-form devices, instead of a model allow-list."""
+    issues: list[str] = []
+    if any(ord(ch) < 32 for ch in str(p.get('deviceName') or '')):
+        issues.append('机型包含控制字符')
+    pw, ph = _pixel_pair(p.get('physicPixel'))
+    lw, lh = _pixel_pair(p.get('logicPixel'))
+    if pw <= 0 or ph <= 0 or lw <= 0 or lh <= 0:
+        issues.append('分辨率无效')
+        return issues
+    if pw >= ph:
+        issues.append(f'物理分辨率 {p["physicPixel"]} 不是竖屏')
+    if lw >= lh:
+        issues.append(f'逻辑分辨率 {p["logicPixel"]} 不是竖屏')
+    if p['platform'] == 'android':
+        match = re.match(r'^(\d{1,2})(?:\.\d{1,2}){0,3}$', p['osVersion'])
+        major = int(match.group(1)) if match else 0
+        if not match or not 7 <= major <= 18:
+            issues.append(f'Android 版本 {p["osVersion"]!r} 不在 7–18')
+        if p['cpuModel'] != 'arm64-v8a':
+            issues.append(f'Android cpuModel is {p["cpuModel"]!r}')
+        if pw < lw or ph < lh:
+            issues.append('物理分辨率小于逻辑分辨率')
+        elif abs(pw / ph - lw / lh) > 0.08:
+            issues.append('物理/逻辑分辨率比例不一致')
+        if p.get('idfa'):
+            issues.append('Android profile carries an IDFA')
+    else:
+        match = re.match(r'^(\d{1,2})(?:\.\d{1,2}){0,2}$', p['osVersion'])
+        major = int(match.group(1)) if match else 0
+        if not match or not 12 <= major <= 30:
+            issues.append(f'iOS 版本 {p["osVersion"]!r} 不在 12–30')
+        if p['cpuModel'] != IOS_CPU_MODEL:
+            issues.append(f'iOS cpuModel is {p["cpuModel"]!r}')
+        width_scale = pw / lw
+        height_scale = ph / lh
+        whole = round(width_scale)
+        if (whole not in (2, 3)
+                or abs(width_scale - whole) > 0.02
+                or abs(height_scale - whole) > 0.02):
+            issues.append('iOS 物理/逻辑像素必须是 2x 或 3x')
+        if not p.get('idfa'):
+            issues.append('iOS profile has no IDFA')
+    return issues
+
+
 def audit_profile(profile: dict) -> list[str]:
     """Return human-readable coherence problems for a profile.
 
@@ -951,7 +1019,9 @@ def audit_profile(profile: dict) -> list[str]:
     """
     p = validate_profile(profile)
     issues: list[str] = []
-    if p['platform'] == 'android':
+    if p.get('source') == 'custom':
+        issues.extend(_audit_custom_device(p))
+    elif p['platform'] == 'android':
         row = next((r for r in ANDROID_MODELS if r[0] == p['deviceName']), None)
         if row is None:
             issues.append(f'unknown Android model {p["deviceName"]!r}')

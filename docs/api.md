@@ -113,7 +113,7 @@ checkGeeUse
 ```
 
 - 设备指纹每个 `data` 目录生成一次，保存在 `data/device_profile.json`；登录和提交
-  共用这一份。新安装从 Android / iOS 随机池抽取（`JHP_IOS_CHANCE` 默认 30）；
+  共用这一份。新安装默认 Android；`JHP_IOS_CHANCE` 可开启 iOS 随机池（默认 0，100 强制 iOS）；
   iOS 7.3.40 已真机验证（2026-10-25，rrid `1344757460`，`status=0` / `isCheat=0`）；
   当前 App Store 为 7.4.0，7.4.0 iOS 提交/OBS 仍需重新验证。
   旧版共享指纹（`source=legacy-default` 或旧常量 DeviceId）会在启动时迁移为唯一、
@@ -402,9 +402,9 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_save_routes` | `routes` | 整体替换并校验路线库，替代仅靠 localStorage |
 | `real_diagnostics` | — | 生成脱敏诊断包（不含 token/密码/uid/坐标/IP） |
 | `real_get_session` | — | 返回脱敏会话；`device_platform`、`device_name`、`device_os`、`device_source` 是本机实际生效的设备指纹，`device_id_masked` 只露首尾 |
-| `real_get_device_options` | — | 返回受支持的 Android/iOS 机型、系统版本、像素、CPU，以及当前生效的设备摘要 |
+| `real_get_device_options` | — | 返回示例 Android/iOS 机型（含默认像素/CPU）和当前生效的设备摘要；自定义设备不再要求从这里取值 |
 | `real_rotate_device` | `confirm`, `platform` | 高级：输入 `更换设备指纹` 才执行；`platform` 为 `random`（默认）/ `android` / `ios`。先退出本机登录，再备份旧指纹并生成新指纹；返回 `device`、`backup`、`relogin_required` |
-| `real_set_custom_device` | `confirm`, `platform`, `deviceName`, `osVersion`, `DeviceId`, `installDays` | 高级：输入 `自定义设备` 才执行。机型/系统必须来自 `real_get_device_options`，像素与 CPU 自动匹配；先校验再退出本机登录，备份旧指纹后写入 `source=custom`。返回 `device`、`backup`、`relogin_required` |
+| `real_set_custom_device` | `confirm`, `platform`, `deviceName`, `osVersion`, `physicPixel`, `logicPixel`, `cpuModel`, `DeviceId`, `installDays` | 高级：输入 `自定义设备` 才执行。机型/系统/双分辨率/CPU 自由填写；后端按平台检查竖屏、比例和 iOS 2x/3x。先校验再退出本机登录，备份旧指纹后写入 `source=custom`。返回 `device`、`backup`、`relogin_required` |
 
 `device_source`：`generated`（本机随机）、`migrated`（旧版共享指纹已迁移）、
 `repaired`（旧版字段已修正）、`legacy-session`（旧会话但指纹可用）、

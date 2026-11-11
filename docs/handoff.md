@@ -84,10 +84,10 @@
 - 回归（设备指纹后）：`pytest` 140 passed；`selfcheck` 23/23；`node --check` 通过。
 - **高级更换入口**：账号页「设备与会话」→「高级：更换设备指纹」。输入“更换”二次确认；
   后端再校验确认文字，先退本机登录、备份旧指纹，再生成新指纹并返回 `relogin_required`。
-- **iOS 正式进入随机池（2026-10-24）**：新安装按 `JHP_IOS_CHANCE`（默认 30）抽
+- **iOS 正式进入随机池（2026-10-24）**：新安装按 `JHP_IOS_CHANCE` 抽（2026-11-12 起默认 Android，iOS 改为可选）
   Android 或 iOS；iOS 机型/系统/物理/逻辑像素/`arm64e`/IDFA 按同一张表生成，
   登录和提交都走 iOS 头，保证“同一台设备”。**iOS 提交链尚未真实跑通验证**；
-  求稳可设 `JHP_IOS_CHANCE=0`。高级更换入口新增平台选择（随机 / Android / iOS）。
+  默认 Android；需要 iOS 时设 `JHP_IOS_CHANCE`。高级更换入口新增平台选择（随机 / Android / iOS）。
 - **指纹自洽审查**：Android 逻辑像素改为 dp（不再与物理像素相同），机型/系统/像素
   成对生成；iOS 不再使用参考模拟器的 `x86_64 / 1080x1920`；请求补平台 UA。
   新增 `device_profile --audit`。2000 次抽样 0 条自洽告警，iOS 占比约 29%。

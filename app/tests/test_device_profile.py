@@ -561,11 +561,24 @@ def test_custom_profile_is_coherent_and_uses_custom_source():
     assert days == 12
 
 
+def test_custom_profile_accepts_free_form_device():
+    profile = DP.build_custom_profile(
+        platform='android', device_name='Xiaomi 17 Pro',
+        os_version='16', device_id='custom-free-1',
+        physic_pixel='1200x2670', logic_pixel='400x890',
+        cpu_model='arm64-v8a', install_days=5)
+    assert profile['deviceName'] == 'Xiaomi 17 Pro'
+    assert profile['physicPixel'] == '1200x2670'
+    assert DP.audit_profile(profile) == []
+    ios = DP.build_custom_profile(
+        platform='ios', device_name='iPhone 17 Pro', os_version='19.1',
+        device_id='custom-free-ios-1', physic_pixel='1206x2622',
+        logic_pixel='402x874', cpu_model='arm64e')
+    assert DP.audit_profile(ios) == []
+
+
 def test_custom_profile_rejects_incoherent_input():
     row = DP.device_catalog()['android'][0]
-    with pytest.raises(DP.DeviceProfileError):
-        DP.build_custom_profile(platform='android', device_name='Not A Phone',
-                                os_version='14', device_id='custom-1')
     with pytest.raises(DP.DeviceProfileError):
         DP.build_custom_profile(platform='android', device_name=row['deviceName'],
                                 os_version='99', device_id='custom-1')
@@ -581,6 +594,27 @@ def test_custom_profile_rejects_incoherent_input():
         DP.build_custom_profile(platform='windows', device_name=row['deviceName'],
                                 os_version=row['osVersions'][0],
                                 device_id='custom-1')
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(
+            platform='android', device_name='Square Phone',
+            os_version='14', device_id='custom-1',
+            physic_pixel='1080x1080', logic_pixel='360x360',
+            cpu_model='arm64-v8a')
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(
+            platform='android', device_name='Emulator', os_version='14',
+            device_id='custom-1', cpu_model='x86_64')
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(
+            platform='ios', device_name='iPhone 17', os_version='19.1',
+            device_id='custom-1', physic_pixel='1080x2340',
+            logic_pixel='390x844', cpu_model='arm64e')
+
+
+def test_new_profiles_default_to_android(monkeypatch):
+    monkeypatch.delenv('JHP_IOS_CHANCE', raising=False)
+    assert all(DP.generate_profile()['platform'] == 'android'
+               for _ in range(24))
 
 
 def test_set_custom_backs_up_and_installs(tmp_path):

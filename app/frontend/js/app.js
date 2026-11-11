@@ -1289,39 +1289,6 @@ if($('#navThumb')){
     scheduleModelPreview();
   });
 });
-document.querySelectorAll('[data-km]').forEach(b => {
-  b.addEventListener('click', () => {
-    distanceManual = true;
-    $('#inKm').value = b.dataset.km;
-    refreshParams(); redraw(); updateRunDateLabel();
-    schedulePointsForDistance();
-    if(modelConfigured) refreshModel();
-    scheduleModelPreview();
-  });
-});
-document.querySelectorAll('[data-pace]').forEach(b => {
-  b.addEventListener('click', () => {
-    $('#inPace').value = b.dataset.pace;
-    refreshParams(); redraw(); updateRunDateLabel();
-    if(modelConfigured) refreshModel();
-    scheduleModelPreview();
-  });
-});
-$('#randomParams').addEventListener('click', () => {
-  const kms = [2.0, 2.5, 3.0, 3.5, 4.0];
-  const paces = [5.8, 6.0, 6.3, 6.6, 7.0];
-  const cads = [140, 145, 150, 155, 160];
-  const pick = a => a[Math.floor(Math.random() * a.length)];
-  distanceManual = true;
-  $('#inKm').value = pick(kms);
-  $('#inPace').value = pick(paces);
-  $('#inCad').value = pick(cads);
-  refreshParams(); redraw(); updateRunDateLabel();
-  schedulePointsForDistance();
-  if(modelConfigured) refreshModel();
-  scheduleModelPreview();
-  toast('随机档位已填入');
-});
 
 let currentMode = 'draw';
 const MODE_HELP = {
@@ -4622,52 +4589,49 @@ function deviceCatalogRows(platform){
   const cat = LIVE.deviceCatalog || {};
   return Array.isArray(cat[platform]) ? cat[platform] : [];
 }
-function customDeviceRow(){
-  if(!$('#customDevicePlatform') || !$('#customDeviceModel')) return null;
-  const platform = $('#customDevicePlatform').value;
-  const model = $('#customDeviceModel').value;
-  return deviceCatalogRows(platform).find(r => r.deviceName === model) || null;
+function customDeviceDefaults(platform){
+  const row = deviceCatalogRows(platform)[0] || null;
+  if(row){
+    return {physic: row.physicPixel, logic: row.logicPixel,
+            cpu: row.cpuModel};
+  }
+  return platform === 'ios'
+    ? {physic: '1179x2556', logic: '393x852', cpu: 'arm64e'}
+    : {physic: '1080x2400', logic: '393x873', cpu: 'arm64-v8a'};
 }
-function fillCustomDeviceModels(){
-  if(!$('#customDeviceModel')) return;
+function applyCustomDeviceDefaults(force){
+  if(!$('#customDevicePlatform')) return;
   const platform = $('#customDevicePlatform').value;
-  const rows = deviceCatalogRows(platform);
-  const prev = $('#customDeviceModel').value;
-  $('#customDeviceModel').innerHTML = rows.map(r => {
-    const label = r.label && r.label !== r.deviceName
-      ? r.label + ' · ' + r.deviceName : r.deviceName;
-    return `<option value="${esc(r.deviceName)}">${esc(label)}</option>`;
-  }).join('');
-  if(rows.some(r => r.deviceName === prev)) $('#customDeviceModel').value = prev;
-  fillCustomDeviceOs();
-}
-function fillCustomDeviceOs(){
-  if(!$('#customDeviceOs')) return;
-  const row = customDeviceRow();
-  const prev = $('#customDeviceOs').value;
-  $('#customDeviceOs').innerHTML = row
-    ? row.osVersions.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')
-    : '';
-  if(row && row.osVersions.includes(prev)) $('#customDeviceOs').value = prev;
+  const d = customDeviceDefaults(platform);
+  [['customDevicePhysic', d.physic], ['customDeviceLogic', d.logic],
+   ['customDeviceCpu', d.cpu]].forEach(([id, value]) => {
+    const input = $('#' + id);
+    if(!input) return;
+    if(force || !input.value.trim()) input.value = value;
+    input.placeholder = value;
+  });
   updateCustomDeviceHint();
 }
 function updateCustomDeviceHint(){
-  const row = customDeviceRow();
   const hint = $('#customDeviceHint');
-  if(!row){
-    if(hint) hint.textContent = '先选择平台和机型。';
-  }else if(hint){
-    hint.textContent = `自动匹配：${row.physicPixel} / ${row.logicPixel} · CPU ${row.cpuModel} · root=0`;
-  }
+  if(!hint) return;
+  const platform = $('#customDevicePlatform')
+    ? $('#customDevicePlatform').value : 'android';
+  hint.textContent = platform === 'ios'
+    ? 'iOS：物理像素必须是逻辑像素的 2x/3x；CPU 用 arm64e；系统版本如 18.1。'
+    : 'Android：逻辑像素填 dp（不是物理分辨率）；CPU 用 arm64-v8a；系统版本如 14。';
   updateCustomSaveState();
 }
 function updateCustomSaveState(){
   const btn = $('#customDeviceSave');
   if(!btn) return;
-  const typed = $('#customDeviceConfirm') ? $('#customDeviceConfirm').value.trim() : '';
-  const id = $('#customDeviceId') ? $('#customDeviceId').value.trim() : '';
-  btn.disabled = !LIVE.deviceCatalog ||
-    !(typed === '自定义' && id.length > 0) || !!LIVE.submitting;
+  const value = id => ($(id) ? $(id).value.trim() : '');
+  const ready = ['#customDeviceModel', '#customDeviceOs',
+                 '#customDevicePhysic', '#customDeviceLogic',
+                 '#customDeviceCpu', '#customDeviceId',
+                 '#customDeviceConfirm'].every(sel => !!value(sel));
+  btn.disabled = !ready || value('#customDeviceConfirm') !== '自定义' ||
+    !!LIVE.submitting;
 }
 async function loadDeviceOptions(){
   if(LIVE.deviceCatalogLoading) return;
@@ -4681,7 +4645,7 @@ async function loadDeviceOptions(){
     }
     LIVE.deviceCatalog = (j.data && j.data.catalog) || {};
     LIVE.deviceCatalogError = null;
-    fillCustomDeviceModels();
+    applyCustomDeviceDefaults(false);
   }catch(e){
     LIVE.deviceCatalogError = e && e.message ? e.message : String(e);
     if($('#customDeviceHint')) $('#customDeviceHint').textContent = LIVE.deviceCatalogError;
@@ -4707,12 +4671,22 @@ async function saveCustomDevice(){
     return;
   }
   const platform = $('#customDevicePlatform').value;
-  const deviceName = $('#customDeviceModel').value;
-  const osVersion = $('#customDeviceOs').value;
+  const deviceName = $('#customDeviceModel').value.trim();
+  const osVersion = $('#customDeviceOs').value.trim();
+  const physicPixel = $('#customDevicePhysic').value.trim();
+  const logicPixel = $('#customDeviceLogic').value.trim();
+  const cpuModel = $('#customDeviceCpu').value.trim();
   const DeviceId = $('#customDeviceId').value.trim();
   const installDays = $('#customDeviceAge') ? $('#customDeviceAge').value.trim() : '';
+  if(!deviceName){ toast('请填写机型'); $('#customDeviceModel').focus(); return; }
+  if(!osVersion){ toast('请填写系统版本'); $('#customDeviceOs').focus(); return; }
+  if(!physicPixel){ toast('请填写物理分辨率'); $('#customDevicePhysic').focus(); return; }
+  if(!logicPixel){ toast('请填写逻辑分辨率'); $('#customDeviceLogic').focus(); return; }
+  if(!cpuModel){ toast('请填写 CPU 型号'); $('#customDeviceCpu').focus(); return; }
   if(!DeviceId){ toast('请填写 DeviceId'); $('#customDeviceId').focus(); return; }
   if(!confirm('确定保存自定义设备？\n\n· 设备：' + deviceName + ' · ' + osVersion +
+              '\n· 物理/逻辑：' + physicPixel + ' / ' + logicPixel +
+              '\n· CPU：' + cpuModel +
               '\n· DeviceId：' + DeviceId +
               '\n· 旧指纹会先备份\n· 保存后需要重新登录\n· 不要频繁更换')) return;
   const btn = $('#customDeviceSave');
@@ -4720,7 +4694,9 @@ async function saveCustomDevice(){
   try{
     const j = await liveApi('real_set_custom_device', {
       confirm: '自定义设备', platform: platform, deviceName: deviceName,
-      osVersion: osVersion, DeviceId: DeviceId, installDays: installDays
+      osVersion: osVersion, physicPixel: physicPixel,
+      logicPixel: logicPixel, cpuModel: cpuModel,
+      DeviceId: DeviceId, installDays: installDays
     }, 30000);
     if(!liveOk(j)){
       const msg = (j && j.message) || '未知错误';
@@ -9255,9 +9231,10 @@ function liveWire(){
   $('#accTest').addEventListener('click', liveTestSession);
   $('#accLogout').addEventListener('click', liveLogout);
   if($('#deviceRotateBtn')) $('#deviceRotateBtn').addEventListener('click', rotateDeviceProfile);
-  if($('#customDevicePlatform')) $('#customDevicePlatform').addEventListener('change', fillCustomDeviceModels);
-  if($('#customDeviceModel')) $('#customDeviceModel').addEventListener('change', fillCustomDeviceOs);
-  ['#customDeviceConfirm', '#customDeviceId'].forEach(sel => {
+  if($('#customDevicePlatform')) $('#customDevicePlatform').addEventListener('change', () => applyCustomDeviceDefaults(true));
+  ['#customDeviceModel', '#customDeviceOs', '#customDevicePhysic',
+   '#customDeviceLogic', '#customDeviceCpu', '#customDeviceConfirm',
+   '#customDeviceId'].forEach(sel => {
     const el = $(sel);
     if(el) el.addEventListener('input', updateCustomSaveState);
   });
@@ -9442,25 +9419,6 @@ function liveWire(){
       btn.disabled = false; btn.textContent = oldText || '吸附';
       if(tool) tool.disabled = false;
     }
-  });
-  $('#planFill').addEventListener('click', async () => {
-    // Same horizon as the overview grid: never suggest a day past the
-    // semester deadline.
-    const days = planHorizonDays(LIVE.semester && LIVE.semester.view);
-    if(days === 0){ toast('本学期已结束，不再生成计划'); return; }
-    const j = await liveApi('real_plan', {days: days});
-    if(!liveOk(j)){ toast(j.message || '计划生成失败'); return; }
-    const slot = nextPlanSlot((j.data && j.data.slots) || []);
-    if(!slot){ toast('计划为空'); return; }
-    applyPlanSlot(slot, {tab: 'params'});
-  });
-  $('#fillRouteDistance').addEventListener('click', () => {
-    distanceManual = false;
-    const m = route && route.length >= 2 ? pathLength(displayPath()) : 0;
-    if(!(m > 0)){ toast('先画一条路线；之后会自动按线路长度填写'); return; }
-    redraw();
-    scheduleRouteFinalize(300, 'fill-route');
-    toast('已按线路长度填写；继续画线会同步更新');
   });
   $('#runCheck').addEventListener('click', () => { refreshModelPreview(); scheduleSplitsPreview(); refreshChecks(); toast('已重新检查'); });
   if($('#submitRun')) $('#submitRun').addEventListener('click', submitRun);

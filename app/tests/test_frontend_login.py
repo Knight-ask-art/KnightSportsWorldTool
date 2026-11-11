@@ -172,7 +172,7 @@ def test_multi_fence_ui_uses_all_rings_and_marks_invalid_areas():
     assert 'count === 1' in _js_function('updateCampusControls')
     assert '非官方自由跑' in HTML
     assert 'setFences' in JS
-    start = JS.index("$('#randomParams')")
+    start = JS.index("['inKm', 'inPace', 'inCad', 'inAlt']")
     assert 'schedulePointsForDistance()' in JS[start:JS.index('});', start)]
 
 
@@ -397,26 +397,42 @@ def test_device_settings_live_on_the_settings_page():
 def test_custom_device_is_advanced_and_explicit():
     assert '高级功能：自定义设备' in HTML
     assert 'id="customDevicePlatform"' in HTML
-    assert 'id="customDeviceModel"' in HTML
-    assert 'id="customDeviceOs"' in HTML
+    assert 'id="customDeviceModel" type="text"' in HTML
+    assert 'id="customDeviceOs" type="text"' in HTML
+    assert 'id="customDevicePhysic" type="text"' in HTML
+    assert 'id="customDeviceLogic" type="text"' in HTML
+    assert 'id="customDeviceCpu" type="text"' in HTML
     assert 'id="customDeviceId"' in HTML
     assert 'id="customDeviceAge"' in HTML
     assert 'id="customDeviceConfirm"' in HTML
     assert 'id="customDeviceSave"' in HTML
+    assert "<select id=\"customDeviceModel\"" not in HTML
     assert "/bridge/real_device_options" not in HTML
     assert "liveApi('real_get_device_options'" in JS
     assert "liveApi('real_set_custom_device'" in JS
+    assert "physicPixel: physicPixel" in JS
+    assert "logicPixel: logicPixel" in JS
+    assert "cpuModel: cpuModel" in JS
     assert "confirmInput.value.trim() !== '自定义'" in JS
-    assert "typed === '自定义'" in JS
+    assert "value('#customDeviceConfirm') !== '自定义'" in JS
     assert '自定义设备不自洽' not in JS
 
 
 def test_distance_follows_drawn_route_until_manual_edit():
     assert 'function autoFillDistanceFromRoute(m)' in JS
     assert 'distanceManual' in JS
-    assert 'id="fillRouteDistance"' in HTML
     assert '画好路线后会自动按线路长度填写目标距离' in HTML
     assert 'Math.ceil(target / m - 0.005)' in JS
+
+
+def test_quick_fill_block_is_removed():
+    assert '快速填充' not in HTML
+    for marker in ('id="randomParams"', 'id="planFill"',
+                   'id="fillRouteDistance"', 'data-km=', 'data-pace='):
+        assert marker not in SOURCE, marker
+    # Presets and the computed summary stay.
+    assert 'id="presetCard"' in HTML
+    assert 'id="sumTime"' in HTML
 
 
 def test_clipboard_has_a_fallback():
@@ -477,7 +493,7 @@ def test_plan_horizon_stops_at_the_semester_end():
     assert 'function planHorizonDays' in JS
     assert '+view.days_left + 1' in JS
     assert "liveApi('real_plan', {days: planDays})" in JS
-    assert 'const days = planHorizonDays(LIVE.semester && LIVE.semester.view)' in JS
+    assert 'const planDays = planHorizonDays(semView);' in JS
     assert 'id="ovPlanTitle"' in HTML
     assert '本学期已结束' in JS
 

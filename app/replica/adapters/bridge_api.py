@@ -1323,12 +1323,13 @@ class ReplicaApi:
         return _ok({'catalog': catalog, 'current': current})
 
     def real_set_custom_device(self, confirm='', platform='', deviceName='',
-                               osVersion='', DeviceId='', installDays=''):
-        """Install an operator-defined device profile from the supported pool.
+                               osVersion='', DeviceId='', installDays='',
+                               physicPixel='', logicPixel='', cpuModel=''):
+        """Install an operator-defined device profile.
 
-        Only the DeviceId (and install age) are free-form; model, OS, pixels
-        and CPU come from ``device_profile.device_catalog`` so the result can
-        pass ``audit_profile`` instead of blocking the next login/submit.
+        Model, OS, both resolutions and CPU are free-form; the backend checks
+        platform rules (aspect ratio, iOS 2x/3x, CPU family) instead of
+        requiring a catalog model.  ``installDays`` stays optional.
 
         The local session is ended before the new profile is installed, so an
         old token is never reused with a different device.
@@ -1339,7 +1340,8 @@ class ReplicaApi:
             candidate = DP.build_custom_profile(
                 platform=platform, device_name=deviceName,
                 os_version=osVersion, device_id=DeviceId,
-                install_days=installDays)
+                install_days=installDays, physic_pixel=physicPixel,
+                logic_pixel=logicPixel, cpu_model=cpuModel)
         except Exception as e:  # noqa: BLE001
             return _fail(str(e))
 

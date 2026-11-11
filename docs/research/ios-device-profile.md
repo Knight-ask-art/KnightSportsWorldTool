@@ -10,7 +10,7 @@
 > 其衍生分支 `czcdr/NekoSportsWorldTool-antiban` 的 `review/ANTI-FLAG-AUDIT.md`
 > 把这一行为列为 A1（high）：同一条 token 上登录是 iOS、提交是 Android，
 > 真机不可能中途换平台。我们选择整条链同平台，并把这条选择做了实测。
-> iOS 仍只是随机选项之一（`JHP_IOS_CHANCE` 默认 30），因为「换平台」本身是信号，
+> iOS 仍只是可选选项（2026-11-12 起默认 Android；`JHP_IOS_CHANCE` 默认 0），因为「换平台」本身是信号，
 > 不是因为没有证据。
 
 ---
@@ -174,7 +174,7 @@ req = req
 已接入 master 并完成真机验证：
 
 - `app/replica/application/device_profile.py`
-  - 新安装从 Android / iOS 随机池抽取，`JHP_IOS_CHANCE` 默认 30；
+  - 新安装默认 Android，`JHP_IOS_CHANCE` 默认 0；
   - iOS 机型、系统、物理/逻辑像素、`arm64e`、`isRoot=0` 按同一张表生成；
   - 80% 的 iOS profile 使用全零 IDFA（ATT 拒绝跟踪的常见状态）；
   - `audit_profile()` 检查机型/系统/像素/CPU/root 是否自洽。
