@@ -283,8 +283,8 @@ def apply_template(doc: dict, template_id: str, km: float,
 
 | 方法 | 行为 |
 |---|---|
-| `real_route_memory_status(self)` | 返回 `summarize(doc)` + `templates` 摘要（不含完整 line） |
-| `real_route_memory_learn(self, limit=50, force=False)` | 拉记录/详情，调用 `learn_from_tracks`，保存，返回摘要 |
+| `real_route_memory_status(self)` | 返回 `summarize(doc)` + `templates` 摘要（不含完整 line）+ `progress` |
+| `real_route_memory_learn(self, limit=50, force=False, wait=True)` | `wait=True` 同步返回摘要；`wait=False` 立即返回 `{started: true, progress}`，后台线程拉取/学习，前端轮询 `status` |
 | `real_route_memory_suggest(self, km=2.5, points=None, fence=None, run_area_id=None)` | 读 doc，调用 `suggest`，返回 `candidates` |
 | `real_route_memory_apply(self, template_id, km=2.5, points=None)` | 调用 `apply_template` |
 | `real_route_memory_clear(self)` | 删除当前账号缓存 |
@@ -295,6 +295,10 @@ def apply_template(doc: dict, template_id: str, km: float,
 - 账号来自 `self._real_account()`；无 token 返回 `_fail('未配置 token...')`。
 - `learn` 必须先调 `recent_records`，再逐条 `record_detail`；详情失败跳过并计数，不能整批失败。
 - `limit` 最大 100；详情请求之间至少 0.15 s，避免打爆。
+- `learn` 进度写入内存 `self._rm_progress`（并镜像到 `data/route_memory/progress.json`）：
+  `{running, phase, done, total, error, started_at_ms, finished_at_ms}`；
+  `phase` ∈ `listing|detail|learning|saving|done|error`。
+- `wait=False` 时后台线程必须自己捕获异常并写 `phase='error'`，不能让 UI 永久转圈。
 - 工具自己生成的记录：检查 `data/submission_receipts/` 里是否有对应 uuid；有则 `source='tool'` 并跳过。
 - `fence` 入参兼容：
   - `[[{lat,lon}, ...], ...]`
