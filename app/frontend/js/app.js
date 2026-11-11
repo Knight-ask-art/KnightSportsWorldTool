@@ -2671,6 +2671,9 @@ function go(page){
         (LIVE.rules.rules && LIVE.rules.rules.auto_fetch === false)))){
     fetchSchoolRules({silent: true});
   }
+  if(page === 'settings' && $('#llmSection') && !LIVE.llmLoaded && !LIVE.llmLoading){
+    loadLlmSettings();
+  }
   if(page === 'settings' && !LIVE.realism && !LIVE.realismLoading){
     loadRealism();
   }
@@ -2817,7 +2820,9 @@ const LIVE = {
   verify: null, verifyBusy: false,
   replay: null,
   logSel: -1,
-  deviceCatalog: null, deviceCatalogError: null, deviceCatalogLoading: false
+  deviceCatalog: null, deviceCatalogError: null, deviceCatalogLoading: false,
+  llmProtocols: [], llmSettings: null, llmProtocolPrev: '',
+  llmLoaded: false, llmLoading: false
 };
 
 /* ---------------- appearance skins ---------------- */
@@ -4324,6 +4329,7 @@ async function bootAuth(){
   setLoginButton('读取中…', true);
   try{ await loadRules(); }catch(e){ /* local rules are optional for login */ }
   try{ await loadNetworkConfig(); }catch(e){ /* settings are optional for login */ }
+  if($('#llmSection')) try{ await loadLlmSettings(); }catch(e){ /* settings are optional for login */ }
   let res;
   try{
     res = await liveInitSession();
@@ -6880,6 +6886,289 @@ async function clearNetworkConfig(){
   if(!liveOk(j)){ toast('清除失败：' + (j.message || '')); return; }
   await loadNetworkConfig();
   toast('已清除本次运行中的网络配置');
+}
+const LLM_MODEL_HINTS = {
+  openai: 'gpt-4o-mini',
+  deepseek: 'deepseek-chat',
+  openrouter: 'openai/gpt-4o-mini',
+  anthropic: 'claude-sonnet-4-5',
+  gemini: 'gemini-2.0-flash',
+  ollama: 'qwen2.5:7b'
+};
+function setLlmStatus(text, kind){
+  const el = $('#llmStatus');
+  if(!el) return;
+  el.className = 'chip' + (kind ? (' ' + kind) : '');
+  const dot = document.createElement('i');
+  el.replaceChildren(dot, document.createTextNode(String(text || '未配置')));
+}
+function llmPresetById(id){
+  return (LIVE.llmProtocols || []).find(p => p && p.id === id) || null;
+}
+function llmPresetDefaults(p){
+  const id = (p && p.id) || '';
+  return {
+    base_url: String((p && p.base_url) || ''),
+    model: String((p && (p.default_model || p.model)) || LLM_MODEL_HINTS[id] || '')
+  };
+}
+function onLlmProtocolChange(){
+  const sel = $('#llmProtocol');
+  if(!sel) return;
+  const nextId = sel.value;
+  const prevPreset = llmPresetById(LIVE.llmProtocolPrev);
+  const nextPreset = llmPresetById(nextId);
+  const prevDef = llmPresetDefaults(prevPreset);
+  const nextDef = llmPresetDefaults(nextPreset);
+  const baseEl = $('#llmBase');
+  const modelEl = $('#llmModel');
+  const keyEl = $('#llmKey');
+  if(baseEl){
+    const curBase = baseEl.value.trim();
+    if(!curBase || (prevPreset && curBase === prevDef.base_url)){
+      baseEl.value = nextDef.base_url;
+    }
+    baseEl.placeholder = nextDef.base_url || '支持 http(s):// 地址';
+  }
+  if(modelEl){
+    const curModel = modelEl.value.trim();
+    if(!curModel || (prevPreset && curModel === prevDef.model)){
+      modelEl.value = nextDef.model;
+    }
+    modelEl.placeholder = nextDef.model || '输入模型名称';
+  }
+  if(keyEl && !(LIVE.llmSettings && LIVE.llmSettings.has_key)){
+    keyEl.placeholder = (nextPreset && nextPreset.needs_key === false)
+      ? '本地模型通常无需填写 Key'
+      : '粘贴 API Key；留空=不修改';
+  }
+  LIVE.llmProtocolPrev = nextId;
+}
+async function loadLlmSettings(){
+  if(!$('#llmSection')) return;
+  LIVE.llmLoading = true;
+  try{
+    const j = await liveApi('real_llm_settings');
+    const d = (j && j.data) || {};
+    const protocols = Array.isArray(d.protocols) ? d.protocols : [];
+    if(!liveOk(j) || !protocols.length){
+      const msg = liveOk(j) ? '' : bridgeMessage(j);
+      LIVE.llmProtocols = [];
+      LIVE.llmProtocolPrev = '';
+      LIVE.llmLoaded = false;
+      const sel = $('#llmProtocol');
+      if(sel){
+        sel.disabled = true;
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '协议列表读取失败';
+        sel.replaceChildren(opt);
+      }
+      setLlmStatus('读取失败', 'warn');
+      if($('#llmHint')) $('#llmHint').textContent = '协议列表读取失败' + (msg ? ('：' + msg) : '');
+      toast('协议列表读取失败' + (msg ? ('：' + msg) : ''));
+      return;
+    }
+    LIVE.llmProtocols = protocols;
+    LIVE.llmLoaded = true;
+    const s = d.settings || {};
+    LIVE.llmSettings = s;
+    const sel = $('#llmProtocol');
+    if(sel){
+      const opts = protocols.map(p => {
+        const opt = document.createElement('option');
+        opt.value = String((p && p.id) || '');
+        opt.textContent = String((p && (p.label || p.id)) || '');
+        return opt;
+      });
+      sel.replaceChildren(...opts);
+      const targetId = protocols.some(p => p && p.id === s.protocol)
+        ? s.protocol
+        : String(protocols[0].id || '');
+      sel.value = targetId;
+      sel.disabled = false;
+      LIVE.llmProtocolPrev = targetId;
+    }
+    const activePreset = llmPresetById(LIVE.llmProtocolPrev);
+    const defs = llmPresetDefaults(activePreset);
+    if($('#llmEnabled')) $('#llmEnabled').checked = !!s.enabled;
+    if($('#llmBase')){
+      $('#llmBase').value = (s.base_url != null) ? String(s.base_url) : defs.base_url;
+      $('#llmBase').placeholder = defs.base_url || '支持 http(s):// 地址';
+    }
+    if($('#llmModel')){
+      $('#llmModel').value = (s.model != null) ? String(s.model) : defs.model;
+      $('#llmModel').placeholder = defs.model || '输入模型名称';
+    }
+    if($('#llmKey')){
+      $('#llmKey').value = '';
+      $('#llmKey').placeholder = s.has_key
+        ? '已保存；留空=不修改'
+        : ((activePreset && activePreset.needs_key === false)
+            ? '本地模型通常无需填写 Key'
+            : '粘贴 API Key；留空=不修改');
+    }
+    if($('#llmTemp')){
+      $('#llmTemp').value = (s.temperature != null && s.temperature !== '')
+        ? String(s.temperature) : '0.2';
+    }
+    if($('#llmTimeout')){
+      $('#llmTimeout').value = (s.timeout_s != null && s.timeout_s !== '')
+        ? String(s.timeout_s) : '30';
+    }
+    const lt = s.last_test && typeof s.last_test === 'object' ? s.last_test : null;
+    if(lt && lt.ok === true){
+      const ms = lt.latency_ms != null ? (' · ' + lt.latency_ms + ' ms') : '';
+      const mod = s.model ? (' · ' + s.model) : '';
+      setLlmStatus('连接正常' + ms + mod, 'ok');
+    }else if(lt && lt.ok === false && lt.error){
+      setLlmStatus('连接失败：' + lt.error, 'red');
+    }else if(s.has_key || (activePreset && activePreset.needs_key === false && s.enabled && s.model)){
+      setLlmStatus(s.enabled ? '已配置 · 已启用' : '已配置', s.enabled ? 'ok' : '');
+    }else{
+      setLlmStatus('未配置', '');
+    }
+    if($('#llmHint')){
+      if(s.has_key){
+        $('#llmHint').textContent = s.enabled
+          ? 'API Key 已通过 DPAPI 封存；模型辅助已启用。'
+          : 'API Key 已通过 DPAPI 封存；当前开关为关闭状态。';
+      }else if(activePreset && activePreset.needs_key === false){
+        $('#llmHint').textContent = '当前协议无需 API Key；保存后可点击「测试连接」。';
+      }else{
+        $('#llmHint').textContent = '未保存 API Key；不配置也可正常使用全部功能。';
+      }
+    }
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    const sel = $('#llmProtocol');
+    if(sel){
+      sel.disabled = true;
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '协议列表读取失败';
+      sel.replaceChildren(opt);
+    }
+    setLlmStatus('读取失败', 'warn');
+    if($('#llmHint')) $('#llmHint').textContent = '协议列表读取失败：' + msg;
+    toast('协议列表读取失败：' + msg);
+  }finally{
+    LIVE.llmLoading = false;
+  }
+}
+async function saveLlmSettings(){
+  const btn = $('#llmSave');
+  if(btn && btn.disabled) return;
+  const sel = $('#llmProtocol');
+  const protocol = (sel ? sel.value : '').trim();
+  if(!protocol || (sel && sel.disabled)){
+    toast('协议列表读取失败，无法保存');
+    return;
+  }
+  const rawTemp = ($('#llmTemp') ? $('#llmTemp').value : '').trim();
+  const temp = rawTemp === '' ? 0.2 : Number(rawTemp);
+  if(!Number.isFinite(temp) || temp < 0 || temp > 1){
+    toast('温度须在 0 到 1 之间');
+    return;
+  }
+  const rawTimeout = ($('#llmTimeout') ? $('#llmTimeout').value : '').trim();
+  const timeoutS = rawTimeout === '' ? 30 : Math.round(Number(rawTimeout));
+  if(!Number.isFinite(timeoutS) || timeoutS < 5 || timeoutS > 120){
+    toast('超时须在 5 到 120 秒之间');
+    return;
+  }
+  const payload = {
+    enabled: !!($('#llmEnabled') && $('#llmEnabled').checked),
+    protocol,
+    base_url: ($('#llmBase') ? $('#llmBase').value : '').trim(),
+    model: ($('#llmModel') ? $('#llmModel').value : '').trim(),
+    temperature: temp,
+    timeout_s: timeoutS
+  };
+  const key = ($('#llmKey') ? $('#llmKey').value : '').trim();
+  if(key) payload.api_key = key;
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    const j = await liveApi('real_llm_settings_save', payload, 20000);
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      if($('#llmHint')) $('#llmHint').textContent = '保存失败：' + msg;
+      toast('保存失败：' + msg);
+      return;
+    }
+    if($('#llmKey')) $('#llmKey').value = '';
+    await loadLlmSettings();
+    toast('LLM 设置已保存');
+    liveLog('LLM 设置已保存', protocol + (payload.model ? (' · ' + payload.model) : ''), 'ok');
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    if($('#llmHint')) $('#llmHint').textContent = '保存失败：' + msg;
+    toast('保存失败：' + msg);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '保存'; }
+  }
+}
+async function testLlmConnection(){
+  const btn = $('#llmTest');
+  if(btn && btn.disabled) return;
+  if(btn){ btn.disabled = true; btn.textContent = '测试中…'; }
+  setLlmStatus('测试中…', 'warn');
+  try{
+    const j = await liveApi('real_llm_test', {}, 40000);
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      setLlmStatus('连接失败：' + msg, 'red');
+      if($('#llmHint')) $('#llmHint').textContent = '连接失败：' + msg;
+      toast('连接失败：' + msg);
+      return;
+    }
+    const d = (j && j.data) || {};
+    if(d.ok === false){
+      const msg = String(d.error || j.message || '未知错误');
+      setLlmStatus('连接失败：' + msg, 'red');
+      if($('#llmHint')) $('#llmHint').textContent = '连接失败：' + msg;
+      toast('连接失败：' + msg);
+      return;
+    }
+    const ms = d.latency_ms != null ? String(d.latency_ms) : '—';
+    const model = String(d.model || ($('#llmModel') ? $('#llmModel').value.trim() : '') || '—');
+    const statusText = '连接正常 · ' + ms + ' ms · ' + model;
+    setLlmStatus(statusText, 'ok');
+    if($('#llmHint')) $('#llmHint').textContent = '测试成功：' + statusText;
+    toast('连接正常 · ' + ms + ' ms');
+    liveLog('LLM 连接测试通过', statusText, 'ok');
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    setLlmStatus('连接失败：' + msg, 'red');
+    if($('#llmHint')) $('#llmHint').textContent = '连接失败：' + msg;
+    toast('连接失败：' + msg);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '测试连接'; }
+  }
+}
+async function clearLlmKey(){
+  if(!confirm('清除已保存的 API Key？清除后模型辅助将无法调用外部接口。')) return;
+  const btn = $('#llmClearKey');
+  if(btn){ btn.disabled = true; btn.textContent = '清除中…'; }
+  try{
+    const j = await liveApi('real_llm_settings_save', {clear_key: true});
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      if($('#llmHint')) $('#llmHint').textContent = '清除失败：' + msg;
+      toast('清除失败：' + msg);
+      return;
+    }
+    if($('#llmKey')) $('#llmKey').value = '';
+    await loadLlmSettings();
+    toast('已清除 API Key');
+    liveLog('已清除 LLM API Key', '', 'ok');
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    if($('#llmHint')) $('#llmHint').textContent = '清除失败：' + msg;
+    toast('清除失败：' + msg);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '清除 Key'; }
+  }
 }
 const RULE_LABELS = {
   min_km: '最低距离', max_km: '最高距离',
@@ -9442,6 +9731,10 @@ function liveWire(){
   });
   $('#netSave').addEventListener('click', saveNetworkConfig);
   $('#netClear').addEventListener('click', clearNetworkConfig);
+  if($('#llmProtocol')) $('#llmProtocol').addEventListener('change', onLlmProtocolChange);
+  if($('#llmSave')) $('#llmSave').addEventListener('click', saveLlmSettings);
+  if($('#llmTest')) $('#llmTest').addEventListener('click', testLlmConnection);
+  if($('#llmClearKey')) $('#llmClearKey').addEventListener('click', clearLlmKey);
   ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => $('#' + id).addEventListener('input', () => {
     // A new distance or average pace invalidates the split table; the next
     // preview regenerates it from the new target.
