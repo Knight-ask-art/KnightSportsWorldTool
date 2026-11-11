@@ -45,6 +45,7 @@ python -m replica.selfcheck
 | [geetest.md](geetest.md) | 极验 v4 的模块划分、A/B/C 失效判定、canary、手动兜底、硬编码清单 |
 | [decisions.md](decisions.md) | 为什么这么设计、哪些结论有源码/实测出处、哪些**还没验证** |
 | [design-references.md](design-references.md) | 前端视觉与动效参考：动画库、组件库、灵感站，以及引入约束 |
+| [kb/](kb/README.md) | 项目知识库：结论、证据等级、代码位置，支持离线检索 |
 | [history.md](history.md) | 这一路踩过什么坑、旧文档为什么被封存、去哪找证据 |
 
 会话交接（按时间写，不是手册）：[`handoff.md`](handoff.md)

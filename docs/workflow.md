@@ -310,3 +310,26 @@ cd app
 python -m pytest tests\test_v017_security.py tests\test_frontend_login.py -q
 ```
 
+## 8. 知识库怎么维护
+
+知识库入口是 [`kb/README.md`](kb/README.md)，机器目录是
+[`kb/index.json`](kb/index.json)。
+
+| 动作 | 命令 / 位置 |
+|---|---|
+| 检索 | `python scripts\kb_search.py <关键词>`（`--scope kb` 只看知识库） |
+| 校验目录和文件一致 | `python scripts\kb_search.py --check` |
+| 列卡片 | `python scripts\kb_search.py --list` |
+| 测试 | `cd app; python -m pytest tests\test_kb.py -q` |
+
+新增或改卡片时：
+
+1. 在 `docs/kb/` 改对应 `.md`，标好证据等级（A/B/C/D）；
+2. 同步 `index.json` 的 `summary` / `tags` / `updated`；
+3. 发版时把 `index.json` 的 `version` 改成新版本；
+4. 跑 `--check` 和 `test_kb.py`。
+
+**不写凭据**：token、密码、完整 DeviceId、cookie、坐标、账号、本地绝对路径。
+C/D 级信息只能写成“社区口径/待验证”，不能写成平台事实。
+
+

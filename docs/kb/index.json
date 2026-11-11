@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "app": "haoxiangpao",
+  "version": "0.2.2",
+  "updated": "2026-11-11",
+  "evidence_levels": {
+    "A": "本仓库源码、测试或真机实测，能复现",
+    "B": "上游参考项目或官方文档",
+    "C": "社区、学校通知、应用商店等二手信息",
+    "D": "推测、待验证"
+  },
+  "entries": [
+    {
+      "id": "overview",
+      "title": "项目概览",
+      "file": "00-overview.md",
+      "category": "overview",
+      "tags": ["架构", "目录", "命令", "版本"],
+      "summary": "项目目标、当前 0.2.2 状态、技术栈、目录地图、常用命令和阅读顺序。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["README.md", "docs/README.md", "docs/architecture.md"]
+    },
+    {
+      "id": "protocol",
+      "title": "协议链路",
+      "file": "10-protocol.md",
+      "category": "protocol",
+      "tags": ["登录", "极验", "点位", "围栏", "提交", "OBS", "签名"],
+      "summary": "从极验到提交的完整链路、端点回退、43 字段提交体、31 签名字段、OBS 11 键和 27 字段轨迹点。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["docs/api.md", "docs/geetest.md", "app/replica"]
+    },
+    {
+      "id": "risk-rules",
+      "title": "风险字段与学校规则",
+      "file": "20-risk-rules.md",
+      "category": "risk",
+      "tags": ["policy", "isCheat", "stepFreqStatus", "配速", "步频", "清算"],
+      "summary": "policy 是规则集不是风险标记；真实风险字段、学校规则口径、社区冲突信息和清算边界。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["docs/api.md", "docs/decisions.md", "app/frontend/js/app.js"]
+    },
+    {
+      "id": "data-device",
+      "title": "数据目录与设备指纹",
+      "file": "30-data-device.md",
+      "category": "data",
+      "tags": ["data", "DPAPI", "device_profile", "迁移", "备份"],
+      "summary": "data/ 各文件的用途与外发边界、设备指纹生命周期、DPAPI 加密、迁移与回滚。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["docs/operations.md", "docs/architecture.md", "app/replica/application/identity.py"]
+    },
+    {
+      "id": "frontend",
+      "title": "前端与公告",
+      "file": "40-frontend.md",
+      "category": "frontend",
+      "tags": ["UI", "公告", "皮肤", "动效", "announcements"],
+      "summary": "原生 JS 前端结构、公告数据驱动模块、已读状态、皮肤和视觉/动效约束。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["app/frontend", "docs/decisions.md", "docs/design-references.md"]
+    },
+    {
+      "id": "build-release",
+      "title": "打包与发布",
+      "file": "50-build-release.md",
+      "category": "release",
+      "tags": ["Nuitka", "NSIS", "latest.json", "Release", "回滚"],
+      "summary": "Nuitka standalone 取舍、六个版本落点、latest.json 规则、完整发布 SOP、哈希复核和回滚。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["docs/packaging.md", "docs/update.md", "docs/workflow.md", "scripts/release.ps1"]
+    },
+    {
+      "id": "ops",
+      "title": "运行与排错",
+      "file": "60-ops.md",
+      "category": "ops",
+      "tags": ["闸门", "回执", "保活", "10603", "OBS 404", "诊断"],
+      "summary": "每日上限/深夜/回执三道闸门、token 保活、点位缓存、常见报错和处理顺序。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["docs/operations.md", "docs/usage.md"]
+    },
+    {
+      "id": "issues",
+      "title": "历史 issue 与 FAQ",
+      "file": "70-issues.md",
+      "category": "issues",
+      "tags": ["issue", "FAQ", "policy=1", "海拔", "清算"],
+      "summary": "issue #8/#9/#12/#14 的结论、回复口径，以及高频问题的标准答法。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["RELEASE_NOTES_0.2.1.md", "RELEASE_NOTES_0.2.2.md", "docs/decisions.md"]
+    },
+    {
+      "id": "sources",
+      "title": "资料与证据",
+      "file": "90-sources.md",
+      "category": "sources",
+      "tags": ["来源", "外部资料", "证据"],
+      "summary": "本地权威文档清单、外部资料 URL、访问日期、可信度和使用方式。",
+      "level": "B",
+      "updated": "2026-11-11",
+      "sources": ["docs/reference-projects.md", "docs/design-references.md"]
+    },
+    {
+      "id": "glossary",
+      "title": "术语表",
+      "file": "99-glossary.md",
+      "category": "glossary",
+      "tags": ["术语", "缩写"],
+      "summary": "rrid、OBS、学分跑、围栏、打卡点、步频、配速、极验、NetSecKit 等术语。",
+      "level": "A",
+      "updated": "2026-11-11",
+      "sources": ["docs/api.md", "docs/usage.md"]
+    }
+  ]
+}

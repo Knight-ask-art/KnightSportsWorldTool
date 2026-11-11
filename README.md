@@ -131,6 +131,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ## 文档
 
 - 使用说明：[`docs/usage.md`](docs/usage.md)
+- 项目知识库：[`docs/kb/`](docs/kb/README.md)
 - Bridge API：[`docs/api.md`](docs/api.md)
 - 运行与排错：[`docs/operations.md`](docs/operations.md)
 - 架构与分层：[`docs/architecture.md`](docs/architecture.md)
