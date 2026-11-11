@@ -513,10 +513,10 @@ class AgentSession:
 - 预览成功后显示 `#agentConfirm` 可用；审计不通过时显示原因并保持 disabled。
 - 点击确认：
   1. 调用 `real_agent_confirm`；
-  2. 把 `preview_args` 写入 `LIVE.agentHandoff`；
-  3. `go('run')`；
-  4. 跑步页读取 `LIVE.agentHandoff`，设置路线和参数，调用现有 `preview_route`；
-  5. **不调用 submit**，最终提交仍由用户在跑步页点击。
+  2. 把 `preview_args` 直接应用到跑步页：`route`、`#inKm`、`#inPace`、
+     `#inCadence`、闭合状态；
+  3. `go('run')` 并切到路线面板，停在预览态；
+  4. 最终提交仍由用户在跑步页点击；Agent 代码里没有 `real_submit_run`。
 - 取消：`real_agent_cancel`，清空候选和预览，回到 idle 引导。
 - LLM 未配置时，顶部显示“未配置模型，Agent 使用本地规则”，并给一个
   `data-goto="settings"` 的链接；不阻塞任何流程。
