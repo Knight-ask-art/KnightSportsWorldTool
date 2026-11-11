@@ -7663,6 +7663,7 @@ async function loadAgentStatus(){
       startAgentPoll();
     }
   }catch(e){
+    if(seq !== _agentSeq) return;
     showAgentIdleGreeting();
     if($('#agentHint')){
       $('#agentHint').textContent = '读取 Agent 状态失败：' + (e && e.message ? e.message : String(e || '未知错误'));
@@ -7673,6 +7674,7 @@ async function startAgent(text, km, opts){
   const msg = String(text || '').trim();
   const skipUserBubble = !!(opts && opts.skipUserBubble);
   _agentSeq += 1;
+  const seq = _agentSeq;
   stopAgentPoll();
   const box = $('#agentTranscript');
   const prevState = (LIVE.agentStatus && LIVE.agentStatus.state) || 'idle';
@@ -7697,6 +7699,7 @@ async function startAgent(text, km, opts){
       fence: (LIVE.fences && LIVE.fences.length) ? LIVE.fences : (LIVE.fence || null),
       run_area_id: chosenRunAreaId(LIVE.session)
     }, 20000);
+    if(seq !== _agentSeq) return;
     if(bridgeMissing(j)){
       appendAgentBubble('err', bridgeMessage(j));
       if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
@@ -7726,13 +7729,10 @@ async function sendAgentMessage(text){
   if(text == null && input) input.value = '';
   _agentSending = true;
   if($('#agentSend')) $('#agentSend').disabled = true;
+  const seq = _agentSeq;
   try{
   let sendText = msg;
   if(msg.includes('先学习')) sendText = '重新学习';
-  if(msg.includes('用我跑过')){
-    appendAgentBubble('bot', '当前规划就是基于你跑过的路线；可以输入目标距离，或点“换一条”。');
-    return;
-  }
   const st = LIVE.agentStatus || {};
   const state = String(st.state || 'idle');
   if(!st.session_id || state === 'idle' || state === 'cancelled' || state === 'confirmed' || state === 'error'){
@@ -7747,9 +7747,14 @@ async function sendAgentMessage(text){
     await startAgent(msg, null);
     return;
   }
+  if(msg.includes('用我跑过')){
+    appendAgentBubble('bot', '当前规划就是基于你跑过的路线；可以输入目标距离，或点“换一条”。');
+    return;
+  }
   appendAgentBubble('user', msg);
   try{
     const j = await liveApi('real_agent_message', {text: sendText}, 20000);
+    if(seq !== _agentSeq) return;
     if(bridgeMissing(j)){
       appendAgentBubble('err', bridgeMessage(j));
       return;
@@ -7772,6 +7777,7 @@ async function sendAgentMessage(text){
       applyAgentRouteResult(next);
     }
   }catch(e){
+    if(seq !== _agentSeq) return;
     const err = e && e.message ? e.message : String(e || '未知错误');
     appendAgentBubble('err', '发送消息失败：' + err);
   }
@@ -7808,6 +7814,7 @@ async function pollAgentStatus(){
     }
   }catch(e){
     stopAgentPoll();
+    if(seq !== _agentSeq) return;
     if($('#agentHint')){
       $('#agentHint').textContent = '轮询 Agent 状态失败：' + (e && e.message ? e.message : String(e || '未知错误'));
     }
