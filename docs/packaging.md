@@ -26,6 +26,23 @@
 - 状态文件 `data/account_binding.json` 只存账号哈希和脱敏提示，带 HMAC；
   不是强 DRM，规则与边界见 `docs/kb/46-account-guard.md`。
 
+## 原生核心：C++ shield sidecar
+
+- `cpp/hxp-shield` 负责短时设备凭证（TTL 3 s）。打包时调用
+  `cpp/hxp-shield/build.ps1`（MSVC x64，`/O2 /GL`，无 PDB），再把
+  `hxp-shield.exe` 复制到 `dist/好想跑_v*/runtime/cpp/hxp-shield.exe`。
+- 复制完成后立即执行一次 `hxp-shield.exe --selftest`；失败即构建失败，
+  不会把验签不了的凭证层发出去。
+- 同一阶段还要 smoke test 随包的 Go/Rust 层：用固定 16 B nonce 走
+  `hxp-guard.exe op --state <tmp> --code 17`（stdin 传 nonce），向
+  `hxp-core.exe` 发 `{"op":"self_test"}`；任一没有返回 `"ok":true`
+  即 `throw`。这样坏副产物不会拖到用户第一次登录才暴露。
+- 只复制 exe：`.obj` / `.pdb` 不进入 `runtime/cpp/`，也不进入 zip/安装包。
+- Python 侧 `app/replica/application/shield.py` 在同一个进程里发 `seal`
+  再发 `check`；跨进程 token 会被 `check` 拒绝。
+- frozen 构建缺这一层时登录直接失败（`app.py` 默认 `JHP_SHIELD=1`），
+  源码运行缺二进制则跳过，保证 `pytest` 不依赖 native 产物。
+
 ## 默认后端：Nuitka standalone
 
 `packaging/build.ps1` 默认使用 Nuitka 4.x，把 Python 模块编译成 C 再链接，

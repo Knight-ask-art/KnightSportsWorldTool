@@ -29,6 +29,7 @@ from ..application import credentials as CRED
 from ..application import account_guard as AG
 from ..application import device_profile as DP
 from ..application import session_store as SESS
+from ..application import shield as SHIELD
 from ..build_info import VERSION as APP_VERSION  # noqa: F401 - re-exported
 from ..build_info import build_info, version_string
 from ..domain import crypto as C
@@ -1916,6 +1917,9 @@ class ReplicaApi:
             from ..application.login_flow import login as do_login
         except Exception as e:  # noqa: BLE001
             return _fail(f'登录模块不可用: {e}')
+        blocked = self._shield_block()
+        if blocked:
+            return blocked
         blocked = self._account_guard_block(username)
         if blocked:
             return blocked
@@ -1949,6 +1953,9 @@ class ReplicaApi:
                   'passToken': passToken, 'genTime': genTime}
         if not all(ticket.values()):
             return _fail('手动验证凭证不完整，请重新滑一次')
+        blocked = self._shield_block()
+        if blocked:
+            return blocked
         blocked = self._account_guard_block(username)
         if blocked:
             return blocked
@@ -2085,6 +2092,9 @@ class ReplicaApi:
         username = str(username or '').strip()
         if not username or not password:
             return _fail('请先填好手机号和密码，再完成手动验证')
+        blocked = self._shield_block()
+        if blocked:
+            return blocked
         blocked = self._account_guard_block(username)
         if blocked:
             return blocked
@@ -2148,6 +2158,23 @@ class ReplicaApi:
         with self._gt4_manual_lock:
             self._gt4_manual.pop(str(token or ''), None)
         return _ok(True)
+
+    def _shield_block(self):
+        """Require the four-layer device credential before a real login.
+
+        Returns a ``_fail`` payload or None.  A source checkout without the
+        native binaries skips this; a frozen build refuses the login and the
+        text never names a layer, path, or reason.
+        """
+        try:
+            res = SHIELD.require(self.store_dir)
+        except Exception:  # noqa: BLE001 - a bug must not bypass the gate
+            return _fail(SHIELD.SHIELD_MESSAGE, code=403,
+                         data={'reason': 'shield'})
+        if res.get('blocked'):
+            return _fail(res.get('message') or SHIELD.SHIELD_MESSAGE,
+                         code=403, data={'reason': 'shield'})
+        return None
 
     def _account_guard_block(self, username):
         """Refuse a second account on this device ("一号一设备").

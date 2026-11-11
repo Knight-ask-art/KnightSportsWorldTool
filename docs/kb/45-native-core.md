@@ -109,3 +109,56 @@ Python。GT4 已迁完字段构造、PoW、AES/RSA；`gt4_image.py` 的 Canny/ZN
 Python，因为调参频繁、需要能直接看中间图。上传体只迁字段映射；OBS 只接管
 `wire_points` 路径，旧的 `conv_point` 兜底留在 Python。每迁一块都保留 Python
 回退和 golden vector，避免把「防逆向」变成「防自己排错」。
+
+## 8. 设备凭证分层（Phase 2）
+
+一次登录前的派生链，任何一层失败都拒绝登录（仅 frozen；源码环境缺二进制跳过）：
+
+```
+Go hxp-guard      op --code 17  -> 32B blob_go   （stdin 读 16B hex nonce；5 goroutine + nonce 置换）
+Rust hxp-core     shield_mix    -> 32B blob_rust （FNV-1a + 多项式 + SHA-256）
+C++ hxp-shield    op 0x01 seal  -> token + expiry（TTL 3s）
+C++ hxp-shield    op 0x02 check -> 1/0            （同一进程）
+Python shield.py  仅在内存持有 token 到同进程 check 返回，帧缓冲在 finally 清零
+```
+
+| 文件 | 作用 |
+|---|---|
+| `go/hxp-guard/guard/attest.go` | 5 路并发采集、Fisher-Yates 置换、len\|fragment 哈希、nonce keystream XOR |
+| `go/hxp-guard/cmd/hxp-guard/main.go` | 数字 op CLI：`op --code 17`，nonce 从 stdin 读一行 hex，只输出 `ok`/`blob` |
+| `rust/hxp-core/src/shield.rs` | `pub fn mix(blob, nonce) -> [u8; 32]` |
+| `rust/hxp-core/src/main.rs` | 行 JSON op `shield_mix`，blob/nonce 只收 hex，要求 32B/16B |
+| `cpp/hxp-shield/main.cpp` | `seal` / `check` / `ping` / `selftest`，进程内 token ring |
+| `app/replica/application/shield.py` | 找二进制、组帧、四层编排、统一拒绝文案、帧缓冲清零 |
+| `app/replica/application/account_guard.py` | `attest(nonce, store_dir)` 通过 stdin 调用 Go op |
+| `app/tests/test_shield.py` | 帧格式、source skip、frozen 缺层、check=0、真实假子进程帧/超时、成功 |
+| `app/tests/test_shield_gate.py` | 三个登录入口与保活的 403 门禁 |
+
+### opcode / 接口
+
+| 层 | 接口 | 输入 | 输出 |
+|---|---|---|---|
+| Go | `op --code 17` | stdin 一行 16 B nonce（hex） | `{"ok":true,"blob":"<64 hex>"}` |
+| Rust | `{"op":"shield_mix","args":{"blob":"<hex>","nonce":"<hex>"}}` | 32 B + 16 B | 32 B hex 字符串 |
+| C++ | `0x01 seal` | 16 + 32 + 32 B | 32 B token + 8 B expiry_ms |
+| C++ | `0x02 check` | 32 B token + 8 B expiry_ms | `0x01` 有效 / `0x00` 无效 |
+| C++ | `0x03 ping` / `0x7f selftest` | 空 | `0x01` |
+
+帧头固定 `<IHHI`：magic `0x53505848`、version `1`、op、len（≤ 4096）。
+Python 严格校验 magic/version/op/len；任何帧错、超时、token 过期或 `check`
+返回 0 都折叠成同一条用户文案，不暴露层名、路径或原因。
+
+### 约束
+
+- `seal` 与 `check` 必须是**同一个进程实例**：token 只在本进程内存 ring 里，
+  换进程一定 `check = 0`。`seal` 的响应会回到 Python，但只用于同一进程上的
+  立即 `check`；帧缓冲在 `finally` 清零。
+- token / nonce / blob 不写 `data/`、不进日志、不进诊断包、不进异常文本。
+  nonce 通过 Go 的 stdin 传入，不出现在 argv。
+- Go attest 的 `install_id` 采集是只读的：文件存在才读，否则退回
+  `g.DeviceID`；MachineGuid 可用时登录不会写 `data/install_id`。只有
+  `guard.New` 在完全拿不到系统机器 ID 时才会创建回退文件。
+- Python 帧 I/O 超时 0.5 s × 4 次读 = 最多 2 s，小于 C++ 的 3 s TTL；
+  子进程回收预算 0.75 s。
+- frozen 构建缺任一层直接拒绝登录；源码 checkout 缺二进制跳过，保证
+  `pytest` 不依赖 native 产物。

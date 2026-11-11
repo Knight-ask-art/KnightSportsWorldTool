@@ -13,12 +13,16 @@
 package main
 
 import (
+	"bufio"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"haoxiangpao/hxp-guard/guard"
 )
@@ -52,6 +56,7 @@ func run(args []string) int {
 	state := fs.String("state", defaultState(), "path to account_binding.json")
 	account := fs.String("account", "", "account id (phone or student id)")
 	yes := fs.Bool("yes", false, "confirm reset")
+	code := fs.Int("code", -1, "numeric op code")
 	showVersion := fs.Bool("version", false, "print the sidecar version")
 	if err := fs.Parse(args[1:]); err != nil {
 		return exitError
@@ -64,7 +69,7 @@ func run(args []string) int {
 	}
 
 	switch cmd {
-	case "check", "bind", "status", "reset", "device", "help":
+	case "check", "bind", "status", "reset", "device", "help", "op":
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		usage()
@@ -74,6 +79,9 @@ func run(args []string) int {
 	if cmd == "help" {
 		usage()
 		return emit(guard.Result{Allowed: true}, nil)
+	}
+	if cmd == "op" {
+		return runOp(*state, *code, os.Stdin)
 	}
 
 	g, err := guard.New(*state)
@@ -107,6 +115,63 @@ func run(args []string) int {
 	default:
 		return exitError
 	}
+}
+
+// Numeric opcodes keep the sidecar interface non-descriptive.  Only the
+// device-attestation op exists today; it reads one hex nonce line from stdin
+// and returns a 32-byte opaque blob.  The nonce deliberately never appears in
+// argv, which Windows exposes to other same-user processes.
+const (
+	opAttest = 17
+)
+
+type opResponse struct {
+	OK    bool   `json:"ok"`
+	Blob  string `json:"blob,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+func readNonceHex(in io.Reader) ([]byte, error) {
+	reader := bufio.NewReader(in)
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return nil, err
+	}
+	return hex.DecodeString(strings.TrimSpace(line))
+}
+
+func runOp(state string, code int, in io.Reader) int {
+	if code != opAttest {
+		return emitOp(opResponse{OK: false, Error: "unknown op"})
+	}
+	nonce, err := readNonceHex(in)
+	// The Python orchestrator always sends 16 bytes; anything else is a
+	// protocol error, not a short-but-usable nonce.
+	if err != nil || len(nonce) != 16 {
+		return emitOp(opResponse{OK: false, Error: "bad nonce"})
+	}
+	g, err := guard.New(state)
+	if err != nil {
+		return emitOp(opResponse{OK: false, Error: "init failed"})
+	}
+	blob, err := g.Attest(nonce)
+	if err != nil {
+		// Not the underlying error: a collector must never leak a fragment.
+		return emitOp(opResponse{OK: false, Error: "attest failed"})
+	}
+	return emitOp(opResponse{OK: true, Blob: hex.EncodeToString(blob)})
+}
+
+func emitOp(out opResponse) int {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
+		return exitError
+	}
+	if !out.OK {
+		return exitError
+	}
+	return exitOK
 }
 
 func emit(res guard.Result, err error) int {
@@ -145,6 +210,7 @@ func usage() {
   hxp-guard status --state <file>
   hxp-guard reset  --state <file> --yes
   hxp-guard device --state <file>
+  hxp-guard op     --state <file> --code 17   < nonce.hex
 
 Exit codes: 0 ok, 3 blocked, 2 error.
 `, version)

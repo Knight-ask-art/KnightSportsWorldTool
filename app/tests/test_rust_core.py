@@ -189,6 +189,42 @@ def test_frozen_builds_require_the_native_core(monkeypatch):
     assert os.environ['JHP_RUST_CORE'] == '0'
 
 
+def test_a_failed_ping_is_retried_on_the_next_login(monkeypatch):
+    """One transient ping failure must not disable the layer until restart."""
+    class FlakyCore:
+        pings = 0
+
+        def __init__(self, exe, timeout=8.0):
+            self.exe = exe
+
+        def call(self, op, **kwargs):
+            assert op == 'ping'
+            FlakyCore.pings += 1
+            if FlakyCore.pings == 1:
+                raise rustcore.RustCoreError('busy')
+            return {'pong': True}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(rustcore, '_Core', FlakyCore)
+    monkeypatch.setattr(rustcore, 'find_core', lambda: 'hxp-core.exe')
+    monkeypatch.setattr(rustcore, '_core', None)
+    monkeypatch.setattr(rustcore, '_probed', False)
+    monkeypatch.delenv('JHP_RUST_CORE', raising=False)
+    try:
+        assert rustcore.get() is None
+        assert FlakyCore.pings == 1
+        # The probe is retried, and success latches.
+        assert rustcore.get() is not None
+        assert FlakyCore.pings == 2
+        assert rustcore.get() is not None
+        assert FlakyCore.pings == 2
+    finally:
+        rustcore._core = None
+        rustcore._probed = False
+
+
 @needs_core
 def test_native_self_test_passes():
     core = rustcore.get()

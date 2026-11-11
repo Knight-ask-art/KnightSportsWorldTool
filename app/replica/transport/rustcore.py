@@ -179,6 +179,10 @@ def get() -> _Core | None:
             core.call('ping')
         except Exception:  # noqa: BLE001 - a broken binary must not block the app
             core.close()
+            # A single transient ping failure (busy antivirus, slow disk) must
+            # not disable the layer for the rest of the process: the next
+            # login retries the probe once.  A healthy core still latches.
+            _probed = False
             return None
         _core = core
         atexit.register(core.close)

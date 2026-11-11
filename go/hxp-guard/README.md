@@ -10,6 +10,19 @@ hxp-guard bind   --state <data>/account_binding.json --account 13800001234
 hxp-guard status --state <data>/account_binding.json
 hxp-guard reset  --state <data>/account_binding.json --yes   # support only
 hxp-guard device --state <data>/account_binding.json
+hxp-guard op     --state <data>/account_binding.json --code 17   # nonce on stdin
+```
+
+`op --code 17` is the device-attestation collector used by the native shield:
+it reads **one line of hex nonce from stdin** (never argv, which Windows
+exposes to every same-user process), five goroutines gather machine fragments,
+a nonce-seeded Fisher-Yates shuffle orders them, and the reply is one opaque
+32-byte blob (`{"ok":true,"blob":...}`).  The nonce must be exactly 16 bytes.
+No fragment is ever printed.
+
+```bash
+printf '00112233445566778899aabbccddeeff\n' |
+  hxp-guard op --state data/account_binding.json --code 17
 ```
 
 Every command prints one JSON object.  Exit codes: `0` ok, `3` blocked by the

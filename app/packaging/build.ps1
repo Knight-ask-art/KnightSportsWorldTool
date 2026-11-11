@@ -67,6 +67,8 @@ $RUST = Join-Path $REPO 'rust\hxp-core'
 $RUST_EXE = Join-Path $RUST 'target\release\hxp-core.exe'
 $GO = Join-Path $REPO 'go\hxp-guard'
 $GO_EXE = Join-Path $GO 'hxp-guard.exe'
+$CPP = Join-Path $REPO 'cpp\hxp-shield'
+$CPP_EXE = Join-Path $CPP 'hxp-shield.exe'
 
 if (-not $Version) {
     $info = Join-Path $ROOT 'replica\build_info.py'
@@ -139,6 +141,16 @@ try {
 if (-not (Test-Path $GO_EXE)) { throw "go build did not produce $GO_EXE" }
 Write-Host ('   {0}' -f $GO_EXE)
 
+Write-Host '== 0/5 C++ shield =='
+$cppBuild = Join-Path $CPP 'build.ps1'
+if (-not (Test-Path $cppBuild)) { throw "C++ shield build script missing: $cppBuild" }
+& powershell -NoProfile -ExecutionPolicy Bypass -File $cppBuild
+if ($LASTEXITCODE -ne 0) {
+    throw "cpp shield build failed with exit code $LASTEXITCODE"
+}
+if (-not (Test-Path $CPP_EXE)) { throw "cpp build did not produce $CPP_EXE" }
+Write-Host ('   {0}' -f $CPP_EXE)
+
 if ($Backend -eq 'nuitka') {
     Write-Host ('== 1/5 Nuitka (v{0}) ==' -f $Version)
     try {
@@ -209,6 +221,42 @@ $runtimeGo = Join-Path $BUILT 'runtime\go'
 New-Item -ItemType Directory -Force -Path $runtimeGo | Out-Null
 Copy-Item $GO_EXE (Join-Path $runtimeGo 'hxp-guard.exe') -Force
 Write-Host '   bundled runtime/go/hxp-guard.exe'
+
+$runtimeCpp = Join-Path $BUILT 'runtime\cpp'
+New-Item -ItemType Directory -Force -Path $runtimeCpp | Out-Null
+Copy-Item $CPP_EXE (Join-Path $runtimeCpp 'hxp-shield.exe') -Force
+Write-Host '   bundled runtime/cpp/hxp-shield.exe'
+# The shipped copy must prove it can mint and reject a token before the
+# installer is built.  No .obj/.pdb is copied: only the exe above.
+& (Join-Path $runtimeCpp 'hxp-shield.exe') --selftest
+if ($LASTEXITCODE -ne 0) {
+    throw "bundled hxp-shield --selftest failed with exit code $LASTEXITCODE"
+}
+
+# The Go and Rust copies must also answer their protocol before packaging:
+# a corrupt/missing-dependency/wrong-architecture sidecar would otherwise
+# build cleanly and fail only at the user's first login.
+$smokeDir = Join-Path ([IO.Path]::GetTempPath()) ('hxp-smoke-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
+try {
+    $smokeState = Join-Path $smokeDir 'account_binding.json'
+    $nonceLine = '00112233445566778899aabbccddeeff'
+    $goOut = $nonceLine | & (Join-Path $runtimeGo 'hxp-guard.exe') `
+        op --state $smokeState --code 17
+    $goExit = $LASTEXITCODE
+    if ($goExit -ne 0 -or (($goOut -join "`n") -notmatch '"ok":true')) {
+        throw "bundled hxp-guard op --code 17 failed (exit $goExit)"
+    }
+    $rustOut = '{"id":1,"op":"self_test","args":{}}' |
+        & (Join-Path $runtimeRust 'hxp-core.exe')
+    $rustExit = $LASTEXITCODE
+    if ($rustExit -ne 0 -or (($rustOut -join "`n") -notmatch '"ok":true')) {
+        throw "bundled hxp-core self_test failed (exit $rustExit)"
+    }
+    Write-Host '   go/rust smoke test: ok'
+} finally {
+    Remove-Item $smokeDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 # Debug symbols make function names and source paths readable; they are not
 # needed on the operator's machine.

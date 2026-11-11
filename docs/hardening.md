@@ -1,6 +1,7 @@
 # 客户端加固：四语言边界与分布式校验
 
-> 状态：设计稿（2026-11-12）。实现由 Claude Code 按阶段提交，本文是验收口径。
+> 状态：Phase 1 / Phase 2 已实现（2026-11-12），Phase 3（蜜罐与完整性）
+> 仍是设计稿。实现由 Claude Code 按阶段提交，本文是验收口径。
 > 结论先行：客户端加固只提高逆向成本，最终边界仍是服务端。不要把“不可逆向”
 > 写进需求，也不要用它替代服务端风控。
 
@@ -54,8 +55,9 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
 2. Rust 对 `blob_go` 做高维位运算/多项式混合，返回 `blob_rust`。
 3. C++ 用 VEH 推进的平坦化状态机把两个片段揉成 32 字节 token，
    `expiry = now + 3000ms`。
-4. Python 只在内存里持有 `token + expiry`，登录/提交前现取现用；
-   过期或校验失败就重新派生，不缓存到磁盘。
+4. Python 只在内存里持有 `token + expiry`，用于同一个 `Popen` 上的立即
+   `check`；check 返回后帧缓冲和 token 视图清零，不缓存到磁盘，过期或
+   校验失败就重新派生。
 
 任何一层缺失：开发环境回退到“跳过加固”（`JHP_SHIELD=0` 或二进制不存在）；
 冻结构建必须置 `JHP_SHIELD=1`，缺层直接拒绝登录/提交，错误文案保持笼统。
@@ -71,7 +73,7 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
 - `app/packaging/build.ps1` 增加构建门禁：发布 exe 中命中上述字符串即失败。
 - 验收：对 `dist/好想跑_v*/好想跑.exe` 做字节扫描，0 命中；源码测试仍通过。
 
-### Phase 1 · C++ `hxp-shield`
+### Phase 1 · C++ `hxp-shield`（已实现）
 
 - 新增 `cpp/hxp-shield`，产出 `hxp-shield.exe`，**不导出任何符号**。
 - 只认数字 opcode：`0x01 seal`、`0x02 check`、`0x03 ping`、`0x7f selftest`。
@@ -84,16 +86,27 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
 - 验收：`hxp-shield.exe --selftest` 退出 0；篡改 token 后 check 返回 0；
   用 `dumpbin /exports` 确认无导出。
 
-### Phase 2 · Go/Rust 片段 + Python 编排
+### Phase 2 · Go/Rust 片段 + Python 编排（已实现）
 
 - Go `hxp-guard` 增加数字 op 的二进制帧模式；`attest` 用 5 个 goroutine
-  采集片段并按 nonce 置换。
-- Rust `hxp-core` 增加 `shield_mix`；只接收 hex 片段，返回 hex 片段。
-- Python 新增 `app/replica/application/shield.py`：找二进制、组帧、加密、
-  3 秒缓存；不写日志、不进诊断包。
+  采集片段并按 nonce 置换。CLI 接口为
+  `hxp-guard op --state <file> --code 17`，**nonce 从 stdin 读一行 hex**，
+  不放进 argv（Windows 会向同用户进程公开命令行）。`install_id` 只读，
+  MachineGuid 可用时 attest 不写 `data/`。
+- Rust `hxp-core` 增加 `shield_mix`；只接收 hex 片段，返回 hex 片段，
+  并要求 32 B blob + 16 B nonce。
+- Python 新增 `app/replica/application/shield.py`：找二进制、组帧、编排四层、
+  即时 `seal → check`。C++ 的 `seal` 响应会回到 Python，但只用于同一个
+  `Popen` 上的立即 `check`；帧缓冲与 token 视图在 `finally` 清零，不缓存、
+  不落盘、不进日志、不进诊断包。
+- **`seal` 与 `check` 必须由同一个 `hxp-shield.exe` 进程完成**。`check` 只
+  接受本进程实例签发的 token；跨进程拿 token 去校验一定失败。Python 因此
+  在一次 `Popen` 里先发 `seal`，立刻发 `check`，通过后马上关 stdin 并销毁
+  token。
 - 登录入口（`real_login`、`real_login_ticket`、`real_gt4_manual_finish`）
   在设备自检之后、网络登录之前取凭证；frozen 下失败即拒绝，文案统一为
-  “设备校验未通过，请重启软件后再试”。
+  “设备校验未通过，请重启软件后再试”。`tokenkeeper.relogin_real` 与
+  `cli.do_login` 走同一道门。
 - 验收：源码环境无二进制可正常登录；放齐三层后能派生并校验；伪 token 被拒；
   `pytest` 全绿。
 
@@ -144,3 +157,13 @@ python scripts\scan_release_secrets.py dist\好想跑_v0.2.2\好想跑.exe
 - 任何“为了让测试过而放宽校验”的改动直接 BLOCK。
 - 任何在日志/诊断包/异常信息里出现 token、nonce、密钥、完整 DeviceId 的
   改动直接 BLOCK。
+
+## 8. 已知限制：排错旁路
+
+- `JHP_SHIELD=0` / `off` / `false` / `no` 会直接跳过四层派生；
+  `JHP_SHIELD_PATH` 可以把 shield 指向任意可执行文件。两者在 frozen 构建里
+  **依然生效**，这是排错用的旁路，不是安全边界。
+- `JHP_SHIELD=1` 目前不是“强制”开关：代码只把 `0/off/false/no` 当作关闭。
+  发布包靠“三层二进制齐全”来保证执行，而不是靠这个变量。
+- 本地用户可以删除 `data/account_binding.json`、替换 native 产物或调试本机
+  进程。客户端加固只提高逆向与改包成本，最终判定仍在服务端。

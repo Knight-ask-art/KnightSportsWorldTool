@@ -85,6 +85,57 @@ def status(store_dir: str) -> dict:
     return _call('status', '', store_dir)
 
 
+def attest(nonce: bytes, store_dir: str) -> bytes:
+    """Run the numeric ``op --code 17`` device-attestation collector.
+
+    The nonce goes in on stdin (one hex line), never in argv: Windows exposes
+    a process command line to every same-user process (WMI/ETW/Process
+    Explorer).  Returns the 32-byte opaque blob.  The nonce and blob are never
+    logged and never written under ``data/``; the sidecar only *reads*
+    ``install_id`` when it exists.
+    """
+    if not enabled():
+        raise RuntimeError('account guard disabled')
+    exe = find_guard()
+    if not exe:
+        raise RuntimeError('account guard unavailable')
+    raw = bytes(nonce)
+    if not raw:
+        raise RuntimeError('empty nonce')
+    args = [exe, 'op', '--state', _state_path(store_dir), '--code', '17']
+    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) if os.name == 'nt' else 0
+    try:
+        proc = subprocess.run(
+            args, input=raw.hex() + '\n', check=False, capture_output=True,
+            text=True, encoding='utf-8', errors='replace', timeout=_TIMEOUT,
+            creationflags=flags,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # Do not attach the original exception: TimeoutExpired carries the
+        # command line in its string form.
+        raise RuntimeError('attest failed') from None
+
+    text = (proc.stdout or '').strip()
+    data: dict = {}
+    if text:
+        try:
+            parsed = json.loads(text.splitlines()[-1])
+            if isinstance(parsed, dict):
+                data = parsed
+        except ValueError:
+            data = {}
+    blob_hex = data.get('blob')
+    if proc.returncode != 0 or not data.get('ok') or not isinstance(blob_hex, str):
+        raise RuntimeError('attest failed')
+    try:
+        blob = bytes.fromhex(blob_hex)
+    except ValueError:
+        raise RuntimeError('attest failed') from None
+    if len(blob) != 32:
+        raise RuntimeError('attest failed')
+    return blob
+
+
 def _call(command: str, account: str, store_dir: str) -> dict:
     allowed = {'allowed': True, 'blocked': False, 'guard': 'off'}
     if not enabled():
@@ -102,7 +153,7 @@ def _call(command: str, account: str, store_dir: str) -> dict:
     flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) if os.name == 'nt' else 0
     try:
         proc = subprocess.run(
-            args, capture_output=True, text=True, encoding='utf-8',
+            args, check=False, capture_output=True, text=True, encoding='utf-8',
             errors='replace', timeout=_TIMEOUT, creationflags=flags,
         )
     except (OSError, subprocess.SubprocessError):

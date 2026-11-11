@@ -241,8 +241,12 @@ def relogin_real(username: str, password: str,
     """Default re-login hook.  Calls the same pure-protocol login flow."""
     from . import account_guard as AG
     from . import device_profile as DP
+    from . import shield as SH
     from .login_flow import login as do_login
     store = store_dir or DP.default_store_dir()
+    shielded = SH.require(store)
+    if shielded.get('blocked'):
+        raise RuntimeError(SH.SHIELD_MESSAGE)
     blocked = AG.check(username, store)
     if blocked.get('blocked'):
         raise RuntimeError(blocked.get('message') or AG.MESSAGE)

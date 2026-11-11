@@ -356,13 +356,27 @@ func accountHash(norm string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// readInstallID reads the fallback device secret without creating it.  Used
+// by Attest: the attestation path must not require a writable data/ when the
+// OS already provides a machine id.
+func readInstallID(statePath string) string {
+	path := filepath.Join(filepath.Dir(statePath), "install_id")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(string(raw))
+	if len(id) < 16 {
+		return ""
+	}
+	return id
+}
+
 func installID(statePath string) (string, error) {
 	dir := filepath.Dir(statePath)
 	path := filepath.Join(dir, "install_id")
-	if raw, err := os.ReadFile(path); err == nil {
-		if id := strings.TrimSpace(string(raw)); len(id) >= 16 {
-			return id, nil
-		}
+	if id := readInstallID(statePath); id != "" {
+		return id, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -373,14 +387,16 @@ func installID(statePath string) (string, error) {
 	}
 	id := hex.EncodeToString(buf)
 	// O_EXCL keeps two racing first runs from overwriting each other; the
-	// loser re-reads the winner's id.
+	// loser re-reads the winner's id.  The winner may not have flushed its
+	// write yet, so an empty file is retried briefly instead of failing the
+	// login.
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		raw, rerr := os.ReadFile(path)
-		if rerr == nil {
-			if existing := strings.TrimSpace(string(raw)); len(existing) >= 16 {
+		for attempt := 0; attempt < 5; attempt++ {
+			if existing := readInstallID(statePath); existing != "" {
 				return existing, nil
 			}
+			time.Sleep(10 * time.Millisecond)
 		}
 		return "", err
 	}

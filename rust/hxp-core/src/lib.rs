@@ -13,6 +13,7 @@ pub mod pyval;
 pub mod rng;
 pub mod runcore;
 pub mod rundata;
+pub mod shield;
 pub mod sign;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

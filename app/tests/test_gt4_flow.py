@@ -257,6 +257,9 @@ _ManualApi._prune_manual = ReplicaApi._prune_manual
 
 # The slider tests are not about the one-device-one-account seam; stub it.
 _ManualApi._account_guard_block = lambda self, username: None
+# Nor about the native device-credential gate: these tests need the slider
+# regardless of the machine.  test_shield_gate.py covers the real gate.
+_ManualApi._shield_block = lambda self: None
 
 
 def test_manual_start_returns_the_images_and_the_travel_range(monkeypatch):

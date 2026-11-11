@@ -11,8 +11,30 @@ use std::io::{self, BufRead, Write};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use hxp_core::{device, gt4, netsec, obs, runcore, rundata, sign};
+use hxp_core::{device, gt4, netsec, obs, runcore, rundata, shield, sign};
 use serde_json::{json, Value};
+
+fn hex_decode(text: &str) -> Result<Vec<u8>, String> {
+    let raw = text.as_bytes();
+    if raw.len() % 2 != 0 {
+        return Err("invalid hex".to_string());
+    }
+    let mut out = Vec::with_capacity(raw.len() / 2);
+    for pair in raw.chunks_exact(2) {
+        let hi = (pair[0] as char).to_digit(16).ok_or("invalid hex")?;
+        let lo = (pair[1] as char).to_digit(16).ok_or("invalid hex")?;
+        out.push(((hi << 4) | lo) as u8);
+    }
+    Ok(out)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
 
 fn string_map(value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
     let obj = value
@@ -260,6 +282,20 @@ fn handle(req: &Value) -> Result<Value, String> {
 
         "run_core" => runcore::build(&args),
 
+        "shield_mix" => {
+            let blob = hex_decode(arg_str(&args, "blob")?)?;
+            let nonce = hex_decode(arg_str(&args, "nonce")?)?;
+            // The shield protocol fixes these lengths.  shield::mix itself
+            // stays tolerant for its own unit tests.
+            if blob.len() != 32 || nonce.len() != 16 {
+                return Err(
+                    "shield_mix expects a 32-byte blob and a 16-byte nonce"
+                        .to_string(),
+                );
+            }
+            Ok(Value::String(hex_encode(&shield::mix(&blob, &nonce))))
+        }
+
         "self_test" => Ok(self_test()),
 
         other => Err(format!("unknown op {other:?}")),
@@ -411,5 +447,42 @@ fn main() {
             break;
         }
         let _ = out.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mix_req(blob: &str, nonce: &str) -> Value {
+        json!({"op": "shield_mix", "args": {"blob": blob, "nonce": nonce}})
+    }
+
+    #[test]
+    fn shield_mix_accepts_the_protocol_lengths() {
+        let out = handle(&mix_req(&"00".repeat(32), &"11".repeat(16)))
+            .expect("32-byte blob + 16-byte nonce");
+        assert_eq!(out.as_str().map(str::len), Some(64));
+    }
+
+    #[test]
+    fn shield_mix_rejects_wrong_lengths() {
+        let blob = "00".repeat(32);
+        let nonce = "11".repeat(16);
+        let cases = [
+            (String::new(), nonce.clone()),
+            ("00".repeat(31), nonce.clone()),
+            (blob.clone(), String::new()),
+            (blob.clone(), "11".repeat(8)),
+            (blob, "11".repeat(17)),
+        ];
+        for (b, n) in cases {
+            assert!(
+                handle(&mix_req(&b, &n)).is_err(),
+                "expected rejection for blob={}B nonce={}B",
+                b.len() / 2,
+                n.len() / 2,
+            );
+        }
     }
 }

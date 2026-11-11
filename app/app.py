@@ -84,8 +84,13 @@ def _pin_native_core() -> None:
     crypto call instead of quietly shipping a slower, readable path.
     """
     from replica.build_info import is_compiled
-    if is_compiled() and not os.environ.get('JHP_RUST_CORE'):
+    if not is_compiled():
+        return
+    if not os.environ.get('JHP_RUST_CORE'):
         os.environ['JHP_RUST_CORE'] = '1'
+    # A frozen build must not silently accept a missing C++ shield either.
+    # An explicit JHP_SHIELD=0 still wins for local debugging.
+    os.environ.setdefault('JHP_SHIELD', '1')
 
 
 def main():

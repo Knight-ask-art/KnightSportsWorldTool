@@ -122,8 +122,12 @@ def _keepalive_cli(args):
 def do_login(args):
     from ..application import account_guard as AG
     from ..application import device_profile as DP
+    from ..application import shield as SH
     from ..application.login_flow import login
     store = DP.default_store_dir()
+    shielded = SH.require(store)
+    if shielded.get('blocked'):
+        raise ValueError(SH.SHIELD_MESSAGE)
     blocked = AG.check(args.user, store)
     if blocked.get('blocked'):
         raise ValueError(blocked.get('message') or AG.MESSAGE)
