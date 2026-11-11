@@ -1006,6 +1006,9 @@ body.dragging-route-point #map{cursor:grabbing!important}
 .detail-row span:first-child{color:var(--faint)}
 /* values include a full User-Agent; let it wrap instead of widening the card */
 .detail-row span:last-child{min-width:0;overflow-wrap:anywhere;text-align:right}
+.device-facts{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;margin:2px 0 10px}
+.device-facts .detail-row{font-size:10.5px}
+@media(max-width:760px){.device-facts{grid-template-columns:1fr}}
 .detail-verdict{
   margin:10px 0 2px;padding:8px 10px;border-left:3px solid var(--stamp);
   background:rgba(182,72,60,.06);color:var(--stamp);
@@ -1076,28 +1079,6 @@ body.dragging-route-point #map{cursor:grabbing!important}
 .danger-zone p{font-size:10.5px;color:var(--pencil);margin:0 0 10px}
 .btn.danger{border-color:rgba(182,72,60,.55);color:var(--stamp)}
 .btn.danger:hover{background:rgba(182,72,60,.1)}
-.device-advanced{
-  margin-top:10px;padding-top:8px;border-top:1px dashed var(--rule);
-}
-.device-advanced summary{
-  cursor:pointer;font-size:10.5px;color:var(--faint);list-style:none;
-}
-.device-advanced summary::-webkit-details-marker{display:none}
-.device-advanced summary::before{
-  content:"▸";display:inline-block;margin-right:5px;transition:transform .15s;
-}
-.device-advanced[open] summary::before{transform:rotate(90deg)}
-.device-advanced p{font-size:10px;line-height:1.55;color:var(--pencil);margin:7px 0}
-.device-advanced label{display:block;font-size:10px;color:var(--faint);margin:0 0 4px}
-.device-advanced input{
-  width:100%;padding:5px 8px;border:1px solid var(--rule);border-radius:4px;
-  background:var(--paper-2);font:11px var(--sans);
-}
-.device-advanced select{
-  width:100%;padding:5px 8px;border:1px solid var(--rule);border-radius:4px;
-  background:var(--paper-2);font:11px var(--sans);
-}
-.device-advanced .btn{width:100%;margin-top:7px}
 
 /* ---------- run console (map-first) ---------- */
 .run-top{

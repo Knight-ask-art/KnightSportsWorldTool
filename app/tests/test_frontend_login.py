@@ -342,13 +342,40 @@ def test_device_rotation_is_advanced_and_double_confirmed():
     assert 'id="deviceRotateConfirm"' in HTML
     assert 'id="deviceRotatePlatform"' in HTML
     assert '<option value="ios"' in HTML
-    assert '高级：更换设备指纹' in HTML
+    assert '高级功能：更换设备指纹' in HTML
     assert '更换后需要重新登录' in HTML
     assert '跨平台切换' in HTML
     assert "liveApi('real_rotate_device'" in JS
     assert "input.value.trim() !== '更换'" in JS
     assert "platform: platform" in JS
     assert '不要频繁更换' in JS
+
+
+def test_device_settings_live_on_the_settings_page():
+    accounts = HTML.split('id="page-accounts"', 1)[1].split('id="page-profile"', 1)[0]
+    settings = HTML.split('id="page-settings"', 1)[1]
+    assert 'deviceRotateBtn' not in accounts
+    assert 'deviceRotateBtn' in settings
+    assert 'customDeviceSave' in settings
+    assert 'id="deviceSection"' in settings
+    assert '设备指纹、更换和自定义设备已移到设置页' in accounts
+
+
+def test_custom_device_is_advanced_and_explicit():
+    assert '高级功能：自定义设备' in HTML
+    assert 'id="customDevicePlatform"' in HTML
+    assert 'id="customDeviceModel"' in HTML
+    assert 'id="customDeviceOs"' in HTML
+    assert 'id="customDeviceId"' in HTML
+    assert 'id="customDeviceAge"' in HTML
+    assert 'id="customDeviceConfirm"' in HTML
+    assert 'id="customDeviceSave"' in HTML
+    assert "/bridge/real_device_options" not in HTML
+    assert "liveApi('real_device_options'" in JS
+    assert "liveApi('real_set_custom_device'" in JS
+    assert "confirmInput.value.trim() !== '自定义'" in JS
+    assert "typed === '自定义'" in JS
+    assert '自定义设备不自洽' not in JS
 
 
 def test_distance_follows_drawn_route_until_manual_edit():

@@ -534,6 +534,106 @@ def test_audit_flags_legacy_profile_but_not_new_ones():
     assert not DP.audit_profile(DP.generate_profile(platform='ios'))
 
 
+def test_device_catalog_covers_both_platforms():
+    cat = DP.device_catalog()
+    assert cat['android'] and cat['ios']
+    row = cat['android'][0]
+    assert row['deviceName'] and row['label']
+    assert row['osVersions'] and row['physicPixel'] and row['logicPixel']
+    assert row['cpuModel'] == 'arm64-v8a'
+    assert cat['ios'][0]['cpuModel'] == 'arm64e'
+    assert cat['default_install_days'] == 90
+    assert cat['max_install_days'] == 3650
+
+
+def test_custom_profile_is_coherent_and_uses_custom_source():
+    row = DP.device_catalog()['android'][1]
+    profile = DP.build_custom_profile(
+        platform='android', device_name=row['deviceName'],
+        os_version=row['osVersions'][0], device_id='custom-device-1',
+        install_days=12)
+    assert profile['source'] == 'custom'
+    assert profile['DeviceId'] == 'custom-device-1'
+    assert profile['isRoot'] == '0'
+    assert profile['cpuModel'] == 'arm64-v8a'
+    assert DP.audit_profile(profile) == []
+    days = (int(profile['appUpdateTime']) - int(profile['appInstallTime'])) // 86400000
+    assert days == 12
+
+
+def test_custom_profile_rejects_incoherent_input():
+    row = DP.device_catalog()['android'][0]
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(platform='android', device_name='Not A Phone',
+                                os_version='14', device_id='custom-1')
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(platform='android', device_name=row['deviceName'],
+                                os_version='99', device_id='custom-1')
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(platform='android', device_name=row['deviceName'],
+                                os_version=row['osVersions'][0],
+                                device_id='bad id with spaces')
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(platform='android', device_name=row['deviceName'],
+                                os_version=row['osVersions'][0],
+                                device_id='custom-1', install_days='9999')
+    with pytest.raises(DP.DeviceProfileError):
+        DP.build_custom_profile(platform='windows', device_name=row['deviceName'],
+                                os_version=row['osVersions'][0],
+                                device_id='custom-1')
+
+
+def test_set_custom_backs_up_and_installs(tmp_path):
+    old = DP.load_or_create(str(tmp_path))
+    row = DP.device_catalog()['ios'][0]
+    candidate = DP.build_custom_profile(
+        platform='ios', device_name=row['deviceName'],
+        os_version=row['osVersions'][0], device_id='custom-ios-1')
+    new, backup = DP.set_custom(str(tmp_path), candidate)
+    assert new['source'] == 'custom'
+    assert new['platform'] == 'ios'
+    assert new['idfa']
+    assert backup and os.path.exists(backup)
+    saved = DP.read_profile(str(tmp_path))
+    assert saved['DeviceId'] == 'custom-ios-1'
+    assert DP.audit_profile(saved) == []
+    with open(backup, encoding='utf-8') as f:
+        assert json.load(f)['DeviceId'] == old['DeviceId']
+
+
+def test_custom_device_endpoint_requires_confirmation_and_clears_session(
+        tmp_path, monkeypatch):
+    from replica.adapters.bridge_api import ReplicaApi
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    row = DP.device_catalog()['android'][0]
+    common = dict(platform='android', deviceName=row['deviceName'],
+                  osVersion=row['osVersions'][0], DeviceId='custom-bridge-1')
+    assert api.real_set_custom_device(confirm='', **common)['code'] != 200
+    assert api.real_set_custom_device(confirm='自定义', **common)['code'] != 200
+    assert 'token' not in api._read_session()
+
+    api.real_set_session(uid='1', token='tok', DeviceId='dev-1')
+    monkeypatch.setattr(api, '_remote_logout_background', lambda acct: None)
+    out = api.real_set_custom_device(confirm='自定义设备', **common)
+    assert out['code'] == 200, out
+    assert out['data']['relogin_required'] is True
+    assert out['data']['backup'].startswith('device_profile.backup-')
+    session = api._read_session()
+    assert 'token' not in session and 'uid' not in session
+    assert DP.read_profile(str(tmp_path))['DeviceId'] == 'custom-bridge-1'
+
+
+def test_device_options_endpoint_returns_catalog(tmp_path):
+    from replica.adapters.bridge_api import ReplicaApi
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'',
+                     str(tmp_path))
+    out = api.real_get_device_options()
+    assert out['code'] == 200, out
+    assert out['data']['catalog']['android']
+    assert out['data']['current']['device_id_masked']
+
+
 def test_public_view_reports_platform():
     ios = DP.generate_profile(platform='ios')
     view = DP.public_view(ios)

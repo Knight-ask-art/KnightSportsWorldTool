@@ -98,6 +98,18 @@ ANDROID_MODELS = (
     ('23013RK75C', ('13', '14'), '1220x2712', '444x986'),
 )
 
+#: Human-readable labels for the UI.  The wire still uses the model code.
+ANDROID_LABELS = {
+    '22081212C': 'Redmi K50 Ultra',
+    '2211133C': 'Xiaomi 13',
+    '23127PN0CC': 'Xiaomi 14',
+    'PJE110': 'OnePlus Ace 3',
+    'SM-S9210': 'Galaxy S24',
+    'Pixel 8': 'Pixel 8',
+    'V2309A': 'vivo X100 Pro',
+    '23013RK75C': 'Redmi K60',
+}
+
 #: iOS profiles used when the random pool picks Apple.  Model, OS, physical
 #: pixels and logical pixels stay in one row so the fingerprint cannot pair an
 #: iPhone 15 with an iPhone 8 resolution.  ``cpuModel`` uses arm64e rather than
@@ -136,7 +148,7 @@ _DIGITS_RE = re.compile(r'^\d{10,16}$')
 
 _SOURCES = frozenset({
     'generated', 'legacy-default', 'legacy-session', 'rotated', 'session',
-    'migrated', 'repaired',
+    'migrated', 'repaired', 'custom',
 })
 
 
@@ -305,6 +317,13 @@ def validate_profile(profile) -> dict:
             pass
     if profile.get('rotated_from'):
         out['rotated_from'] = str(profile['rotated_from'])[:32]
+    if profile.get('custom_at'):
+        try:
+            out['custom_at'] = int(profile['custom_at'])
+        except (TypeError, ValueError):
+            pass
+    if profile.get('custom_from'):
+        out['custom_from'] = str(profile['custom_from'])[:32]
     for stamp in ('migrated_at', 'repaired_at'):
         if profile.get(stamp):
             try:
@@ -583,6 +602,146 @@ def rotate(store_dir: str, legacy_session: dict | None = None,
         return new, backup
 
 
+def device_catalog() -> dict:
+    """Supported model/OS combinations for the custom-device UI.
+
+    The custom form deliberately picks from this catalog instead of accepting
+    free-form model strings: ``audit_profile`` refuses unknown models and
+    impossible model/OS/pixel pairs, so a hand-written combination would be
+    saved and then block login/submit.  DeviceId stays editable.
+    """
+    android = []
+    for name, versions, physic, logic in ANDROID_MODELS:
+        android.append({
+            'deviceName': name,
+            'label': ANDROID_LABELS.get(name, name),
+            'osVersions': list(versions),
+            'physicPixel': physic,
+            'logicPixel': logic,
+            'cpuModel': 'arm64-v8a',
+        })
+    ios = []
+    for name, versions, physic, logic in IOS_MODELS:
+        ios.append({
+            'deviceName': name,
+            'label': name,
+            'osVersions': list(versions),
+            'physicPixel': physic,
+            'logicPixel': logic,
+            'cpuModel': IOS_CPU_MODEL,
+        })
+    return {
+        'android': android,
+        'ios': ios,
+        'default_install_days': 90,
+        'max_install_days': 3650,
+    }
+
+
+def build_custom_profile(*, platform, device_name, os_version, device_id,
+                         install_days=None, idfa=None,
+                         now_ms: int | None = None) -> dict:
+    """Validate a custom device without writing it.
+
+    Raises :class:`DeviceProfileError` with a user-facing message.  The caller
+    can then end the session and call :func:`set_custom` only after the
+    candidate is known to be coherent.
+    """
+    platform = str(platform or '').strip().lower()
+    if platform not in ('android', 'ios'):
+        raise DeviceProfileError('平台必须是 android 或 ios')
+    name = str(device_name or '').strip()
+    os_version = str(os_version or '').strip()
+    rows = ANDROID_MODELS if platform == 'android' else IOS_MODELS
+    row = next((r for r in rows if r[0] == name), None)
+    if row is None:
+        raise DeviceProfileError('不支持的机型；请从列表中选择')
+    versions, physic, logic = row[1], row[2], row[3]
+    if os_version not in versions:
+        raise DeviceProfileError(
+            f'{name} 不支持 {os_version}；可选: {", ".join(versions)}')
+
+    device_id = str(device_id or '').strip()
+    if not _DEVICE_ID_RE.match(device_id):
+        raise DeviceProfileError(
+            'DeviceId 需为 1–64 位字母/数字/._:-，且以字母或数字开头')
+
+    if install_days in (None, ''):
+        days = 90
+    else:
+        try:
+            days = int(str(install_days).strip())
+        except (TypeError, ValueError):
+            raise DeviceProfileError('安装天数必须是整数')
+        if days < 0 or days > 3650:
+            raise DeviceProfileError('安装天数需在 0–3650 之间')
+
+    now = int(now_ms if now_ms is not None else _now_ms())
+    install = now - days * 86400000
+    profile = {
+        'version': PROFILE_VERSION,
+        'platform': platform,
+        'source': 'custom',
+        'created_at': now,
+        'DeviceId': device_id,
+        'deviceName': name,
+        'osVersion': os_version,
+        'cpuModel': 'arm64-v8a' if platform == 'android' else IOS_CPU_MODEL,
+        'physicPixel': physic,
+        'logicPixel': logic,
+        'isRoot': '0',
+        'appInstallTime': str(install),
+        'appUpdateTime': str(now),
+    }
+    if platform == 'ios':
+        profile['idfa'] = str(idfa or _IDFA_ZERO)
+    profile = validate_profile(profile)
+    issues = audit_profile(profile)
+    if issues:
+        raise DeviceProfileError('自定义设备不自洽: ' + '；'.join(issues))
+    return profile
+
+
+def set_custom(store_dir: str, profile: dict) -> tuple[dict, str | None]:
+    """Install a pre-validated custom profile, backing up the old one.
+
+    The caller is responsible for ending the local session beforehand; this
+    function only touches ``device_profile.json`` and its backup.
+    """
+    candidate = validate_profile(profile)
+    issues = audit_profile(candidate)
+    if issues:
+        raise DeviceProfileError('自定义设备不自洽: ' + '；'.join(issues))
+    if is_shared_legacy(candidate):
+        raise DeviceProfileError('自定义设备不能使用旧版共享 DeviceId')
+
+    store_dir = os.path.abspath(store_dir)
+    os.makedirs(store_dir, exist_ok=True)
+    with _file_lock(_lock_path(store_dir)):
+        old = None
+        corrupt = False
+        try:
+            old = read_profile(store_dir)
+        except DeviceProfileError:
+            corrupt = True
+        backup = None
+        if corrupt:
+            backup = _backup_path(store_dir, _now_ms()).replace(
+                '.json', '.corrupt.json')
+            shutil.copy2(_profile_path(store_dir), backup)
+        elif old is not None:
+            backup = _backup_path(store_dir, _now_ms())
+            _write_json_atomic(backup, old)
+
+        candidate = dict(candidate)
+        candidate['source'] = 'custom'
+        candidate['custom_at'] = _now_ms()
+        candidate['custom_from'] = (old or {}).get('source', 'none')
+        new = save_profile(store_dir, candidate)
+        clear_migration_marker(store_dir)
+        return new, backup
+
+
 def effective_device(profile: dict, session: dict | None = None) -> dict:
     """Merge an explicit session identity over the installation profile.
 
@@ -644,8 +803,13 @@ def public_view(profile: dict, session: dict | None = None) -> dict:
         'device_platform': device['platform'],
         'device_name': device['deviceName'],
         'device_os': device['osVersion'],
+        'device_physic_pixel': device['physicPixel'],
+        'device_logic_pixel': device['logicPixel'],
+        'device_cpu': device['cpuModel'],
+        'device_is_root': device['isRoot'],
         'device_source': device['source'],
         'device_rotated_at': device.get('rotated_at'),
+        'device_custom_at': device.get('custom_at'),
         # Transparency for the account page: the UA and the pixel scale are
         # what actually go on the wire, and the install age is a field the
         # server can see on every request.

@@ -64,14 +64,30 @@ python -m replica.application.device_profile --data-dir data --rotate --platform
 
 任何字段修改都会改变指纹，必须由操作者确认；修改前自动备份。
 
-## 3. DPAPI 与密码
+## 3. 在 UI 里改设备
+
+入口统一在 **设置 → 设备指纹**（账号页只保留一个跳转按钮）：
+
+- 只读区：设备、脱敏 DeviceId、平台、屏幕、缩放、来源、环境自检、UA。
+- **高级功能：更换设备指纹**：随机 / Android / iOS，输入“更换”二次确认。
+- **高级功能：自定义设备**：平台、机型、系统版本从受支持列表选择，屏幕/CPU/root
+  由机型自动匹配；只填 DeviceId 和安装天数（可选）。
+
+约束：
+
+- 自定义机型不能自由输入，否则 `audit_profile` 会判为未知机型，保存后无法登录/提交。
+- 自定义 DeviceId 仍拒绝旧版共享常量。
+- 保存前先校验，校验通过才退出登录；保存后旧指纹备份、强制重新登录。
+- 自定义来源记为 `source=custom`，UI 显示“自定义”。
+
+## 4. DPAPI 与密码
 
 - 会话 token 用 Windows DPAPI 加密后存 `token_enc`，不落明文。
 - “记住密码”单独存 `data/saved_login.json`，同样走 DPAPI；取消勾选立即删除。
 - 自动重登的密码只在进程内存里，重启即失效。
 - `disabled: true` 的会话不会被探测或重登（停用旧账号的硬开关）。
 
-## 4. 迁移与备份
+## 5. 迁移与备份
 
 - **升级/迁移复制整个 `data/`**，含 `device_profile.json`。
   只复制 `accounts_emu.json` 会被当成旧数据并触发迁移。
@@ -79,14 +95,14 @@ python -m replica.application.device_profile --data-dir data --rotate --platform
 - 把整个 `data/` 复制给别人 = 复制同一台设备，绝对不要。
 - `data/` 不参与打包；安装包和更新器都跳过它。
 
-## 5. 安全边界
+## 6. 安全边界
 
 1. 不在 issue / 日志 / 截图里贴 token、cookie、DeviceId、坐标、手机号。
 2. 诊断包只用于排错，确认脱敏后再发。
 3. `output/`、`private/`、`app/data/` 都不进 git；发布分支只有 README + latest.json。
 4. 设备指纹、账号、回执不要跨机器拷贝。
 
-## 6. 常见坑
+## 7. 常见坑
 
 | 现象 | 原因 | 处理 |
 |---|---|---|

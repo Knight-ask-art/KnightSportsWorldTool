@@ -1303,6 +1303,53 @@ class ReplicaApi:
             'relogin_required': True,
         })
 
+    def real_get_device_options(self):
+        """Supported model/OS pairs for the custom-device form."""
+        try:
+            catalog = DP.device_catalog()
+            current = DP.public_view(self._effective_device())
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'设备信息不可用: {e}')
+        return _ok({'catalog': catalog, 'current': current})
+
+    def real_set_custom_device(self, confirm='', platform='', deviceName='',
+                               osVersion='', DeviceId='', installDays=''):
+        """Install an operator-defined device profile from the supported pool.
+
+        Only the DeviceId (and install age) are free-form; model, OS, pixels
+        and CPU come from ``device_profile.device_catalog`` so the result can
+        pass ``audit_profile`` instead of blocking the next login/submit.
+
+        The local session is ended before the new profile is installed, so an
+        old token is never reused with a different device.
+        """
+        if confirm != '自定义设备':
+            return _fail('确认文字不正确')
+        try:
+            candidate = DP.build_custom_profile(
+                platform=platform, device_name=deviceName,
+                os_version=osVersion, device_id=DeviceId,
+                install_days=installDays)
+        except Exception as e:  # noqa: BLE001
+            return _fail(str(e))
+
+        session = self._read_session()
+        had_identity = bool(session.get('token') or session.get('uid'))
+        # Validate first, then end the session: a typo must not log the user
+        # out.  real_logout also starts the best-effort server logout.
+        self.real_logout(local_only=True)
+        try:
+            new, backup = DP.set_custom(self.store_dir, candidate)
+        except Exception as e:  # noqa: BLE001
+            return _fail(f'保存自定义设备失败: {e}')
+        self._invalidate_device()
+        self._device_migration = None
+        return _ok({
+            'device': DP.public_view(new),
+            'backup': os.path.basename(backup) if backup else '',
+            'relogin_required': had_identity,
+        })
+
     @staticmethod
     def _center_ok(lat, lng) -> bool:
         """A usable coordinate pair: in range and not the 0/0 sentinel."""

@@ -393,7 +393,6 @@
           </div>
           <div class="status-row">
             <span class="chip" id="accTokenChip">token 未加载</span>
-            <span class="chip" id="accDeviceChip">设备未加载</span>
           </div>
         </header>
 
@@ -434,31 +433,12 @@
 
           <aside class="col side">
             <section class="sec">
-              <div class="sec-head"><h2>设备与会话</h2></div>
-              <div class="detail-row"><span>设备</span><span id="accDevice">—</span></div>
-              <div class="detail-row"><span>DeviceId</span><span class="mono" id="accDeviceId">—</span></div>
-              <div class="detail-row"><span>UA</span><span class="mono" id="accDeviceUa">—</span></div>
-              <div class="detail-row"><span>屏幕</span><span id="accDeviceScreen">—</span></div>
+              <div class="sec-head"><h2>会话</h2></div>
               <div class="detail-row"><span>token</span><span class="mono" id="accTokenMasked">—</span></div>
               <div class="detail-row"><span>校区</span><span id="accCampus">—</span></div>
               <div class="detail-row"><span>unid</span><span id="accUnid">—</span></div>
-              <details class="device-advanced">
-                <summary>高级：更换设备指纹</summary>
-                <p>会像换了一台手机，旧指纹先备份；更换后需要重新登录。不要频繁更换。
-                  已有账号跨平台切换（Android ↔ iOS）比同平台换机型更显眼，非必要不要选。</p>
-                <label for="deviceRotatePlatform">新设备平台</label>
-                <select id="deviceRotatePlatform">
-                  <option value="random" selected>随机（按本机策略，含 iOS）</option>
-                  <option value="android">Android</option>
-                  <option value="ios">iOS（提交链未实测）</option>
-                </select>
-                <label for="deviceRotateConfirm">输入“更换”确认</label>
-                <input id="deviceRotateConfirm" type="text" maxlength="8"
-                       autocomplete="off" spellcheck="false" placeholder="更换">
-                <button class="btn small danger" id="deviceRotateBtn" disabled>
-                  更换设备指纹
-                </button>
-              </details>
+              <p class="hint" style="margin:10px 0 8px">设备指纹、更换和自定义设备已移到设置页。</p>
+              <button class="btn small ghost" data-goto="settings">打开设备设置</button>
             </section>
 
             <section class="sec">
@@ -1159,6 +1139,7 @@
               <div class="detail-row"><span>设备</span><span id="profDevice">—</span></div>
               <div class="detail-row"><span>本地会话</span><span id="profSession">—</span></div>
               <button class="btn small ghost" data-goto="accounts" style="margin-top:8px">去账号页</button>
+              <button class="btn small ghost" data-goto="settings" style="margin-top:8px">设备设置</button>
             </section>
           </aside>
         </div>
@@ -1266,6 +1247,90 @@
           <div class="detail-row"><span>状态</span><span id="setSession">未登录</span></div>
           <div class="detail-row"><span>校区</span><span id="setCampus">—</span></div>
           <div class="detail-row"><span>设备</span><span id="setDevice">—</span></div>
+        </section>
+
+        <section class="sec" id="deviceSection">
+          <div class="sec-head">
+            <h2>设备指纹</h2>
+            <span class="mini" id="setDeviceStatus">未读取</span>
+          </div>
+          <p class="hint" style="margin:-4px 0 9px">登录、提交和 OBS 共用这一份指纹；每个 <b>data</b> 目录只生成一次。更换或自定义后旧指纹会先备份，并需要重新登录。</p>
+          <div class="device-facts">
+            <div class="detail-row"><span>设备</span><span id="setDeviceProfile">—</span></div>
+            <div class="detail-row"><span>DeviceId</span><span class="mono" id="setDeviceId">—</span></div>
+            <div class="detail-row"><span>平台</span><span id="setDevicePlatform">—</span></div>
+            <div class="detail-row"><span>屏幕</span><span id="setDeviceScreen">—</span></div>
+            <div class="detail-row"><span>缩放</span><span id="setDeviceScale">—</span></div>
+            <div class="detail-row"><span>来源</span><span id="setDeviceSource">—</span></div>
+            <div class="detail-row"><span>环境自检</span><span id="setDeviceEnv">—</span></div>
+            <div class="detail-row"><span>UA</span><span class="mono" id="setDeviceUa">—</span></div>
+          </div>
+
+          <details class="adv-box">
+            <summary>高级功能：更换设备指纹</summary>
+            <p>会像换了一台手机，旧指纹先备份；更换后需要重新登录。不要频繁更换。
+              已有账号跨平台切换（Android ↔ iOS）比同平台换机型更显眼，非必要不要选。</p>
+            <div class="field-line">
+              <label for="deviceRotatePlatform">新设备平台</label>
+              <select id="deviceRotatePlatform">
+                <option value="random" selected>随机（按本机策略，含 iOS）</option>
+                <option value="android">Android</option>
+                <option value="ios">iOS</option>
+              </select>
+            </div>
+            <div class="field-line">
+              <label for="deviceRotateConfirm">输入“更换”确认</label>
+              <input id="deviceRotateConfirm" type="text" maxlength="8"
+                     autocomplete="off" spellcheck="false" placeholder="更换">
+            </div>
+            <button class="btn small danger" id="deviceRotateBtn" disabled>
+              更换设备指纹
+            </button>
+          </details>
+
+          <details class="adv-box" id="customDeviceBox">
+            <summary>高级功能：自定义设备</summary>
+            <p>从受支持的机型里选，再填自己的 <b>DeviceId</b>。像素、CPU、root 状态会按机型自动匹配，
+              避免出现“机型 + 系统 + 分辨率”对不上的组合。保存后旧指纹先备份，并需要重新登录。</p>
+            <div class="form-grid">
+              <div class="field-line">
+                <label for="customDevicePlatform">平台</label>
+                <select id="customDevicePlatform">
+                  <option value="android" selected>Android</option>
+                  <option value="ios">iOS</option>
+                </select>
+              </div>
+              <div class="field-line">
+                <label for="customDeviceModel">机型</label>
+                <select id="customDeviceModel"></select>
+              </div>
+              <div class="field-line">
+                <label for="customDeviceOs">系统版本</label>
+                <select id="customDeviceOs"></select>
+              </div>
+              <div class="field-line">
+                <label for="customDeviceId">DeviceId</label>
+                <input id="customDeviceId" type="text" maxlength="64"
+                       autocomplete="off" spellcheck="false"
+                       placeholder="1–64 位字母/数字/._:-">
+              </div>
+              <div class="field-line">
+                <label for="customDeviceAge">安装天数（可选）</label>
+                <input id="customDeviceAge" type="text" inputmode="numeric"
+                       maxlength="4" autocomplete="off" placeholder="留空 = 90 天">
+              </div>
+              <div class="field-line">
+                <label for="customDeviceConfirm">输入“自定义”确认</label>
+                <input id="customDeviceConfirm" type="text" maxlength="8"
+                       autocomplete="off" spellcheck="false" placeholder="自定义">
+              </div>
+            </div>
+            <p class="hint" id="customDeviceHint">选择机型和系统后，这里会显示自动匹配的屏幕与 CPU。</p>
+            <div class="form-actions">
+              <button class="btn small danger" id="customDeviceSave" disabled>保存自定义设备</button>
+              <span class="hint" id="customDeviceResult" style="margin:0"></span>
+            </div>
+          </details>
         </section>
 
         <section class="sec" id="coverSection">

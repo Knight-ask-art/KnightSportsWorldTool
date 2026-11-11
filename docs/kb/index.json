@@ -48,8 +48,8 @@
       "title": "数据目录与设备指纹",
       "file": "30-data-device.md",
       "category": "data",
-      "tags": ["data", "DPAPI", "device_profile", "迁移", "备份"],
-      "summary": "data/ 各文件的用途与外发边界、设备指纹生命周期、DPAPI 加密、迁移与回滚。",
+      "tags": ["data", "DPAPI", "device_profile", "迁移", "备份", "自定义设备"],
+      "summary": "data/ 各文件的用途与外发边界、设备指纹生命周期、设置页更换/自定义设备、DPAPI、迁移与回滚。",
       "level": "A",
       "updated": "2026-11-11",
       "sources": ["docs/operations.md", "docs/architecture.md", "app/replica/application/identity.py"]
@@ -59,8 +59,8 @@
       "title": "前端与公告",
       "file": "40-frontend.md",
       "category": "frontend",
-      "tags": ["UI", "公告", "皮肤", "动效", "announcements"],
-      "summary": "原生 JS 前端结构、公告数据驱动模块、已读状态、皮肤和视觉/动效约束。",
+      "tags": ["UI", "公告", "皮肤", "动效", "announcements", "设备指纹"],
+      "summary": "原生 JS 前端结构、公告数据驱动模块、设置页设备面板、皮肤和视觉/动效约束。",
       "level": "A",
       "updated": "2026-11-11",
       "sources": ["app/frontend", "docs/decisions.md", "docs/design-references.md"]

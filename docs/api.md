@@ -402,11 +402,13 @@ UI 用 `POST /bridge/<method>`，body 为 `{"args": {...}}`；服务端直接
 | `real_save_routes` | `routes` | 整体替换并校验路线库，替代仅靠 localStorage |
 | `real_diagnostics` | — | 生成脱敏诊断包（不含 token/密码/uid/坐标/IP） |
 | `real_get_session` | — | 返回脱敏会话；`device_platform`、`device_name`、`device_os`、`device_source` 是本机实际生效的设备指纹，`device_id_masked` 只露首尾 |
+| `real_get_device_options` | — | 返回受支持的 Android/iOS 机型、系统版本、像素、CPU，以及当前生效的设备摘要 |
 | `real_rotate_device` | `confirm`, `platform` | 高级：输入 `更换设备指纹` 才执行；`platform` 为 `random`（默认）/ `android` / `ios`。先退出本机登录，再备份旧指纹并生成新指纹；返回 `device`、`backup`、`relogin_required` |
+| `real_set_custom_device` | `confirm`, `platform`, `deviceName`, `osVersion`, `DeviceId`, `installDays` | 高级：输入 `自定义设备` 才执行。机型/系统必须来自 `real_get_device_options`，像素与 CPU 自动匹配；先校验再退出本机登录，备份旧指纹后写入 `source=custom`。返回 `device`、`backup`、`relogin_required` |
 
 `device_source`：`generated`（本机随机）、`migrated`（旧版共享指纹已迁移）、
 `repaired`（旧版字段已修正）、`legacy-session`（旧会话但指纹可用）、
-`rotated`（已更换）、`session`（手动覆盖）、`error`（指纹文件损坏）。
+`rotated`（已更换）、`custom`（自定义）、`session`（手动覆盖）、`error`（指纹文件损坏）。
 `device_platform`：`android` 或 `ios`。
 
 `date` 为 `YYYY-MM-DD`（北京时间），只接受今天..3 天前；`start_time` 为

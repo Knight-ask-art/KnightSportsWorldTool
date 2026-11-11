@@ -2662,6 +2662,10 @@ function go(page){
   if(page === 'settings' && !LIVE.realism && !LIVE.realismLoading){
     loadRealism();
   }
+  if(page === 'settings' && !LIVE.deviceCatalog && !LIVE.deviceCatalogLoading &&
+     !methodMissing('real_device_options')){
+    loadDeviceOptions();
+  }
   if(page === 'records'){
     if($('#recDiagZip')) $('#recDiagZip').disabled = !hasSession();
     if($('#recFit')) $('#recFit').disabled = true;   // needs a selected record
@@ -2800,7 +2804,8 @@ const LIVE = {
   inspect: null, inspectBusy: false,
   verify: null, verifyBusy: false,
   replay: null,
-  logSel: -1
+  logSel: -1,
+  deviceCatalog: null, deviceCatalogError: null, deviceCatalogLoading: false
 };
 
 /* ---------------- appearance skins ---------------- */
@@ -4105,39 +4110,59 @@ function renderSession(){
     'legacy-default': '旧版冻结',
     'legacy-session': '旧版会话',
     rotated: '已更换',
+    custom: '自定义',
     migrated: '旧版已修复',
     repaired: '已修正',
     session: '手动',
     error: '读取失败'
   }[s.device_source] || '已冻结';
   const deviceLabel = deviceLabelText(s);
-  $('#accDeviceChip').textContent = logged
-    ? (s.device_source === 'error' ? '设备读取失败' : '设备 · ' + deviceSource)
-    : '设备未加载';
-  $('#accDeviceChip').className = 'chip' + (s.device_source === 'error' ? ' red' : '');
-  $('#accDeviceChip').title = s.device_source === 'error'
-    ? (s.device_error || '设备指纹读取失败')
-    : (s.device_platform === 'ios'
-       ? 'iOS 链路已真机验证（2026-10-25）；登录、提交和 OBS 共用同一台设备。'
-       : '设备指纹在本机生成一次，登录和提交共用；不要频繁更换。');
+  if($('#setDeviceStatus')){
+    $('#setDeviceStatus').textContent = s.device_source === 'error'
+      ? '设备读取失败' : ('设备 · ' + deviceSource);
+    $('#setDeviceStatus').className = 'mini' +
+      (s.device_source === 'error' ? ' risk-bad' : '');
+    $('#setDeviceStatus').title = s.device_source === 'error'
+      ? (s.device_error || '设备指纹读取失败')
+      : (s.device_platform === 'ios'
+         ? 'iOS 链路已真机验证（2026-10-25）；登录、提交和 OBS 共用同一台设备。'
+         : '设备指纹在本机生成一次，登录和提交共用；不要频繁更换。');
+  }
   $('#accUidChip').textContent = s.uid ? ('uid ' + s.uid) : 'uid —';
   $('#accDisabledChip').hidden = !s.disabled;
   $('#accTokenMasked').textContent = logged
     ? (s.token_masked || maskToken(s.token)) : '—';
-  $('#accDevice').textContent = logged ? (deviceLabel || '—') : '—';
-  $('#accDeviceId').textContent = logged && hasDevice
+  if($('#setDeviceProfile')) $('#setDeviceProfile').textContent = hasDevice ? (deviceLabel || '—') : '—';
+  if($('#setDeviceId')) $('#setDeviceId').textContent = hasDevice
     ? (s.device_id_masked || '—') : '—';
-  if($('#accDeviceUa')) $('#accDeviceUa').textContent = logged ? (s.device_ua || '—') : '—';
-  if($('#accDeviceScreen')){
+  if($('#setDevicePlatform')) $('#setDevicePlatform').textContent = hasDevice
+    ? (s.device_platform === 'ios' ? 'iOS' : 'Android') : '—';
+  if($('#setDeviceScreen')){
+    const screen = [s.device_physic_pixel, s.device_logic_pixel].filter(Boolean).join(' / ');
+    $('#setDeviceScreen').textContent = hasDevice ? (screen || '—') : '—';
+  }
+  if($('#setDeviceScale')){
     const bits = [];
     if(s.device_scale) bits.push('@' + s.device_scale + 'x');
     if(+s.device_installed_days > 0) bits.push('安装 ' + s.device_installed_days + ' 天');
-    $('#accDeviceScreen').textContent = logged ? (bits.join(' · ') || '—') : '—';
+    $('#setDeviceScale').textContent = hasDevice ? (bits.join(' · ') || '—') : '—';
   }
+  if($('#setDeviceSource')) $('#setDeviceSource').textContent = hasDevice ? deviceSource : '—';
+  if($('#setDeviceEnv')){
+    const ok = s.device_environment_ok;
+    $('#setDeviceEnv').textContent = hasDevice
+      ? (ok === true ? '正常' : (ok === false ? '异常' : '未知')) : '—';
+    $('#setDeviceEnv').className = hasDevice && ok === false ? 'risk-bad' : '';
+    $('#setDeviceEnv').title = hasDevice && s.device_cpu
+      ? ('CPU ' + s.device_cpu + ' · root=' + (s.device_is_root || '0'))
+      : '';
+  }
+  if($('#setDeviceUa')) $('#setDeviceUa').textContent = hasDevice ? (s.device_ua || '—') : '—';
   $('#accCampus').textContent = logged ? (s.campusName || '—') : '—';
   $('#accUnid').textContent = logged ? (s.unid || '—') : '—';
   if($('#deviceRotateBtn')) $('#deviceRotateBtn').disabled = !logged || LIVE.submitting;
   if(!logged && $('#deviceRotateConfirm')) $('#deviceRotateConfirm').value = '';
+  if(typeof updateCustomSaveState === 'function') updateCustomSaveState();
 
   $('#setSession').textContent = s.disabled ? '账号已禁用' : (logged ? '已加载 token' : '未登录');
   $('#setCampus').textContent = logged ? ([s.schoolName, s.campusName].filter(Boolean).join(' · ') || '—') : '—';
@@ -4532,6 +4557,142 @@ async function rotateDeviceProfile(){
       btn.disabled = !hasSession();
       btn.textContent = '更换设备指纹';
     }
+  }
+}
+
+/* ---------------- custom device (advanced) ---------------- */
+function deviceCatalogRows(platform){
+  const cat = LIVE.deviceCatalog || {};
+  return Array.isArray(cat[platform]) ? cat[platform] : [];
+}
+function customDeviceRow(){
+  if(!$('#customDevicePlatform') || !$('#customDeviceModel')) return null;
+  const platform = $('#customDevicePlatform').value;
+  const model = $('#customDeviceModel').value;
+  return deviceCatalogRows(platform).find(r => r.deviceName === model) || null;
+}
+function fillCustomDeviceModels(){
+  if(!$('#customDeviceModel')) return;
+  const platform = $('#customDevicePlatform').value;
+  const rows = deviceCatalogRows(platform);
+  const prev = $('#customDeviceModel').value;
+  $('#customDeviceModel').innerHTML = rows.map(r => {
+    const label = r.label && r.label !== r.deviceName
+      ? r.label + ' · ' + r.deviceName : r.deviceName;
+    return `<option value="${esc(r.deviceName)}">${esc(label)}</option>`;
+  }).join('');
+  if(rows.some(r => r.deviceName === prev)) $('#customDeviceModel').value = prev;
+  fillCustomDeviceOs();
+}
+function fillCustomDeviceOs(){
+  if(!$('#customDeviceOs')) return;
+  const row = customDeviceRow();
+  const prev = $('#customDeviceOs').value;
+  $('#customDeviceOs').innerHTML = row
+    ? row.osVersions.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')
+    : '';
+  if(row && row.osVersions.includes(prev)) $('#customDeviceOs').value = prev;
+  updateCustomDeviceHint();
+}
+function updateCustomDeviceHint(){
+  const row = customDeviceRow();
+  const hint = $('#customDeviceHint');
+  if(!row){
+    if(hint) hint.textContent = '先选择平台和机型。';
+  }else if(hint){
+    hint.textContent = `自动匹配：${row.physicPixel} / ${row.logicPixel} · CPU ${row.cpuModel} · root=0`;
+  }
+  updateCustomSaveState();
+}
+function updateCustomSaveState(){
+  const btn = $('#customDeviceSave');
+  if(!btn) return;
+  const typed = $('#customDeviceConfirm') ? $('#customDeviceConfirm').value.trim() : '';
+  const id = $('#customDeviceId') ? $('#customDeviceId').value.trim() : '';
+  btn.disabled = !LIVE.deviceCatalog ||
+    !(typed === '自定义' && id.length > 0) || !!LIVE.submitting;
+}
+async function loadDeviceOptions(){
+  if(LIVE.deviceCatalogLoading) return;
+  LIVE.deviceCatalogLoading = true;
+  try{
+    const j = await liveApi('real_device_options', {}, 15000);
+    if(!liveOk(j)){
+      LIVE.deviceCatalogError = (j && j.message) || '设备目录读取失败';
+      if($('#customDeviceHint')) $('#customDeviceHint').textContent = LIVE.deviceCatalogError;
+      return;
+    }
+    LIVE.deviceCatalog = (j.data && j.data.catalog) || {};
+    LIVE.deviceCatalogError = null;
+    fillCustomDeviceModels();
+  }catch(e){
+    LIVE.deviceCatalogError = e && e.message ? e.message : String(e);
+    if($('#customDeviceHint')) $('#customDeviceHint').textContent = LIVE.deviceCatalogError;
+  }finally{
+    LIVE.deviceCatalogLoading = false;
+  }
+}
+async function resetAfterDeviceChange(message, relogin){
+  LIVE.session = {}; LIVE.checked = null;
+  clearAccountActivity();
+  renderSession();
+  renderEmptyData();
+  await loadKeepalive();
+  if(relogin) showLoginGate(message);
+  await restoreSavedLogin();
+}
+async function saveCustomDevice(){
+  if(LIVE.submitting){ toast('提交进行中，完成后再修改设备'); return; }
+  const confirmInput = $('#customDeviceConfirm');
+  if(!confirmInput || confirmInput.value.trim() !== '自定义'){
+    toast('请输入“自定义”确认');
+    if(confirmInput) confirmInput.focus();
+    return;
+  }
+  const platform = $('#customDevicePlatform').value;
+  const deviceName = $('#customDeviceModel').value;
+  const osVersion = $('#customDeviceOs').value;
+  const DeviceId = $('#customDeviceId').value.trim();
+  const installDays = $('#customDeviceAge') ? $('#customDeviceAge').value.trim() : '';
+  if(!DeviceId){ toast('请填写 DeviceId'); $('#customDeviceId').focus(); return; }
+  if(!confirm('确定保存自定义设备？\n\n· 设备：' + deviceName + ' · ' + osVersion +
+              '\n· DeviceId：' + DeviceId +
+              '\n· 旧指纹会先备份\n· 保存后需要重新登录\n· 不要频繁更换')) return;
+  const btn = $('#customDeviceSave');
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    const j = await liveApi('real_set_custom_device', {
+      confirm: '自定义设备', platform: platform, deviceName: deviceName,
+      osVersion: osVersion, DeviceId: DeviceId, installDays: installDays
+    }, 30000);
+    if(!liveOk(j)){
+      const msg = (j && j.message) || '未知错误';
+      toast('保存失败：' + msg);
+      if($('#customDeviceResult')) $('#customDeviceResult').textContent = msg;
+      liveLog('自定义设备保存失败', msg, 'err');
+      return;
+    }
+    const d = j.data || {};
+    const dev = d.device || {};
+    const osLabel = dev.device_os
+      ? ((dev.device_platform === 'ios' ? 'iOS ' : 'Android ') + dev.device_os)
+      : '';
+    liveLog('自定义设备已保存',
+      [dev.device_name, osLabel, dev.device_id_masked].filter(Boolean).join(' · '), 'warn');
+    if(d.backup) liveLog('旧指纹已备份', d.backup, 'info');
+    if($('#customDeviceConfirm')) $('#customDeviceConfirm').value = '';
+    if($('#customDeviceId')) $('#customDeviceId').value = '';
+    if($('#customDeviceAge')) $('#customDeviceAge').value = '';
+    if($('#customDeviceResult')) $('#customDeviceResult').textContent = '已保存';
+    await resetAfterDeviceChange('自定义设备已保存，请重新登录。', !!d.relogin_required);
+    toast('自定义设备已保存');
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e);
+    toast('保存失败：' + msg);
+    liveLog('自定义设备保存失败', msg, 'err');
+  }finally{
+    if(btn) btn.textContent = '保存自定义设备';
+    updateCustomSaveState();
   }
 }
 
@@ -9016,6 +9177,13 @@ function liveWire(){
   $('#accTest').addEventListener('click', liveTestSession);
   $('#accLogout').addEventListener('click', liveLogout);
   if($('#deviceRotateBtn')) $('#deviceRotateBtn').addEventListener('click', rotateDeviceProfile);
+  if($('#customDevicePlatform')) $('#customDevicePlatform').addEventListener('change', fillCustomDeviceModels);
+  if($('#customDeviceModel')) $('#customDeviceModel').addEventListener('change', fillCustomDeviceOs);
+  ['#customDeviceConfirm', '#customDeviceId'].forEach(sel => {
+    const el = $(sel);
+    if(el) el.addEventListener('input', updateCustomSaveState);
+  });
+  if($('#customDeviceSave')) $('#customDeviceSave').addEventListener('click', saveCustomDevice);
   $('#kaStart').addEventListener('click', liveKeepaliveStart);
   $('#kaCheck').addEventListener('click', liveKeepaliveCheck);
   $('#kaStop').addEventListener('click', liveKeepaliveStop);

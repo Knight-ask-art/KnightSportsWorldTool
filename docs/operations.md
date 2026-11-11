@@ -41,8 +41,9 @@
 > 混用；重新登录后登录/提交/OBS 使用同一份新指纹。唯一但字段不自洽的旧指纹只修
 > CPU/root/机型/像素，保留 DeviceId。要手动执行迁移：
 > `python -m replica.application.device_profile --data-dir <data> --migrate`。
-> 要主动换机仍用 `--rotate`（可选 `--platform android|ios|random`），或在账号页
-> 「高级：更换设备指纹」输入“更换”二次确认；两种方式都会先备份旧指纹并退出本机登录。
+> 要主动换机仍用 `--rotate`（可选 `--platform android|ios|random`），或在设置页
+> 「设备指纹 → 高级功能：更换设备指纹」输入“更换”二次确认；自定义设备在
+> 「高级功能：自定义设备」。两种方式都会先备份旧指纹并退出本机登录。
 > 回滚时把备份文件复制回 `device_profile.json` 并重启程序。**升级/迁移时复制整个
 > `data/` 目录（含 `device_profile.json`）；只复制 `accounts_emu.json` 会被当成旧数据
 > 并触发一次迁移。**
