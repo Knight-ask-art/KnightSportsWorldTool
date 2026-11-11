@@ -256,8 +256,13 @@ def _extract_single_lap(
     if T.polyline_length_m(ring) < MIN_LAP_M * 0.9:
         return None
 
-    loop = T.extract_loop(simplified, MIN_LAP_M)
-    candidate = _close_ring(loop) if loop is not None else ring
+    # Try the whole ring first: a 4-6 lap track is periodic without needing
+    # extract_loop's 40% scan (which can cut a non-integer segment under noise).
+    candidate = ring
+    if _lap_period_count(ring) <= 1:
+        loop = T.extract_loop(simplified, MIN_LAP_M)
+        if loop is not None:
+            candidate = _close_ring(loop)
     if T.polyline_length_m(candidate) < MIN_LAP_M * 0.9:
         candidate = ring
 

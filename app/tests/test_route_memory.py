@@ -764,3 +764,31 @@ def test_learn_skips_flying_point_spike_and_forged_distance():
     assert doc['records_skipped'] == 1
     assert len(doc['templates']) == 1
     assert doc['templates'][0]['samples'] == 5
+
+
+def test_six_lap_400m_noisy_track_cuts_one_lap():
+    lat0, lng0 = 23.0, 113.5
+    m_lat = 110540.0
+    m_lng = 111320.0 * math.cos(math.radians(lat0))
+    a, b, n, laps = 75.0, 50.0, 90, 6
+    lap = []
+    for i in range(n):
+        t = 2 * math.pi * i / n
+        lap.append((lat0 + b * math.sin(t) / m_lat,
+                    lng0 + a * math.cos(t) / m_lng))
+    ring = lap * laps + [lap[0]]
+    rng = random.Random(42)
+    noisy = [(la + rng.gauss(0, 6.0) / m_lat,
+              ln + rng.gauss(0, 6.0) / m_lng) for la, ln in ring]
+    smooth = [noisy[0]]
+    for i in range(1, len(noisy) - 1):
+        smooth.append(tuple(sum(noisy[i + d][k] for d in (-1, 0, 1)) / 3.0
+                            for k in (0, 1)))
+    smooth.append(noisy[-1])
+
+    simplified = T.simplify(smooth, 2.5, 400)
+    assert RM._lap_period_count(RM._close_ring(simplified)) == 6
+    single = RM._extract_single_lap(simplified)
+    assert single is not None
+    lap_m = T.polyline_length_m(RM._close_ring(single))
+    assert 380.0 <= lap_m <= 480.0, lap_m
