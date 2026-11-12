@@ -295,6 +295,39 @@ def test_registry_uses_official_base_when_primary_is_a_proxy(tmp_path):
     assert urls == expected
 
 
+def test_cli_registry_base_url_avoids_double_proxy(tmp_path):
+    zip_path = _write_asset(tmp_path / 'haoxiangpao_v0.3.0_win64.zip', ZIP)
+    reg = {
+        'schema': 1,
+        'mirrors': [
+            {'name': 'official', 'template': '{base}', 'priority': 0, 'enabled': True},
+            {'name': 'fast', 'template': 'https://fast.example/{base}', 'priority': 10, 'enabled': True},
+        ],
+    }
+    reg_path = tmp_path / 'mirrors.json'
+    reg_path.write_text(json.dumps(reg), encoding='utf-8')
+    official = 'https://github.com/o/r/releases/download/v0.3.0'
+    primary = 'https://gh-proxy.com/' + official
+    out_path = tmp_path / 'latest.json'
+
+    assert make_latest.main([
+        '--dist', str(tmp_path),
+        '--version', '0.3.0',
+        '--zip', str(zip_path),
+        '--out', str(out_path),
+        '--base-url', primary,
+        '--registry-base-url', official,
+        '--mirror-registry', str(reg_path),
+        '--rollback-version', '',
+    ]) == 0
+    urls = json.loads(out_path.read_text(encoding='utf-8'))['assets']['windows-x64']['urls']
+    assert urls == [
+        f'{primary}/{zip_path.name}',
+        f'{official}/{zip_path.name}',
+        f'https://fast.example/{official}/{zip_path.name}',
+    ]
+
+
 def test_health_filter_uses_registry_base_for_proxy_primary():
     official = 'https://github.com/o/r/releases/download/v0.3.0'
     primary = 'https://gh-proxy.com/' + official
