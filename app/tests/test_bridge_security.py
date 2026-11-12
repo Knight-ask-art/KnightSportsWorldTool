@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
 
-from replica.adapters.http_server import serve
+from replica.adapters.http_server import Handler, serve
 
 
 def _post(base, method='real_get_session', **kwargs):
@@ -95,3 +95,26 @@ def test_bridge_rejects_bad_requests_and_sanitises_session():
             os.environ.pop('JHP_POINTS_CACHE', None)
         else:
             os.environ['JHP_POINTS_CACHE'] = old_cache
+
+
+def test_a_client_disconnect_does_not_dump_a_traceback():
+    """WinError 10053 happens when the WebView closes mid-response."""
+    class FakeHandler:
+        def send_response(self, status):
+            pass
+
+        def send_header(self, key, value):
+            pass
+
+        def end_headers(self):
+            pass
+
+        class _WFile:
+            def write(self, body):
+                raise ConnectionAbortedError(10053, 'aborted by the host')
+
+        wfile = _WFile()
+
+    # Must return quietly; BaseHTTPRequestHandler would otherwise log the
+    # handler thread's exception for a perfectly normal client disconnect.
+    Handler._send(FakeHandler(), b'{}', 'application/json')
