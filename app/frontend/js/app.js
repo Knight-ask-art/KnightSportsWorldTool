@@ -5057,6 +5057,9 @@ async function loadKeepalive(){
   if(stamp && LIVE.tokenUpdatedAt !== null && stamp !== LIVE.tokenUpdatedAt){
     const sj = await liveApi('real_get_session');
     if(LIVE.session !== expectedSession) return;
+    if(!liveOk(sj) && sj.data && sj.data.reason === 'integrity'){
+      toast(sj.message || '安装文件校验未通过，请重新安装软件后再试');
+    }
     if(liveOk(sj)){
       const newSession = sj.data || {};
       LIVE.session = newSession;

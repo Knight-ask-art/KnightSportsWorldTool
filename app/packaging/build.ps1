@@ -265,7 +265,7 @@ if ($Unsigned) {
 } else {
     & python $signer sign --manifest $integrityPath
     if ($LASTEXITCODE -ne 0) {
-        throw 'manifest signing failed; run "python scripts/manifest_sign.py keygen --apply" first'
+        throw 'manifest signing failed; restore %USERPROFILE%\.hxp\manifest.key or set JHP_MANIFEST_KEY'
     }
     # Verify against the key compiled into the app, not the one just used:
     # a stale MANIFEST_PUBKEY must fail here, not at every user's login.

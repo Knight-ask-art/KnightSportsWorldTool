@@ -297,6 +297,12 @@ def test_an_oversized_sidecar_is_a_mismatch(tmp_path, monkeypatch):
     assert out['checked'] == 0
 
 
+def test_extra_fields_are_covered_by_the_signature():
+    base = {'version': 2, 'files': {'x': 'a' * 64}}
+    assert I.signing_bytes(dict(base, min_version=5)) != \
+        I.signing_bytes(dict(base, min_version=6))
+
+
 def test_repair_message_names_no_file_or_layer():
     lowered = I.REPAIR_MESSAGE.lower()
     for token in ('hxp', '.exe', 'sha', 'hash', '哈希', 'rust', 'go', 'cpp',

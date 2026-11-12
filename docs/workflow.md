@@ -127,8 +127,8 @@ claude mcp list | Select-String instabox
 版本号改完要先提交，脚本默认拒绝在脏工作区上打正式包：
 
 ```powershell
-# 0) 每台构建机一次：生成 manifest 签名私钥（仓库外），把公钥写回源码
-python scripts\manifest_sign.py keygen --apply
+# 0) 新构建机：把旧机器的 %USERPROFILE%\.hxp\manifest.key 拷过来；
+#    只有轮换密钥时才 keygen --force --apply（旧包会验签失败）
 
 # 先看参数，不编译
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2 -Plan

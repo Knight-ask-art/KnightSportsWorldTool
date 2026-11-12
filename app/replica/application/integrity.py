@@ -14,13 +14,13 @@ The packaged build ships three sidecars next to the Python code::
 
 This module verifies the signature, then re-hashes the three files.
 
-The gate is narrow on purpose.  A **missing or invalid signature** and a
-**present file whose bytes changed** both stop a login with a repair sentence:
-otherwise deleting ``sig`` would defeat the signature, and editing a sidecar is
-either damage or tampering.  A **missing file** is not a gate here -- an
-antivirus quarantine or a half-finished copy is far more common than a
-deliberate deletion, and ``shield.require`` already refuses a build that
-cannot derive a credential.
+The gate is narrow on purpose.  A missing or invalid signature, a present
+file whose bytes changed, and a file that exists but cannot be read all stop a
+privileged action: otherwise deleting ``sig`` would defeat the signature, and
+an unreadable file could hide a replaced sidecar behind an ACL.  A **missing
+file** is not a gate here -- an antivirus quarantine or a half-finished copy
+is far more common than a deliberate deletion, and ``shield.require`` already
+refuses a build that cannot derive a credential.
 
 Source checkouts have no manifest and return ``skipped``.  Nothing here reads
 ``data/`` or touches the network.
@@ -71,11 +71,12 @@ def _manifest_error(reason: str = 'manifest') -> dict:
 def signing_bytes(doc: dict) -> bytes:
     """Canonical bytes covered by ``sig``.
 
-    Only ``version`` and ``files`` are signed.  Formatting, key order in the
-    file and the ``sig`` field itself are not covered, so the manifest can be
-    pretty-printed without invalidating the signature.
+    Every top-level field except ``sig`` is signed, so a future
+    ``min_version`` cannot ride along unauthenticated.  Formatting and key
+    order in the file are not covered, so the manifest can be pretty-printed
+    without invalidating the signature.
     """
-    body = {'version': doc.get('version'), 'files': doc.get('files')}
+    body = {key: value for key, value in doc.items() if key != 'sig'}
     return json.dumps(body, ensure_ascii=False, sort_keys=True,
                       separators=(',', ':')).encode('utf-8')
 

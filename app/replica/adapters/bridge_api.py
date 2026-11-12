@@ -48,6 +48,7 @@ from .bridge_common import (
     _ok,
     _read_json,
     _write_json,
+    integrity_message,
     plausibility_warnings,  # noqa: F401 - re-exported for tests
 )
 from .bridge_agent import AgentBridgeMixin
@@ -1106,7 +1107,7 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         return out
 
     def real_get_session(self):
-        message = self._integrity_message()
+        message = integrity_message()
         if message:
             return _fail(message, code=403, data={'reason': 'integrity'})
         return _ok(self._public_session(self._read_session()))
@@ -1386,7 +1387,7 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         it to ``v70400``; the older ``v70100`` is kept as a 404-only fallback
         (see ``replica/transport/routes.py``).
         """
-        message = self._integrity_message()
+        message = integrity_message()
         if message:
             return _fail(message, code=403, data={'reason': 'integrity'})
         try:
@@ -1989,19 +1990,6 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         with self._gt4_manual_lock:
             self._gt4_manual.pop(str(token or ''), None)
         return _ok(True)
-
-    def _integrity_message(self):
-        """Cheap manifest gate for paths that do not run the login shield.
-
-        Session restore and submit never derive a device credential, so the
-        four-layer check would be wasted; the signature and three hashes are
-        enough to catch a replaced sidecar.  A source checkout is ``skipped``.
-        """
-        try:
-            from ..application import integrity as I
-            return I.tamper_message()
-        except Exception:  # noqa: BLE001 - a gate bug must not break the UI
-            return None
 
     def _shield_block(self):
         """Require the four-layer device credential before a real login.
@@ -2683,10 +2671,11 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
     def real_integrity_status(self):
         """Native sidecar report for diagnostics and support.
 
-        ``mismatch`` and a bad/missing signature also gate a login
-        (``shield.require``); a missing file is reported but never blocks,
-        because a quarantine should not look like tampering.  ``selfcheck`` is
-        the sidecar's own debugger/image verdict and gates nothing.
+        ``mismatch`` and a bad/missing signature also gate login, session
+        restore and submit (``shield.require`` / ``bridge_common``); a missing
+        file is reported but never blocks, because a quarantine should not
+        look like tampering.  ``selfcheck`` is the sidecar's own
+        debugger/image verdict and gates nothing.
         """
         from ..application import integrity as I
         try:

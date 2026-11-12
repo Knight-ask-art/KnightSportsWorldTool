@@ -85,8 +85,8 @@ latest.json
 # 0. 参考项目（协议改动时）
 python scripts\check_references.py
 
-# 0b. manifest 签名密钥（每台构建机一次；私钥在仓库外）
-python scripts\manifest_sign.py keygen --apply
+# 0b. manifest 签名密钥：把旧机器的 %USERPROFILE%\.hxp\manifest.key 拷过来
+#     只有轮换密钥时才 keygen --force --apply（旧包会验签失败）
 
 # 1. 源码预检
 python scripts\release_check.py --source-only
@@ -150,8 +150,8 @@ https://purge.jsdelivr.net/gh/Knight-ask-art/KnightSportsWorldTool@main/latest.j
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `release_check` 报版本不一致 | 6 个落点漏改 | 按 §1 全改 |
-| 构建报 `manifest signing failed` | 构建机没有私钥 | `python scripts\manifest_sign.py keygen --apply`，或设 `JHP_MANIFEST_KEY` |
-| 构建报 `does not verify against MANIFEST_PUBKEY` | 换了密钥但没更新常量 | 重新 `keygen --apply`，或把公钥改成与私钥匹配 |
+| 构建报 `manifest signing failed` | 构建机没有私钥 | 拷贝 `%USERPROFILE%\.hxp\manifest.key`，或设 `JHP_MANIFEST_KEY`；不要用 `keygen` 覆盖已发布公钥 |
+| 构建报 `does not verify against MANIFEST_PUBKEY` | 用了另一把私钥，或公钥常量没同步 | 换回原私钥；确实要轮换才 `keygen --force --apply` |
 | 登录、恢复会话或提交报“安装文件校验未通过” | 包是 `-Unsigned`、manifest/sig 被改过，或打包后替换过 sidecar | 用正式签名流程重打；不要发布 `-Unsigned` 包 |
 | NSIS 中文乱码/编译失败 | 文件不是 UTF-8 BOM | 重新保存为 BOM |
 | Release 链接 404 | 资产名带中文被 GitHub 重写 | 资产名只用 ASCII |

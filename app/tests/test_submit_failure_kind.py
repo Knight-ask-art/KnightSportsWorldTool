@@ -33,16 +33,14 @@ def test_fail_submit_adds_kind_without_mutating_the_payload():
 
 def test_device_migration_failure_is_an_explicit_refusal():
     api = SimpleNamespace(_device_migration={
-        'message': '设备指纹已修复，请重新登录后再提交'},
-        _integrity_message=lambda: None)
+        'message': '设备指纹已修复，请重新登录后再提交'})
     res = ReplicaApi.real_submit_run(api)
     assert res['code'] != 200
     assert res['data']['failure_kind'] == 'fail'
 
 
 def test_missing_account_failure_is_an_explicit_refusal():
-    api = SimpleNamespace(_device_migration=None, _real_account=lambda: None,
-                          _integrity_message=lambda: None)
+    api = SimpleNamespace(_device_migration=None, _real_account=lambda: None)
     res = ReplicaApi.real_submit_run(api)
     assert res['code'] != 200
     assert res['data']['failure_kind'] == 'fail'

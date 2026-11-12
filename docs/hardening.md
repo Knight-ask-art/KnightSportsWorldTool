@@ -144,7 +144,7 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
   `shield.require()` 在任何一层派生之前调用 `integrity.tamper_message()`；
   “文件存在但哈希不同”“manifest 缺失/格式错”“签名缺失/错误”都返回
   `REPAIR_MESSAGE`（「安装文件校验未通过，请重新安装软件后再试」）。
-  `bridge_api._integrity_message()` 把同一道门补在 `real_get_session()`、
+  `bridge_common.integrity_message()` 把同一道门补在 `real_get_session()`、
   `real_check_session()` 和 `real_submit_run()` 上——否则改包后重启、用旧
   会话进来就能绕过登录门；这三处只做三次 SHA-256，不跑四层派生。
   `missing`（文件不在）不拦：杀毒隔离和半拷贝是常态，缺层本身仍由 Phase 2
@@ -214,9 +214,7 @@ cd go\hxp-guard; go test ./...; go build -trimpath -ldflags="-s -w" -o hxp-guard
 # Rust
 cd rust\hxp-core; cargo test; cargo build --release --locked
 
-# 签名（首次执行一次；私钥写到仓库外，公钥写回 integrity.py）
-python scripts\manifest_sign.py keygen --apply
-# 打包脚本会自动 sign + verify；也可以手动复核
+# 签名密钥：私钥在仓库外；新机器拷贝，只有轮换才 keygen --force --apply
 python scripts\manifest_sign.py verify --manifest app\build_stage\好想跑\runtime\integrity.json
 
 # Python

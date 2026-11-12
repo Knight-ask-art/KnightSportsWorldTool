@@ -50,9 +50,9 @@
   **编译进 `integrity.py` 的公钥**跑一次 `verify`；任何一步失败直接
   `throw`。
 - 私钥只在构建机：`JHP_MANIFEST_KEY`（64 hex）或
-  `%USERPROFILE%\.hxp\manifest.key`。首次执行
-  `python scripts\manifest_sign.py keygen --apply` 会生成私钥并把公钥写回
-  `app/replica/application/integrity.py`。
+  `%USERPROFILE%\.hxp\manifest.key`。新机器把私钥文件拷过去即可；仓库里
+  已有公钥时 `keygen --apply` 会拒绝，避免静默轮换（确实要换钥匙用
+  `keygen --force --apply`）。
 - 换机器构建要先把私钥文件拷过去；丢了就只能 `keygen` 换新公钥并重新发版，
   旧包无法再升级到新 manifest 体系。
 - `-Unsigned` 只用于本地冒烟：这样的包在 frozen 下会以“安装文件校验未通过”
