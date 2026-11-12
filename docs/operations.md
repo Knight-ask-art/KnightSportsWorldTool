@@ -16,7 +16,7 @@
 | `points_cache.json` | 打卡点缓存（300 秒，按目标距离分键；10603 回退可读到 24 h） | 可以 |
 | `points_ratelimit.json` | 点位接口 10603 冷却截止时间（跨重启保留） | 可以 |
 | `routes.json` | 路线库（手绘/导入/记录生成） | 可以 |
-| `updates/` | 自动更新下载的安装包（已校验 sha256，等待手动解压） | 可以 |
+| `updates/` | Go launcher 的下载状态、`.part`、已校验 zip、`boot-ok.json` 和 `launcher.log`；自动替换/回滚，无需手动解压 | 可以（不含 token/完整 URL） |
 | `diagnostics/gt4/<时间戳>/` | 极验失败现场：`attempt.json`、`bg.png`、`slice.png`；凭证已截断 | **不能**（含 `w` 明文） |
 | `cache/gt4/rsa-<版本>.json` | RSA 模数缓存，**仅 `JHP_GT4_RSA=on` 时生成** | 可以 |
 | `students.json` / `sport.json` / `account.json` | 旧 mock / 本地账号密码 | **不能** |
@@ -24,6 +24,13 @@
 
 > `diagnostics` 模块生成的是**脱敏**报告：不含 token、密码、uid、DeviceId、坐标、IP、
 > 原始请求体、校区数字 ID、本地路径。要贴日志/提 issue 时用它。
+
+> **静默更新**：`hxp-launcher.exe` 启动 `好想跑.exe` 后，后台 worker 才会下载。
+> 下次启动时，只有 `updates/download.state.json` 为 `ready` 且带有效
+> `sha256`/`size` 才会替换。替换前保留 `app.old`，新版本写入匹配版本的
+> `updates/boot-ok.json` 后才删；失败时恢复旧目录并重启旧版本。同一版本
+> boot-ok 失败会保持 `rolled_back`，不会每次启动都重试；换版本或换 sha256 才重置。
+> 下载状态只存 `urls_hash` 和索引，不存完整 URL；日志同样会脱敏。
 
 > **token 保活**：`accounts_emu.json` 的 `keepalive` 里只存间隔、上次检查/成功时间、
 > 失败次数、过期标记等；**不存密码**。自动重登的密码只在进程内存里，重启即失效。
