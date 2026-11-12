@@ -121,19 +121,29 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
   `real_decoy_activate` / `real_decoy_status` 才会碰到。没有死循环、删除
   文件或弹窗行为，3 秒后停在 `expired`。
 - `app/replica/application/integrity.py`：frozen 构建下读取
-  `<app_root>/runtime/integrity.json`，对 `runtime/rust/hxp-core.exe`、
-  `runtime/go/hxp-guard.exe`、`runtime/cpp/hxp-shield.exe` 计算 SHA-256，
-  返回 `{'ok', 'checked', 'missing', 'mismatch'}`。manifest 缺失或格式错
-  返回 `ok=False, reason='manifest'`。源码 checkout 没有 manifest，返回
-  `skipped`。
+  `<app_root>/runtime/integrity.json`，先验 Ed25519 签名，再对
+  `runtime/rust/hxp-core.exe`、`runtime/go/hxp-guard.exe`、
+  `runtime/cpp/hxp-shield.exe` 计算 SHA-256，返回
+  `{'ok', 'checked', 'missing', 'mismatch'}`。manifest 缺失/格式错/版本不符
+  返回 `reason='manifest'`，签名不对返回 `reason='signature'`。源码 checkout
+  没有 manifest，返回 `skipped`。
+- 签名覆盖 `{"version","files"}` 的 canonical JSON（sorted keys、紧凑分隔符），
+  **不覆盖 `sig` 字段本身**。所以改一个哈希、换一个 exe、删掉 `sig` 都会让
+  验签失败；只改缩进或字段顺序不会。
 - `packaging/build.ps1` 在复制三层 native 之后计算三个 exe 的 SHA-256，
-  以 UTF-8 无 BOM 写入 `runtime/integrity.json`；写失败直接 `throw`。
-- **mismatch 拦登录，其余只提示**：`shield.require()` 在任何一层派生之前
-  调用 `integrity.mismatch_message()`。只有“文件存在但哈希不同”会返回
-  `REPAIR_MESSAGE`（「安装文件校验未通过，请重新安装软件后再试」）并拒绝
-  登录；`missing`、manifest 缺失/格式错、源码 checkout 都不拦。杀毒隔离
-  和半拷贝是常态，不能把可恢复的安装问题变成硬锁死；缺层本身仍由 Phase 2
-  的 frozen 规则处理。
+  写 `version=2` 的 manifest，再调用 `scripts/manifest_sign.py sign` 追加
+  `sig`，最后用编译进 `integrity.py` 的 `MANIFEST_PUBKEY` 跑一次 `verify`。
+  签名或验签失败直接 `throw`——密钥配错要死在构建机上，不能死在一千个用户
+  的登录页。`-Unsigned` 只用于本地冒烟，产出的包会在 frozen 下拒绝登录。
+- 私钥不进仓库：`JHP_MANIFEST_KEY`（64 hex）或
+  `%USERPROFILE%\.hxp\manifest.key`。`keygen` 拒绝把私钥写进仓库目录；
+  仓库里只有公钥常量。
+- **签名/manifest 错误与 mismatch 拦登录**：`shield.require()` 在任何一层
+  派生之前调用 `integrity.tamper_message()`。“文件存在但哈希不同”“manifest
+  缺失/格式错”“签名缺失/错误”都会返回 `REPAIR_MESSAGE`
+  （「安装文件校验未通过，请重新安装软件后再试」）并拒绝登录。`missing`
+  （文件不在）不拦：杀毒隔离和半拷贝是常态，缺层本身仍由 Phase 2 的 frozen
+  规则处理。源码 checkout 不拦。
 - `cpp/hxp-shield --selfcheck`：两条保守检查——调试器
   （`IsDebuggerPresent` / `CheckRemoteDebuggerPresent`）和自身 PE（入口点
   所在节可执行且不可写、section table 与 `SizeOfImage` 一致、入口页不是
@@ -143,8 +153,9 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
   `integrity.json` 进入诊断包；**永不阻塞登录**——开发机常挂调试器，部分
   终端安全软件也会以调试方式探测进程。
 - 验收：正常安装与 `pytest` 都不触发蜜罐；只有显式调用 bridge 才会看到
-  “假成功 → 3 秒过期”；哈希不符时登录被拒并给出重装提示，删除文件时诊断
-  标红、frozen 下由缺层规则拒绝。任何分支都不删除文件、不动 `data/`。
+  “假成功 → 3 秒过期”；改一个哈希或删掉 `sig` 时登录被拒并给出重装提示，
+  删掉 native 文件时诊断标红、frozen 下由缺层规则拒绝。任何分支都不删除
+  文件、不动 `data/`。
 
 ### Phase 4 · 前端 A+B（已实现）
 
@@ -196,6 +207,11 @@ cd go\hxp-guard; go test ./...; go build -trimpath -ldflags="-s -w" -o hxp-guard
 
 # Rust
 cd rust\hxp-core; cargo test; cargo build --release --locked
+
+# 签名（首次执行一次；私钥写到仓库外，公钥写回 integrity.py）
+python scripts\manifest_sign.py keygen --apply
+# 打包脚本会自动 sign + verify；也可以手动复核
+python scripts\manifest_sign.py verify --manifest app\build_stage\好想跑\runtime\integrity.json
 
 # Python
 cd app; python -m pytest tests -q

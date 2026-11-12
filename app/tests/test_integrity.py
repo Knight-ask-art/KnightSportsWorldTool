@@ -1,8 +1,9 @@
-"""Native integrity manifest: match, missing, mismatch, bad manifest.
+"""Native manifest: signature, match, missing, mismatch, bad manifest.
 
 All fixtures live under ``tmp_path``; nothing reads ``app/data`` and no native
-binary is started.  ``check_native`` only reports; ``mismatch_message`` is the
-narrow login gate and must fire for a changed file, never for a missing one.
+binary is started.  ``check_native`` reports; ``tamper_message`` is the narrow
+login gate and must fire for a bad signature or a changed file, never for a
+missing one.
 """
 from __future__ import annotations
 
@@ -10,7 +11,18 @@ import hashlib
 import json
 import os
 
+import pytest
+
 from replica.application import integrity as I
+from replica.domain import ed25519
+
+SEED = bytes.fromhex('11' * 32)
+PUB = ed25519.public_key(SEED).hex()
+
+
+@pytest.fixture(autouse=True)
+def _embedded_key(monkeypatch):
+    monkeypatch.setattr(I, 'MANIFEST_PUBKEY', PUB)
 
 
 def _write(path, blob: bytes) -> str:
@@ -20,7 +32,8 @@ def _write(path, blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
-def _install(tmp_path, blobs=None):
+def _install(tmp_path, blobs=None, *, sign=True, version=I.MANIFEST_VERSION,
+             seed=SEED):
     """Create a packaged-looking tree and its manifest."""
     root = tmp_path / 'install'
     blobs = blobs or {
@@ -32,10 +45,20 @@ def _install(tmp_path, blobs=None):
     digests = {}
     for name, blob in blobs.items():
         digests[name] = _write(str(root / 'runtime' / rels[name]), blob)
+    doc = {'version': version, 'files': digests}
+    if sign:
+        doc['sig'] = ed25519.sign(seed, I.signing_bytes(doc)).hex()
     manifest = root / 'runtime' / 'integrity.json'
-    manifest.write_text(json.dumps({'version': 1, 'files': digests}),
-                        encoding='utf-8')
+    manifest.write_text(json.dumps(doc), encoding='utf-8')
     return root, manifest
+
+
+def _load(manifest) -> dict:
+    return json.loads(manifest.read_text(encoding='utf-8'))
+
+
+def _store(manifest, doc) -> None:
+    manifest.write_text(json.dumps(doc), encoding='utf-8')
 
 
 def test_all_hashes_match(tmp_path):
@@ -65,6 +88,41 @@ def test_changed_sidecar_is_a_mismatch(tmp_path):
     assert out['mismatch'] == ['hxp-guard.exe']
 
 
+def test_a_missing_signature_is_rejected(tmp_path):
+    root, manifest = _install(tmp_path)
+    doc = _load(manifest)
+    doc.pop('sig')
+    _store(manifest, doc)
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out == {'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
+                   'reason': 'signature'}
+
+
+def test_a_manifest_edit_breaks_the_signature(tmp_path):
+    # Replacing a digest to match a patched binary is the whole point: the
+    # signature covers files, so this must fail even though the hash checks
+    # would have passed.
+    root, manifest = _install(tmp_path)
+    doc = _load(manifest)
+    doc['files']['hxp-guard.exe'] = 'a' * 64
+    _store(manifest, doc)
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['reason'] == 'signature'
+
+
+def test_a_signature_from_another_key_is_rejected(tmp_path):
+    root, manifest = _install(tmp_path, seed=bytes.fromhex('22' * 32))
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['reason'] == 'signature'
+
+
+def test_an_empty_embedded_key_rejects_everything(tmp_path, monkeypatch):
+    monkeypatch.setattr(I, 'MANIFEST_PUBKEY', '')
+    root, manifest = _install(tmp_path)
+    assert I.check_native(manifest_path=str(manifest),
+                          root=str(root))['reason'] == 'signature'
+
+
 def test_missing_manifest_is_a_manifest_error(tmp_path):
     root, manifest = _install(tmp_path)
     manifest.unlink()
@@ -82,25 +140,34 @@ def test_invalid_json_is_a_manifest_error(tmp_path):
                    'reason': 'manifest'}
 
 
+def test_an_oversized_manifest_is_rejected(tmp_path):
+    root, manifest = _install(tmp_path)
+    manifest.write_bytes(b'{' + b' ' * (2 << 20))
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['reason'] == 'manifest'
+
+
 def test_wrong_version_or_missing_entry_is_a_manifest_error(tmp_path):
     root, manifest = _install(tmp_path)
-    doc = json.loads(manifest.read_text(encoding='utf-8'))
+    doc = _load(manifest)
 
     bad_version = dict(doc)
-    bad_version['version'] = 2
-    manifest.write_text(json.dumps(bad_version), encoding='utf-8')
+    bad_version['version'] = I.MANIFEST_VERSION + 1
+    _store(manifest, bad_version)
     assert I.check_native(manifest_path=str(manifest),
                           root=str(root))['reason'] == 'manifest'
 
-    missing_entry = {'version': 1, 'files': dict(doc['files'])}
+    missing_entry = {'version': doc['version'], 'files': dict(doc['files']),
+                     'sig': doc['sig']}
     missing_entry['files'].pop('hxp-shield.exe')
-    manifest.write_text(json.dumps(missing_entry), encoding='utf-8')
+    _store(manifest, missing_entry)
     assert I.check_native(manifest_path=str(manifest),
                           root=str(root))['reason'] == 'manifest'
 
-    bad_digest = {'version': 1, 'files': dict(doc['files'])}
+    bad_digest = {'version': doc['version'], 'files': dict(doc['files']),
+                  'sig': doc['sig']}
     bad_digest['files']['hxp-core.exe'] = 'not-a-sha256'
-    manifest.write_text(json.dumps(bad_digest), encoding='utf-8')
+    _store(manifest, bad_digest)
     assert I.check_native(manifest_path=str(manifest),
                           root=str(root))['reason'] == 'manifest'
 
@@ -119,12 +186,25 @@ def test_frozen_manifest_path_is_runtime_integrity_json(tmp_path, monkeypatch):
     assert I.native_manifest_path() == expected
 
 
-def test_a_changed_sidecar_is_the_only_blocking_shape(monkeypatch):
-    # Present but different bytes: damaged or edited, so the login stops.
+def test_a_changed_sidecar_is_the_blocking_shape(monkeypatch):
     monkeypatch.setattr(I, 'check_native', lambda: {
         'ok': False, 'checked': 3, 'missing': [],
         'mismatch': ['hxp-guard.exe']})
-    assert I.mismatch_message() == I.REPAIR_MESSAGE
+    assert I.tamper_message() == I.REPAIR_MESSAGE
+
+
+def test_a_bad_signature_blocks(monkeypatch):
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
+        'reason': 'signature'})
+    assert I.tamper_message() == I.REPAIR_MESSAGE
+
+
+def test_a_bad_manifest_blocks_in_a_frozen_build(monkeypatch):
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
+        'reason': 'manifest'})
+    assert I.tamper_message() == I.REPAIR_MESSAGE
 
 
 def test_missing_files_do_not_block_here(monkeypatch):
@@ -133,30 +213,25 @@ def test_missing_files_do_not_block_here(monkeypatch):
     monkeypatch.setattr(I, 'check_native', lambda: {
         'ok': False, 'checked': 2, 'missing': ['hxp-core.exe'],
         'mismatch': []})
-    assert I.mismatch_message() is None
+    assert I.tamper_message() is None
 
 
-def test_bad_or_absent_manifest_does_not_block(monkeypatch):
-    monkeypatch.setattr(I, 'check_native', lambda: {
-        'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
-        'reason': 'manifest'})
-    assert I.mismatch_message() is None
-
+def test_source_checkout_does_not_block(monkeypatch):
     monkeypatch.setattr(I, 'check_native', lambda: {
         'ok': True, 'checked': 0, 'missing': [], 'mismatch': [],
         'skipped': True})
-    assert I.mismatch_message() is None
+    assert I.tamper_message() is None
 
 
 def test_a_broken_check_fails_open(monkeypatch):
     def boom():
         raise OSError('disk went away')
     monkeypatch.setattr(I, 'check_native', boom)
-    assert I.mismatch_message() is None
+    assert I.tamper_message() is None
 
 
 def test_repair_message_names_no_file_or_layer():
     lowered = I.REPAIR_MESSAGE.lower()
     for token in ('hxp', '.exe', 'sha', 'hash', '哈希', 'rust', 'go', 'cpp',
-                  'nonce', 'token'):
+                  'nonce', 'token', 'signature', '签名'):
         assert token not in lowered

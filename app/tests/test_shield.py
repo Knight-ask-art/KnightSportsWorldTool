@@ -373,14 +373,14 @@ def test_require_returns_blocked_within_the_ttl_when_the_child_hangs(monkeypatch
 def test_a_changed_sidecar_blocks_before_any_layer_runs(monkeypatch):
     monkeypatch.setattr(shield, '_binaries',
                         lambda: pytest.fail('must not probe binaries'))
-    monkeypatch.setattr(shield.integrity, 'mismatch_message',
+    monkeypatch.setattr(shield.integrity, 'tamper_message',
                         lambda: shield.integrity.REPAIR_MESSAGE)
     assert shield.require('store') == {
         'blocked': True, 'message': shield.integrity.REPAIR_MESSAGE}
 
 
 def test_a_missing_sidecar_is_left_to_the_layer_check(monkeypatch):
-    monkeypatch.setattr(shield.integrity, 'mismatch_message', lambda: None)
+    monkeypatch.setattr(shield.integrity, 'tamper_message', lambda: None)
     monkeypatch.setattr(shield, '_binaries', lambda: (None, None, None))
     monkeypatch.setattr(shield, '_is_frozen', lambda: False)
     assert shield.require('store') == {'allowed': True, 'skipped': True}
@@ -390,7 +390,7 @@ def test_jhp_shield_zero_does_not_hide_a_changed_sidecar(monkeypatch):
     # The switch skips the derivation for local debugging; it must not make a
     # modified install valid.
     monkeypatch.setenv('JHP_SHIELD', '0')
-    monkeypatch.setattr(shield.integrity, 'mismatch_message',
+    monkeypatch.setattr(shield.integrity, 'tamper_message',
                         lambda: shield.integrity.REPAIR_MESSAGE)
     out = shield.require('store')
     assert out == {'blocked': True, 'message': shield.integrity.REPAIR_MESSAGE}
@@ -398,7 +398,7 @@ def test_jhp_shield_zero_does_not_hide_a_changed_sidecar(monkeypatch):
 
 def test_a_frozen_build_ignores_the_disable_switch(monkeypatch):
     monkeypatch.setenv('JHP_SHIELD', '0')
-    monkeypatch.setattr(shield.integrity, 'mismatch_message', lambda: None)
+    monkeypatch.setattr(shield.integrity, 'tamper_message', lambda: None)
     monkeypatch.setattr(shield, '_is_frozen', lambda: True)
     called = {}
 

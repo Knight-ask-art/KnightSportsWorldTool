@@ -775,3 +775,13 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | frozen 下 `JHP_SHIELD=0/off/false/no` 不再生效 | 一个环境变量就能跳过整条四层派生，等于加固只在源码环境有效；排错旁路不该存在于发布包 | `enabled()` 先看 `is_compiled()`；源码 checkout 行为不变，`pytest` 与本地调试不受影响 |
 | frozen 下忽略 `JHP_SHIELD_PATH` | 指向任意 exe 比关开关更彻底：可以塞一个永远返回 ok 的 stub，而且完全绕过完整性清单 | 只从 `<app_root>/runtime/cpp/hxp-shield.exe` 取；源码 checkout 仍可指定 |
 | `app.py` 不再写 `JHP_SHIELD=1` | 开关在 frozen 下已无意义，继续写只会让人以为它还能关 | `JHP_RUST_CORE=1` 保持原样，那一层仍靠环境变量钉住 |
+
+## 34. manifest 签名与 fail-closed 验签（2026-11-12）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| manifest 升级到 version 2，增加 Ed25519 `sig`，签名覆盖 `{"version","files"}` 的 canonical JSON | 只存哈希时，改 exe 的人顺手改 manifest 就通过；签名把“改哈希”这条路堵死。签名不覆盖 `sig` 本身和文件格式，改缩进不会误伤 | v1 manifest 在 frozen 下按 `reason='manifest'` 拒绝；源码 checkout 没有 manifest，仍 `skipped` |
+| frozen 下 `reason='manifest'` / `'signature'` 也拦登录 | 能删的签名不算签名；只拦 mismatch 等于把签名做成装饰 | 仍然只给固定重装文案，不暴露文件名或原因；`missing`（文件不在）不拦，隔离和半拷贝不算篡改 |
+| 私钥放 `JHP_MANIFEST_KEY` 或 `%USERPROFILE%\.hxp\manifest.key`，公钥常量编进 `integrity.py` | 仓库是公开的，私钥进仓库等于没有签名；公钥放旁边的文件会被一起替换 | `keygen` 拒绝写进仓库目录；打包时 `sign` 后用**已编译的公钥**再 `verify`，密钥配错死在构建机而不是用户登录页 |
+| Ed25519 用纯 Python 实现（RFC 8032），零新依赖 | 运行时只有验签，2–3 ms；签名只在构建机跑一次。RSA 要管 PEM，Ed25519 只有 32 B 密钥 | 实现非恒定时间，只用于公开消息 + 固定公钥；用 RFC 8032 三组向量逐字节校验 |
+| 保留 `-Unsigned` 打包开关 | 本地冒烟需要能出包，否则没有密钥就没法验证打包流程 | 这样的包在 frozen 下登录会被拒；发布流程不带这个开关 |

@@ -2664,9 +2664,9 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
     def real_integrity_status(self):
         """Native sidecar report for diagnostics and support.
 
-        ``mismatch`` also gates a login (``shield.require``); ``missing`` and
-        a bad manifest are reported but never block, because a quarantine or
-        an interrupted copy should not look like tampering.  ``selfcheck`` is
+        ``mismatch`` and a bad/missing signature also gate a login
+        (``shield.require``); a missing file is reported but never blocks,
+        because a quarantine should not look like tampering.  ``selfcheck`` is
         the sidecar's own debugger/image verdict and gates nothing.
         """
         from ..application import integrity as I

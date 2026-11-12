@@ -4,6 +4,7 @@
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Backend pyinstaller
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -MigrateDataFrom dist\好想跑_v0.1.1
 #         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -NoDataMigration
+#         powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Unsigned   (local smoke only)
 # Output: dist/好想跑_v<version>/好想跑.exe
 #         dist/haoxiangpao_v<version>_win64.zip
 #         dist/haoxiangpao_v<version>_win64.sha256
@@ -47,6 +48,7 @@ param(
     [ValidateSet('nuitka', 'pyinstaller')]
     [string]$Backend = 'nuitka',
     [switch]$NoInstaller,
+    [switch]$Unsigned,
     [string]$Makensis = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -227,9 +229,10 @@ New-Item -ItemType Directory -Force -Path $runtimeCpp | Out-Null
 Copy-Item $CPP_EXE (Join-Path $runtimeCpp 'hxp-shield.exe') -Force
 Write-Host '   bundled runtime/cpp/hxp-shield.exe'
 
-# Write the native hash manifest next to the sidecars.  The app uses it only
-# for a diagnostic status (never to block login), so a replaced or damaged
-# sidecar is visible without an antivirus quarantine becoming a lockout.
+# Write the native manifest next to the sidecars and sign it.  The app
+# refuses a login when the signature or a sidecar hash does not match, so a
+# replaced sidecar cannot be hidden by editing the manifest.  The private key
+# lives outside the repo (JHP_MANIFEST_KEY or ~/.hxp/manifest.key).
 $integrityFiles = [ordered]@{}
 foreach ($entry in @(
     @{ Name = 'hxp-core.exe';   Path = (Join-Path $runtimeRust 'hxp-core.exe') },
@@ -244,7 +247,7 @@ foreach ($entry in @(
     if (-not $hash) { throw ('empty SHA-256 for {0}' -f $entry.Name) }
     $integrityFiles[$entry.Name] = $hash.ToLowerInvariant()
 }
-$integrityDoc = [ordered]@{ version = 1; files = $integrityFiles }
+$integrityDoc = [ordered]@{ version = 2; files = $integrityFiles }
 $integrityPath = Join-Path $BUILT 'runtime\integrity.json'
 try {
     $integrityJson = $integrityDoc | ConvertTo-Json -Depth 4
@@ -254,6 +257,22 @@ try {
     Write-Host '   wrote runtime/integrity.json'
 } catch {
     throw ('failed to write integrity.json: {0}' -f $_.Exception.Message)
+}
+
+$signer = Join-Path $REPO 'scripts\manifest_sign.py'
+if ($Unsigned) {
+    Write-Host '   integrity.json is UNSIGNED (-Unsigned); this build will refuse to log in'
+} else {
+    & python $signer sign --manifest $integrityPath
+    if ($LASTEXITCODE -ne 0) {
+        throw 'manifest signing failed; run "python scripts/manifest_sign.py keygen --apply" first'
+    }
+    # Verify against the key compiled into the app, not the one just used:
+    # a stale MANIFEST_PUBKEY must fail here, not at every user's login.
+    & python $signer verify --manifest $integrityPath
+    if ($LASTEXITCODE -ne 0) {
+        throw 'integrity.json does not verify against MANIFEST_PUBKEY'
+    }
 }
 
 # The shipped copy must prove it can mint and reject a token before the
