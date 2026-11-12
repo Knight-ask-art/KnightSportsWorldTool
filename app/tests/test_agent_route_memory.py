@@ -766,3 +766,266 @@ def test_parse_bare_distance_and_half():
     assert parse_distance_km('2.5') == 2.5
     assert parse_distance_km('半') == 0.5
     assert parse_distance_km('半马') is None
+    # CJK characters are word characters, so a \b after "km" would miss these.
+    assert parse_distance_km('3km路线') == 3.0
+    assert parse_distance_km('500m跑') == 0.5
+    # Sentence punctuation after the unit is common in chat input.
+    assert parse_distance_km('3km.') == 3.0
+    assert parse_distance_km('3 km。') == 3.0
+    assert parse_distance_km('500m.') == 0.5
+
+
+def test_intent_negation_and_distance_priority(tmp_path):
+    tools, calls = _make_fake_tools(templates=2)
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+    previews_before = sum(1 for c in calls if c[0] == 'preview')
+
+    # Negated intents must not cancel or reverse the route.
+    res = session.message('不要取消')
+    assert res['state'] == 'wait_confirm'
+    res = session.message('不要再取消')
+    assert res['state'] == 'wait_confirm'
+    res = session.message('别反向')
+    assert res['state'] == 'wait_confirm'
+    assert sum(1 for c in calls if c[0] == 'preview') == previews_before
+
+    # "算了，跑3公里" is a new target, not a cancellation.
+    res = session.message('算了，跑3公里')
+    assert res['state'] == 'wait_confirm'
+    assert res['goal']['km'] == 3.0
+
+    # "打算了解" contains the substring "算了" but is not a cancel filler.
+    res = session.message('打算了解3公里')
+    assert res['state'] == 'wait_confirm'
+    assert res['goal']['km'] == 3.0
+
+    # A new distance is the primary intent even when "换一条" is present.
+    res = session.message('换一条3公里')
+    assert res['state'] == 'wait_confirm'
+    assert res['goal']['km'] == 3.0
+    assert res['error'] == ''
+
+    # A short "取消3公里" still means cancel.
+    res = session.message('取消3公里')
+    assert res['state'] == 'cancelled'
+
+    # The standalone filler still cancels.
+    tools2, _ = _make_fake_tools(templates=2)
+    session2 = AgentSession(tools2, str(tmp_path), '1001:2002')
+    session2.start('帮我跑 2.5 公里')
+    _wait_terminal(session2)
+    assert session2.message('算了')['state'] == 'cancelled'
+
+
+def test_distance_and_select_nth_in_one_message(tmp_path):
+    tools, calls = _make_fake_tools(templates=2)
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    _wait_terminal(session)
+
+    res = session.message('跑3公里，用第2条')
+    assert res['state'] == 'wait_confirm'
+    assert res['goal']['km'] == 3.0
+    assert res['selected'] == 'lr_cand0002'
+    assert any('第 2 条' in entry['text'] for entry in res['log'])
+
+
+def test_auto_rotates_to_next_candidate_when_audit_fails(tmp_path):
+    tools, calls = _make_fake_tools(templates=2)
+    audit_calls = {'n': 0}
+
+    def audit_first_fails(*args, **kwargs):
+        audit_calls['n'] += 1
+        calls.append(('audit', {'args': args, 'kwargs': kwargs}))
+        if audit_calls['n'] == 1:
+            return _ok({
+                'summary': {'ok': False, 'passed': 9, 'failed': 1, 'warned': 0},
+                'checks': [],
+            })
+        return _ok({
+            'summary': {'ok': True, 'passed': 10, 'failed': 0, 'warned': 0},
+            'checks': [],
+        })
+
+    tools['audit_run'] = audit_first_fails
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+    assert st['selected'] == 'lr_cand0002'
+    assert st['audit']['summary']['ok'] is True
+    apply_ids = [c[1]['template_id'] for c in calls if c[0] == 'apply']
+    assert apply_ids == ['lr_cand0001', 'lr_cand0002']
+    assert any('自动尝试下一条' in entry['text'] for entry in st['log'])
+    assert st['stats']['candidates_tried'] == 2
+
+
+def test_missing_audit_summary_is_an_error_not_a_pass(tmp_path):
+    tools, _ = _make_fake_tools(templates=2)
+    tools['audit_run'] = lambda *a, **kw: _ok({})
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'error'
+    assert '格式异常' in st['error']
+    conf = session.confirm()
+    assert conf['ok'] is False
+
+
+def test_transient_tool_error_retries_once(tmp_path):
+    tools, calls = _make_fake_tools(templates=2)
+    original = tools['route_memory_status']
+    state = {'n': 0}
+
+    def flaky_status():
+        state['n'] += 1
+        if state['n'] == 1:
+            calls.append(('status', {}))
+            return {'code': 500, 'message': '请求超时', 'data': None}
+        return original()
+
+    tools['route_memory_status'] = flaky_status
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+    assert state['n'] == 2
+    assert st['stats']['tool_retries'] == 1
+    assert any('自动重试' in entry['text'] for entry in st['log'])
+
+
+def test_invalid_suggest_payload_is_an_error(tmp_path):
+    tools, _ = _make_fake_tools(templates=2)
+    tools['route_memory_suggest'] = lambda **kw: _ok({
+        'candidates': {'not': 'a list'},
+        'status': 'ok',
+    })
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'error'
+    assert '候选列表' in st['error'] or '格式异常' in st['error']
+
+
+def test_llm_choice_that_is_far_below_top_score_is_rejected(tmp_path):
+    cands = _make_candidates()
+    cands[1]['score'] = 0.50
+    tools, _ = _make_fake_tools(
+        templates=2,
+        candidates=cands,
+        llm_choose=lambda c, m: 'lr_cand0002',
+    )
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+    assert st['selected'] == 'lr_cand0001'
+    assert st['llm']['used'] is False
+    assert '差距' in st['llm']['error']
+
+
+def test_explicit_select_is_not_silently_rotated(tmp_path):
+    tools, calls = _make_fake_tools(templates=2)
+    audit_calls = {'n': 0}
+
+    def audit_second_fails(*args, **kwargs):
+        audit_calls['n'] += 1
+        calls.append(('audit', {'args': args, 'kwargs': kwargs}))
+        ok = audit_calls['n'] == 1
+        return _ok({
+            'summary': {
+                'ok': ok,
+                'passed': 10 if ok else 9,
+                'failed': 0 if ok else 1,
+                'warned': 0,
+            },
+            'checks': [],
+        })
+
+    tools['audit_run'] = audit_second_fails
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    _wait_terminal(session)
+
+    res = session.message('用第2条')
+    assert res['state'] == 'wait_confirm'
+    assert res['selected'] == 'lr_cand0002'
+    assert res['audit']['summary']['ok'] is False
+    assert any('未自动替换' in entry['text'] for entry in res['log'])
+    apply_ids = [c[1]['template_id'] for c in calls if c[0] == 'apply']
+    assert apply_ids == ['lr_cand0001', 'lr_cand0002']
+    assert session.confirm()['ok'] is False
+
+
+def test_agent_stats_count_tool_and_llm_cache_hits(tmp_path):
+    tools, _ = _make_fake_tools(templates=2)
+    real_suggest = tools['route_memory_suggest']
+    real_apply = tools['route_memory_apply']
+
+    def cached_suggest(**kwargs):
+        res = real_suggest(**kwargs)
+        res['data']['cached'] = True
+        return res
+
+    def uncached_apply(template_id, km=2.5, points=None):
+        res = real_apply(template_id, km=km, points=points)
+        res['data']['cached'] = False
+        return res
+
+    tools['route_memory_suggest'] = cached_suggest
+    tools['route_memory_apply'] = uncached_apply
+    tools['llm_choose'] = lambda cands, target_m: {
+        'template_id': 'lr_cand0001',
+        'model': 'fake-model',
+        'error': '',
+        'cached': True,
+    }
+
+    session = AgentSession(tools, str(tmp_path), '1001:2002')
+    session.start('帮我跑 2.5 公里')
+    st = _wait_terminal(session)
+    assert st['state'] == 'wait_confirm'
+    assert st['stats']['cache_hits'] == 1
+    assert st['stats']['cache_misses'] == 1
+    assert st['stats']['llm_cache_hits'] == 1
+    assert st['stats']['llm_calls'] == 0
+    assert st['stats']['llm_cache_misses'] == 0
+
+
+def test_llm_choice_cache_returns_the_same_decision_without_a_second_call(
+        tmp_path, monkeypatch):
+    api = ReplicaApi('http://127.0.0.1:1', 'http://127.0.0.1:1', b'', str(tmp_path))
+    llm_settings.save(str(tmp_path), {
+        'enabled': True,
+        'protocol': 'ollama',
+        'base_url': 'http://127.0.0.1:11434/v1',
+        'model': 'qwen2.5:7b',
+    })
+    calls = {'chat': 0}
+
+    def fake_chat(settings, messages, proxies=None):
+        calls['chat'] += 1
+        return {
+            'ok': True,
+            'text': '2',
+            'error': '',
+            'latency_ms': 12,
+            'status': 200,
+            'error_kind': '',
+        }
+
+    monkeypatch.setattr(llm_client, 'chat', fake_chat)
+    tools = api._agent_build_tools()
+    cands = _make_candidates()
+
+    first = tools['llm_choose'](cands, 2500.0)
+    second = tools['llm_choose'](cands, 2500.0)
+    assert first['template_id'] == 'lr_cand0002'
+    assert first['cached'] is False
+    assert second['template_id'] == 'lr_cand0002'
+    assert second['cached'] is True
+    assert calls['chat'] == 1
+    assert first['prompt_sha256'] == second['prompt_sha256']

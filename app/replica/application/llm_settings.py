@@ -402,7 +402,8 @@ def build_choice_prompt(candidates: list[dict], target_m: float) -> list[dict]:
     target_rounded = round(float(target_m or 0))
     system_content = (
         '你是跑步路线选择助手。请根据各候选路线的统计指标选出最合适的一条。'
-        '只回复一个候选序号数字（例如 1），不要输出多余内容。'
+        '只回复一个候选序号数字（例如 1）；若所有候选都不合适，回复 0。'
+        '不要输出解释、单位或多余文字。'
     )
 
     lines = [f'目标距离：{target_rounded} 米', '候选路线列表：']
@@ -421,12 +422,15 @@ def build_choice_prompt(candidates: list[dict], target_m: float) -> list[dict]:
             missed_n = 0
         fence_ok = bool(cand.get('fence_ok', True))
         detour_m = round(float(cand.get('detour_m') or 0))
+        score = max(0.0, min(1.0, float(cand.get('score') or 0.0)))
+        coverage = max(0.0, min(1.0, float(cand.get('coverage') or 0.0)))
         fence_label = '围栏内' if fence_ok else '超围栏'
         lines.append(
             f'{idx}. 单圈 {lap_m} 米，需 {laps} 圈，样本 {samples} 次，'
-            f'漏点 {missed_n} 个，{fence_label}，绕行 {detour_m} 米'
+            f'漏点 {missed_n} 个，{fence_label}，绕行 {detour_m} 米，'
+            f'点位覆盖 {coverage * 100:.0f}%，综合评分 {score:.2f}'
         )
-    lines.append('请仅回复最佳候选的序号数字（如 1）。')
+    lines.append('请仅回复最佳候选的序号数字（如 1）；没有合适路线回复 0。')
 
     return [
         {'role': 'system', 'content': system_content},
@@ -435,13 +439,31 @@ def build_choice_prompt(candidates: list[dict], target_m: float) -> list[dict]:
 
 
 _EXPLICIT_CHOICE_RE = re.compile(
-    r'(?:第\s*(?<!-)(\d+)\s*[条个]?|'
-    r'(?:候选(?:路线)?|选项|选择|choice|option)\s*[:#：]?\s*(?<!-)(\d+))',
+    r'(?:第\s*(?<!-)([一二两三四五六七八九十\d]+)\s*[条个]?|'
+    r'(?:候选(?:路线)?|选项|选择|choice|option)\s*[:#：]?\s*'
+    r'(?<!-)([一二两三四五六七八九十\d]+))',
     re.IGNORECASE,
 )
-_BARE_INT_RE = re.compile(r'^\s*(\d+)\s*$')
-_LEADING_INT_RE = re.compile(r'^\s*(\d+)\s*[.、:：\s]')
+_BARE_INT_RE = re.compile(r'^\s*([一二两三四五六七八九十]+|\d+)\s*$')
+_LEADING_INT_RE = re.compile(
+    r'^\s*([一二两三四五六七八九十]+|\d+)\s*[.、:：\s]')
 _ANY_NUMBER_RE = re.compile(r'(?<![\w.-])(\d+)(?!\.\d)')
+
+_CN_CHOICE_DIGITS = {
+    '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+}
+
+
+def _choice_index(token: str) -> int | None:
+    token = str(token or '').strip()
+    if not token:
+        return None
+    if token.isdigit():
+        return int(token)
+    if token in _CN_CHOICE_DIGITS:
+        return _CN_CHOICE_DIGITS[token]
+    return None
 
 
 def _pick_candidate_id(idx: int, candidates: list[dict]) -> str | None:
@@ -474,10 +496,8 @@ def _parse_json_choice(text: str) -> int | None:
             val = obj[key]
             if isinstance(val, bool):
                 return -1
-            try:
-                return int(val)
-            except (TypeError, ValueError):
-                return -1
+            idx = _choice_index(str(val))
+            return idx if idx is not None else -1
     return None
 
 
@@ -495,16 +515,18 @@ def parse_choice(text: str, candidates: list[dict]) -> str | None:
 
     m = _BARE_INT_RE.match(s)
     if m:
-        return _pick_candidate_id(int(m.group(1)), candidates)
+        idx = _choice_index(m.group(1))
+        return _pick_candidate_id(idx, candidates) if idx is not None else None
 
     m = _EXPLICIT_CHOICE_RE.search(s)
     if m:
-        num = m.group(1) or m.group(2)
-        return _pick_candidate_id(int(num), candidates)
+        idx = _choice_index(m.group(1) or m.group(2))
+        return _pick_candidate_id(idx, candidates) if idx is not None else None
 
     m = _LEADING_INT_RE.match(s)
     if m:
-        return _pick_candidate_id(int(m.group(1)), candidates)
+        idx = _choice_index(m.group(1))
+        return _pick_candidate_id(idx, candidates) if idx is not None else None
 
     nums = _ANY_NUMBER_RE.findall(s)
     if len(nums) == 1 and '-' not in s:

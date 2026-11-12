@@ -354,6 +354,60 @@ def test_suggest_empty_weak_and_fence_shapes(tmp_path, monkeypatch):
     assert res_far['data']['message']
 
 
+def test_suggest_and_apply_caches_hit_and_invalidate(tmp_path, monkeypatch):
+    api = _api(tmp_path)
+    acct = _acct()
+    api._real_account = lambda: acct
+    _seed_ok_memory(api, acct)
+
+    calls = {'suggest': 0, 'apply': 0}
+    real_suggest = RM.suggest
+    real_apply = RM.apply_template
+
+    def counting_suggest(*args, **kwargs):
+        calls['suggest'] += 1
+        return real_suggest(*args, **kwargs)
+
+    def counting_apply(*args, **kwargs):
+        calls['apply'] += 1
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(RM, 'suggest', counting_suggest)
+    monkeypatch.setattr(RM, 'apply_template', counting_apply)
+
+    fence = [[
+        [22.405, 112.935],
+        [22.405, 112.945],
+        [22.415, 112.945],
+        [22.415, 112.935],
+    ]]
+    points = [{'lat': 22.411, 'lng': 112.941, 'isMustPoint': True}]
+
+    first = api.real_route_memory_suggest(km=2.5, points=points, fence=fence)
+    second = api.real_route_memory_suggest(km=2.5, points=points, fence=fence)
+    assert first['code'] == 200 and second['code'] == 200
+    assert calls['suggest'] == 1
+    assert first['data']['cached'] is False
+    assert second['data']['cached'] is True
+    assert first['data']['candidates'][0]['template_id'] == \
+        second['data']['candidates'][0]['template_id']
+
+    template_id = first['data']['candidates'][0]['template_id']
+    apply_first = api.real_route_memory_apply(template_id, km=2.5, points=points)
+    apply_second = api.real_route_memory_apply(template_id, km=2.5, points=points)
+    assert apply_first['code'] == 200 and apply_second['code'] == 200
+    assert calls['apply'] == 1
+    assert apply_first['data']['cached'] is False
+    assert apply_second['data']['cached'] is True
+
+    # Re-saving the memory changes the revision marker and must invalidate.
+    time.sleep(0.01)
+    _seed_ok_memory(api, acct)
+    third = api.real_route_memory_suggest(km=2.5, points=points, fence=fence)
+    assert third['data']['cached'] is False
+    assert calls['suggest'] == 2
+
+
 def test_apply_save_dedupe_and_clear(tmp_path):
     api = _api(tmp_path)
     acct = _acct()

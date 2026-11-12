@@ -66,6 +66,9 @@ _WHITELIST_INT_KEYS = frozenset({
     'count', 'samples', 'usable', 'seen', 'skipped', 'templates',
     'candidates', 'points', 'waypoints', 'laps', 'missed', 'passed',
     'failed', 'warned', 'index', 'latency_ms', 'run_area_id',
+    'tool_calls', 'tool_retries', 'cache_hits', 'cache_misses',
+    'llm_calls', 'llm_cache_hits', 'llm_cache_misses',
+    'attempts', 'preferred',
 })
 _WHITELIST_METRE_KEYS = frozenset({
     'lap_m', 'target_m', 'detour_m', 'avg_distance_m',
@@ -73,6 +76,7 @@ _WHITELIST_METRE_KEYS = frozenset({
 _WHITELIST_FLOAT_KEYS = frozenset({'km', 'score', 'coverage'})
 _WHITELIST_BOOL_KEYS = frozenset({
     'ok', 'closed', 'cached', 'used', 'audit_ok', 'fence_ok', 'reversed', 'force',
+    'retried',
 })
 _WHITELIST_STR_KEYS = frozenset({
     'template_id', 'selected', 'status', 'phase', 'verdict', 'model',
@@ -85,11 +89,14 @@ _KV_SECRET_RE = re.compile(
 )
 
 _DIST_ARABIC_KM_RE = re.compile(
-    r'(?<!\d)(\d+(?:\.\d+)?)\s*(?:公里|千米|km)\b',
+    # Do not use \b here: Python treats CJK characters as word characters, so
+    # "3km路线" would fail to match.  Only reject a following digit/dot so the
+    # number itself stays unambiguous.
+    r'(?<!\d)(\d+(?:\.\d+)?)\s*(?:公里|千米|km(?![A-Za-z0-9]))',
     re.IGNORECASE,
 )
 _DIST_ARABIC_M_RE = re.compile(
-    r'(?<!\d)(\d+(?:\.\d+)?)\s*(?:米|m)\b',
+    r'(?<!\d)(\d+(?:\.\d+)?)\s*(?:米|m(?![A-Za-z0-9]))',
     re.IGNORECASE,
 )
 _DIST_BARE_RUN_RE = re.compile(r'跑\s*(\d+(?:\.\d+)?)\s*$')
@@ -109,6 +116,50 @@ _DIST_CN_INT_RE = re.compile(
 _SELECT_N_RE = re.compile(
     r'(?:用|选|选择)?\s*第\s*([一二两三四五六七八九十\d]+)\s*[条个]'
 )
+
+# A phrase only counts as an intent when it is not negated.  Chinese negation
+# is short and usually sits directly in front of the verb ("不要取消").
+_NEGATION_PREFIXES = (
+    '不', '别', '不要', '不用', '不想', '先不', '先别', '别再',
+    '不要再', '不用再', '不太想', '先不要',
+)
+
+
+def _intent_present(text: str, *phrases: str) -> bool:
+    """Return True when at least one phrase occurs without a negation prefix."""
+    msg = str(text or '')
+    for phrase in phrases:
+        start = 0
+        while True:
+            idx = msg.find(phrase, start)
+            if idx < 0:
+                break
+            prefix = msg[max(0, idx - 3):idx]
+            if not any(prefix.endswith(neg) for neg in _NEGATION_PREFIXES):
+                return True
+            start = idx + len(phrase)
+    return False
+
+
+# "算了" is also a substring of "打算了解"; only a standalone filler counts.
+_CANCEL_FILLER_RE = re.compile(r'(?:^|[，,。！!\s])算了(?:$|[，,。！!\s])')
+_CANCEL_ACTION_PHRASES = (
+    '换一条', '下一条', '换一个', '反向', '反着跑',
+    '重新学习', '再学一次', '确认', '就这条',
+)
+
+
+def _wants_cancel(text: str, new_km: float | None) -> bool:
+    """Cancel is explicit, but "算了，跑3公里" is a new target, not a cancel."""
+    if _intent_present(text, '取消'):
+        return True
+    if not _CANCEL_FILLER_RE.search(str(text or '')):
+        return False
+    if new_km is not None:
+        return False
+    if any(_intent_present(text, phrase) for phrase in _CANCEL_ACTION_PHRASES):
+        return False
+    return True
 
 
 class AgentError(RuntimeError):
@@ -157,6 +208,26 @@ def _valid_km(value: float | None) -> float | None:
     if value < MIN_KM or value > MAX_KM:
         return None
     return round(float(value), 2)
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    """Tool payloads are untrusted; a malformed count must not kill the thread."""
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        num = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return num if math.isfinite(num) else default
 
 
 def parse_distance_km(text: str) -> float | None:
@@ -336,6 +407,19 @@ def _format_tool_error(msg: str, owner: str = '') -> str:
     return clean
 
 
+def _empty_stats() -> dict:
+    return {
+        'tool_calls': 0,
+        'tool_retries': 0,
+        'cache_hits': 0,
+        'cache_misses': 0,
+        'llm_calls': 0,
+        'llm_cache_hits': 0,
+        'llm_cache_misses': 0,
+        'candidates_tried': 0,
+    }
+
+
 def _idle_status(session_id: str = '') -> dict:
     return {
         'session_id': session_id,
@@ -347,6 +431,7 @@ def _idle_status(session_id: str = '') -> dict:
         'preview': None,
         'audit': None,
         'llm': {'used': False, 'model': '', 'error': ''},
+        'stats': _empty_stats(),
         'error': '',
         'fallback': '',
         'updated_at_ms': 0,
@@ -380,6 +465,7 @@ class AgentSession:
         self._fence: Any = None
         self._run_area_id: Any = None
         self._force_learn = False
+        self._prefer_index: int | None = None
 
         self._goal: dict[str, Any] = {'km': None, 'points': 0, 'run_area_id': None}
         self._log: list[dict[str, Any]] = []
@@ -392,6 +478,7 @@ class AgentSession:
         self._audit_ok = False
         self._preview_args: dict | None = None
         self._llm: dict[str, Any] = {'used': False, 'model': '', 'error': ''}
+        self._stats: dict[str, int] = _empty_stats()
         self._error = ''
         self._fallback = ''
         self._updated_at_ms = 0
@@ -417,9 +504,16 @@ class AgentSession:
             'tool': str(tool or ''),
             'data': _whitelist_data(data, owner=self.owner),
         }
-        self._log.append(entry)
-        if len(self._log) > MAX_LOG_ENTRIES:
-            self._log = self._log[-MAX_LOG_ENTRIES:]
+        with self._lock:
+            self._log.append(entry)
+            if len(self._log) > MAX_LOG_ENTRIES:
+                self._log = self._log[-MAX_LOG_ENTRIES:]
+
+    def _bump_stats(self, **fields: int) -> None:
+        with self._lock:
+            for key, value in fields.items():
+                if key in self._stats:
+                    self._stats[key] += int(value)
 
     def _write_trace(
         self,
@@ -475,7 +569,24 @@ class AgentSession:
             trace_detail['error'] = clean
             self._write_trace('error', tool or 'error', False, trace_detail)
 
-    def _call_tool(self, name: str, *args, **kwargs) -> dict:
+    @staticmethod
+    def _is_transient_error(res: dict) -> bool:
+        """Only retry errors that are plausibly temporary.
+
+        Token/authorization failures are terminal: retrying them just burns
+        time and produces a second identical error.
+        """
+        msg = str(res.get('message') or res.get('error') or '').lower()
+        if any(k in msg for k in ('token', 'unauthorized', '401', '403',
+                                  '未登录', '重新登录', '失效')):
+            return False
+        return any(k in msg for k in (
+            '超时', 'timeout', 'timed out', '网络', 'network', '连接',
+            'connection', '503', '502', '504', '429', '繁忙', 'busy',
+            'temporarily', '稍后重试',
+        ))
+
+    def _call_tool_once(self, name: str, *args, **kwargs) -> dict:
         fn = self._tools.get(name)
         if not callable(fn):
             return {'code': 500, 'message': f'工具不可用: {name}', 'data': None}
@@ -486,6 +597,32 @@ class AgentSession:
         if not isinstance(res, dict):
             return {'code': 500, 'message': f'{name} 返回格式无效', 'data': None}
         return res
+
+    def _call_tool(self, name: str, *args, **kwargs) -> dict:
+        """Call one bridge tool, retrying a single transient failure."""
+        for attempt in (1, 2):
+            res = self._call_tool_once(name, *args, **kwargs)
+            self._bump_stats(tool_calls=1)
+            if res.get('code') == 200:
+                data = res.get('data')
+                if isinstance(data, dict) and 'cached' in data:
+                    if data.get('cached'):
+                        self._bump_stats(cache_hits=1)
+                    else:
+                        self._bump_stats(cache_misses=1)
+                return res
+            if attempt == 1 and self._is_transient_error(res):
+                self._bump_stats(tool_retries=1)
+                self._append_log(
+                    'warn',
+                    f'{name} 暂时失败，正在自动重试',
+                    tool=name,
+                    data={'retried': True},
+                )
+                time.sleep(0.15)
+                continue
+            return res
+        return {'code': 500, 'message': f'{name} 调用失败', 'data': None}
 
     def _safe_llm_model(self) -> str:
         if not self.store_dir:
@@ -518,6 +655,7 @@ class AgentSession:
                 'preview': dict(self._preview) if isinstance(self._preview, dict) else self._preview,
                 'audit': dict(self._audit) if isinstance(self._audit, dict) else self._audit,
                 'llm': dict(self._llm),
+                'stats': dict(self._stats),
                 'error': self._error,
                 'fallback': self._fallback,
                 'updated_at_ms': self._updated_at_ms,
@@ -548,6 +686,7 @@ class AgentSession:
             self._run_area_id = run_area_id
             self._force_learn = ('重新学习' in self._text or '再学一次' in self._text
                                  or '先学习' in self._text)
+            self._prefer_index = None
 
             self._goal = {
                 'km': None,
@@ -564,6 +703,7 @@ class AgentSession:
             self._audit_ok = False
             self._preview_args = None
             self._llm = {'used': False, 'model': '', 'error': ''}
+            self._stats = _empty_stats()
             self._error = ''
             self._fallback = ''
             self._updated_at_ms = _now_ms()
@@ -610,6 +750,8 @@ class AgentSession:
                 if force_learn_override is None
                 else bool(force_learn_override)
             )
+            prefer_index = self._prefer_index
+            self._prefer_index = None
 
         # 1. collect: parse km
         if raw_km is not None:
@@ -670,9 +812,18 @@ class AgentSession:
                 )
                 return
 
-            status_data = status_env.get('data') or {}
-            summary = status_data.get('summary') or {}
-            tpl_count = int(
+            status_data = status_env.get('data')
+            if (not isinstance(status_data, dict)
+                    or not isinstance(status_data.get('summary'), dict)):
+                self._set_error(
+                    gen,
+                    cancel_event,
+                    '路线状态返回格式异常，请稍后重试',
+                    tool='route_memory_status',
+                )
+                return
+            summary = status_data['summary']
+            tpl_count = _as_int(
                 summary.get('templates')
                 if summary.get('templates') is not None
                 else len(status_data.get('templates') or [])
@@ -718,9 +869,18 @@ class AgentSession:
                         tool='route_memory_learn',
                     )
                     return
-                learn_data = learn_env.get('data') or {}
-                summary = learn_data.get('summary') or {}
-                tpl_count = int(
+                learn_data = learn_env.get('data')
+                if (not isinstance(learn_data, dict)
+                        or not isinstance(learn_data.get('summary'), dict)):
+                    self._set_error(
+                        gen,
+                        cancel_event,
+                        '路线学习结果格式异常，请稍后重试',
+                        tool='route_memory_learn',
+                    )
+                    return
+                summary = learn_data['summary']
+                tpl_count = _as_int(
                     summary.get('templates')
                     if summary.get('templates') is not None
                     else len(learn_data.get('templates') or [])
@@ -803,8 +963,34 @@ class AgentSession:
             )
             return
 
-        suggest_data = suggest_env.get('data') or {}
-        candidates = list(suggest_data.get('candidates') or [])
+        suggest_data = suggest_env.get('data')
+        if not isinstance(suggest_data, dict):
+            self._set_error(
+                gen,
+                cancel_event,
+                '推荐结果格式异常，请稍后重试',
+                tool='route_memory_suggest',
+            )
+            return
+        raw_candidates = suggest_data.get('candidates')
+        if raw_candidates is None:
+            raw_candidates = []
+        if not isinstance(raw_candidates, list):
+            self._set_error(
+                gen,
+                cancel_event,
+                '推荐结果缺少候选列表，请稍后重试',
+                tool='route_memory_suggest',
+            )
+            return
+        candidates = [c for c in raw_candidates if isinstance(c, dict)]
+        if len(candidates) != len(raw_candidates):
+            self._append_log(
+                'warn',
+                '推荐结果里有无效候选，已忽略',
+                tool='route_memory_suggest',
+                data={'candidates': len(candidates), 'count': len(raw_candidates)},
+            )
         s_status = str(suggest_data.get('status') or 'ok')
 
         if s_status == 'weak' or not candidates:
@@ -861,7 +1047,37 @@ class AgentSession:
         selected_id = valid_ids[0]
         llm_info: dict[str, Any] = {'used': False, 'model': '', 'error': ''}
         target_m = round(km_val * 1000.0, 1)
+
+        if prefer_index is not None:
+            if 1 <= prefer_index <= len(valid_ids):
+                selected_id = valid_ids[prefer_index - 1]
+                with self._lock:
+                    if self._is_stale(gen, cancel_event):
+                        return
+                    self._append_log(
+                        'info',
+                        f'按你的选择使用第 {prefer_index} 条候选路线',
+                        tool='message',
+                        data={'index': prefer_index, 'template_id': selected_id},
+                    )
+            else:
+                with self._lock:
+                    if self._is_stale(gen, cancel_event):
+                        return
+                    self._append_log(
+                        'warn',
+                        f'新候选只有 {len(valid_ids)} 条，第 {prefer_index} 条无效，已按评分排序',
+                        tool='message',
+                        data={'index': prefer_index, 'candidates': len(valid_ids)},
+                    )
+
+        pinned = prefer_index is not None and 1 <= prefer_index <= len(valid_ids)
         llm_fn = self._tools.get('llm_choose')
+
+        # An explicit "用第 N 条" is a user decision; do not let the model
+        # override it.  The LLM is only a tie-breaker for the normal flow.
+        if pinned:
+            llm_fn = None
 
         if callable(llm_fn):
             prompt_sha = ''
@@ -870,6 +1086,7 @@ class AgentSession:
             except Exception as exc:  # noqa: BLE001
                 err_txt = _sanitize_text(str(exc), owner=self.owner) or 'LLM 调用失败'
                 llm_info = {'used': False, 'model': '', 'error': err_txt}
+                self._bump_stats(llm_calls=1, llm_cache_misses=1)
                 with self._lock:
                     if self._is_stale(gen, cancel_event):
                         return
@@ -893,34 +1110,79 @@ class AgentSession:
                     model = str(picked.get('model') or '')
                     err_txt = _sanitize_text(picked.get('error') or '', owner=self.owner)
                     prompt_sha = str(picked.get('prompt_sha256') or '')
+                    cached = bool(picked.get('cached'))
                 else:
                     cand_id = str(picked or '').strip()
                     model = ''
                     err_txt = ''
+                    cached = False
+
+                if cached:
+                    self._bump_stats(llm_cache_hits=1)
+                else:
+                    self._bump_stats(llm_calls=1, llm_cache_misses=1)
 
                 if cand_id and cand_id in valid_ids:
-                    selected_id = cand_id
-                    if not model:
-                        model = self._safe_llm_model()
-                    if not prompt_sha:
-                        prompt_sha = self._safe_prompt_sha256(candidates, target_m)
-                    llm_info = {'used': True, 'model': model, 'error': ''}
-                    with self._lock:
-                        if self._is_stale(gen, cancel_event):
-                            return
-                        self._append_log(
-                            'info',
-                            f'已选定候选路线 {selected_id}',
-                            tool='llm_choose',
-                            data={'used': True, 'template_id': selected_id, 'model': model},
-                        )
-                        self._write_trace(
-                            'suggest',
-                            'llm_choose',
-                            True,
-                            {'used': True, 'template_id': selected_id, 'model': model},
-                            prompt_sha256=prompt_sha or None,
-                        )
+                    # The local score already encodes coverage, distance fit,
+                    # freshness and detour.  If the model wanders far below the
+                    # top candidate, treat it as a bad tool result rather than
+                    # silently loading a much worse route.
+                    chosen_score = next(
+                        (_as_float(c.get('score')) for c in candidates
+                         if str(c.get('template_id') or '') == cand_id),
+                        0.0,
+                    )
+                    top_score = _as_float(candidates[0].get('score'))
+                    gap = top_score - chosen_score
+                    if gap > 0.15:
+                        selected_id = valid_ids[0]
+                        llm_info = {
+                            'used': False,
+                            'model': model,
+                            'error': f'模型选择与本地评分差距过大（{gap:.2f}），已回退',
+                        }
+                        with self._lock:
+                            if self._is_stale(gen, cancel_event):
+                                return
+                            self._append_log(
+                                'warn',
+                                '模型选择与本地评分差距过大，已回退到本地推荐第 1 条',
+                                tool='llm_choose',
+                                data={'used': False, 'selected': selected_id,
+                                      'cached': cached, 'error': llm_info['error']},
+                            )
+                            self._write_trace(
+                                'suggest',
+                                'llm_choose',
+                                False,
+                                {'used': False, 'selected': selected_id,
+                                 'cached': cached, 'error': llm_info['error']},
+                            )
+                    else:
+                        selected_id = cand_id
+                        if not model:
+                            model = self._safe_llm_model()
+                        if not prompt_sha:
+                            prompt_sha = self._safe_prompt_sha256(candidates, target_m)
+                        llm_info = {'used': True, 'model': model, 'error': ''}
+                        with self._lock:
+                            if self._is_stale(gen, cancel_event):
+                                return
+                            self._append_log(
+                                'info',
+                                f'已选定候选路线 {selected_id}',
+                                tool='llm_choose',
+                                data={'used': True, 'template_id': selected_id,
+                                      'model': model, 'cached': cached},
+                            )
+                            self._write_trace(
+                                'suggest',
+                                'llm_choose',
+                                True,
+                                {'used': True, 'template_id': selected_id,
+                                 'model': model, 'cached': cached},
+                                prompt_sha256=prompt_sha or None,
+                            )
                 elif cand_id:
                     llm_info = {
                         'used': False,
@@ -970,7 +1232,10 @@ class AgentSession:
             self._llm = llm_info
 
         # 5-8. adapt -> preview -> audit -> wait_confirm
-        self._adapt_preview_audit(gen, cancel_event, selected_id, km_val, points)
+        self._adapt_preview_audit(
+            gen, cancel_event, selected_id, km_val, points,
+            allow_rotation=not pinned,
+        )
 
     def _adapt_preview_audit(
         self,
@@ -980,14 +1245,173 @@ class AgentSession:
         km_val: float,
         points: list[dict],
         reversed_override: tuple[list[list[float]], bool] | None = None,
+        allow_rotation: bool = True,
     ) -> None:
+        """Try the chosen candidate, then the other suggestions, until audit passes.
+
+        A route can fail the local audit for reasons the scorer cannot see
+        (e.g. one segment crosses a gate).  Silently stopping on the first
+        failure wastes a good second candidate, so the Agent rotates through
+        at most three candidates and keeps the first audited result.  An
+        explicit "用第 N 条" is a user decision, so it opts out of rotation.
+        """
         if self._is_stale(gen, cancel_event):
             return
+
+        if reversed_override is not None or not allow_rotation:
+            plan = [template_id]
+        else:
+            plan = [template_id]
+            for cand in self._candidates:
+                tid = str(cand.get('template_id') or '')
+                if tid and tid not in plan:
+                    plan.append(tid)
+            plan = plan[:3]
+
+        last_error = ''
+        last_audited_id = ''
+        attempts = 0
+
+        for idx, tid in enumerate(plan):
+            if idx > 0:
+                failed_id = plan[idx - 1]
+                failed_ord = next(
+                    (i + 1 for i, c in enumerate(self._candidates)
+                     if str(c.get('template_id') or '') == failed_id),
+                    0,
+                )
+                label = f'第 {failed_ord} 条候选' if failed_ord else '当前候选'
+                with self._lock:
+                    if self._is_stale(gen, cancel_event):
+                        return
+                    self._append_log(
+                        'warn',
+                        f'{label}不可用，正在自动尝试下一条',
+                        tool='audit_run',
+                        data={'attempts': idx, 'template_id': tid},
+                    )
+                    # The model's original pick did not survive the local
+                    # checks.  Do not keep claiming the model chose the final
+                    # route; the transcript already explains the rotation.
+                    if self._llm.get('used'):
+                        self._llm = {
+                            'used': False,
+                            'model': self._llm.get('model', ''),
+                            'error': '模型选的候选未通过本地检查，已自动换一条',
+                        }
+            status, message = self._attempt_candidate(
+                gen,
+                cancel_event,
+                tid,
+                km_val,
+                points,
+                reversed_override=reversed_override if idx == 0 else None,
+            )
+            if status in ('stale', 'error'):
+                return
+            attempts += 1
+            if status == 'candidate_failed':
+                last_error = message
+                continue
+            last_audited_id = tid
+            if status == 'ok':
+                break
+
+        self._bump_stats(candidates_tried=attempts)
+
+        if not last_audited_id:
+            self._set_error(
+                gen,
+                cancel_event,
+                last_error or '所有候选路线都适配失败，请换一个目标距离',
+                tool='preview_route',
+                fallback='auto',
+            )
+            return
+
+        self._finalize_wait_confirm(
+            gen, cancel_event, last_audited_id, km_val, points, attempts,
+            pinned=not allow_rotation,
+        )
+
+    def _finalize_wait_confirm(
+        self,
+        gen: int,
+        cancel_event: threading.Event | None,
+        template_id: str,
+        km_val: float,
+        points: list[dict],
+        attempts: int,
+        pinned: bool = False,
+    ) -> None:
+        with self._lock:
+            if self._is_stale(gen, cancel_event):
+                return
+            waypoints = [list(p) for p in self._waypoints]
+            closed = bool(self._closed)
+            self._selected = template_id
+            self._preview_args = {
+                'km': km_val,
+                'pace': 6.0,
+                'cadence': 150,
+                'waypoints': waypoints,
+                'closed': closed,
+                'checkpoints': list(points) if points else [],
+            }
+            self._state = 'wait_confirm'
+            self._error = ''
+            self._fallback = ''
+            self._updated_at_ms = _now_ms()
+            if self._audit_ok:
+                text = '已准备好路线，请确认后前往跑步页预览'
+                level = 'info'
+            elif pinned:
+                text = '你选择的候选未通过本地检查；未自动替换，请换一条或调整目标距离'
+                level = 'warn'
+            else:
+                text = f'已尝试 {attempts} 条候选，均未通过本地检查；请调整目标距离或点位'
+                level = 'warn'
+            self._append_log(
+                level,
+                text,
+                tool='wait_confirm',
+                data={
+                    'km': km_val,
+                    'closed': closed,
+                    'waypoints': len(waypoints),
+                    'attempts': attempts,
+                    'template_id': template_id,
+                },
+            )
+            self._write_trace(
+                'wait_confirm',
+                'wait_confirm',
+                True,
+                {
+                    'km': km_val,
+                    'closed': closed,
+                    'waypoints': len(waypoints),
+                    'attempts': attempts,
+                    'audit_ok': self._audit_ok,
+                },
+            )
+
+    def _attempt_candidate(
+        self,
+        gen: int,
+        cancel_event: threading.Event | None,
+        template_id: str,
+        km_val: float,
+        points: list[dict],
+        reversed_override: tuple[list[list[float]], bool] | None = None,
+    ) -> tuple[str, str]:
+        if self._is_stale(gen, cancel_event):
+            return 'stale', ''
 
         # 5. adapt
         with self._lock:
             if self._is_stale(gen, cancel_event):
-                return
+                return 'stale', ''
             self._state = 'adapt'
             self._selected = template_id
             self._updated_at_ms = _now_ms()
@@ -1000,31 +1424,24 @@ class AgentSession:
                 points=points,
             )
             if self._is_stale(gen, cancel_event):
-                return
+                return 'stale', ''
             if apply_env.get('code') != 200:
-                self._set_error(
-                    gen,
-                    cancel_event,
-                    apply_env.get('message') or '适配路线失败',
-                    tool='route_memory_apply',
-                )
-                return
-            applied = apply_env.get('data') or {}
-            if not applied.get('ok', True):
-                self._set_error(
-                    gen,
-                    cancel_event,
-                    applied.get('error') or '适配路线失败',
-                    tool='route_memory_apply',
-                )
-                return
-            waypoints = [list(p) for p in (applied.get('waypoints') or [])]
+                return 'candidate_failed', apply_env.get('message') or '适配路线失败'
+            applied = apply_env.get('data')
+            if not isinstance(applied, dict):
+                return 'candidate_failed', '适配结果格式异常'
+            if applied.get('ok') is False:
+                return 'candidate_failed', applied.get('error') or '适配路线失败'
+            raw_waypoints = applied.get('waypoints')
+            if not isinstance(raw_waypoints, list):
+                return 'candidate_failed', '适配结果缺少控制点'
+            waypoints = [list(p) for p in raw_waypoints]
+            if len(waypoints) < 2:
+                return 'candidate_failed', '适配结果控制点不足'
             closed = bool(applied.get('closed', True))
             with self._lock:
                 if self._is_stale(gen, cancel_event):
-                    return
-                self._waypoints = waypoints
-                self._closed = closed
+                    return 'stale', ''
                 self._append_log(
                     'info',
                     f'已适配路线（{len(waypoints)} 个控制点）',
@@ -1035,6 +1452,7 @@ class AgentSession:
                         'closed': closed,
                         'lap_m': applied.get('lap_m', 0),
                         'laps': applied.get('laps', 1),
+                        'cached': applied.get('cached', False),
                     },
                 )
                 self._write_trace(
@@ -1051,11 +1469,11 @@ class AgentSession:
                 )
         else:
             waypoints, closed = reversed_override
+            if len(waypoints) < 2:
+                return 'candidate_failed', '反向路线控制点不足'
             with self._lock:
                 if self._is_stale(gen, cancel_event):
-                    return
-                self._waypoints = [list(p) for p in waypoints]
-                self._closed = bool(closed)
+                    return 'stale', ''
                 self._append_log(
                     'info',
                     '已将闭环路线反向，正在重新生成预览',
@@ -1080,12 +1498,12 @@ class AgentSession:
                 )
 
         if self._is_stale(gen, cancel_event):
-            return
+            return 'stale', ''
 
         # 6. preview
         with self._lock:
             if self._is_stale(gen, cancel_event):
-                return
+                return 'stale', ''
             self._state = 'preview'
             self._updated_at_ms = _now_ms()
 
@@ -1099,22 +1517,22 @@ class AgentSession:
             checkpoints=points,
         )
         if self._is_stale(gen, cancel_event):
-            return
+            return 'stale', ''
         if preview_env.get('code') != 200:
-            self._set_error(
-                gen,
-                cancel_event,
-                preview_env.get('message') or '生成预览失败',
-                tool='preview_route',
-            )
-            return
+            return 'candidate_failed', preview_env.get('message') or '生成预览失败'
 
-        preview_data = preview_env.get('data') or {}
-        model_info = preview_data.get('model') if isinstance(preview_data, dict) else {}
-        verdict = (model_info or {}).get('verdict', '') if isinstance(model_info, dict) else ''
+        preview_data = preview_env.get('data')
+        if not isinstance(preview_data, dict):
+            return 'candidate_failed', '预览结果格式异常'
+        model_info = preview_data.get('model')
+        verdict = model_info.get('verdict', '') if isinstance(model_info, dict) else ''
         with self._lock:
             if self._is_stale(gen, cancel_event):
-                return
+                return 'stale', ''
+            # Only publish the candidate after the preview succeeded, so a
+            # failed retry cannot leave the UI showing a half-applied route.
+            self._waypoints = [list(p) for p in waypoints]
+            self._closed = bool(closed)
             self._preview = preview_data
             self._append_log(
                 'info',
@@ -1130,18 +1548,18 @@ class AgentSession:
             )
 
         if self._is_stale(gen, cancel_event):
-            return
+            return 'stale', ''
 
         # 7. audit (must be called with NO arguments so it audits _last_run)
         with self._lock:
             if self._is_stale(gen, cancel_event):
-                return
+                return 'stale', ''
             self._state = 'audit'
             self._updated_at_ms = _now_ms()
 
         audit_env = self._call_tool('audit_run')
         if self._is_stale(gen, cancel_event):
-            return
+            return 'stale', ''
         if audit_env.get('code') != 200:
             self._set_error(
                 gen,
@@ -1149,26 +1567,28 @@ class AgentSession:
                 audit_env.get('message') or '路线审计失败',
                 tool='audit_run',
             )
-            return
+            return 'error', ''
 
-        audit_data = audit_env.get('data') or {}
-        audit_summary = audit_data.get('summary') if isinstance(audit_data, dict) else {}
-        audit_ok = bool((audit_summary or {}).get('ok', True)) if isinstance(audit_summary, dict) else True
-        passed = int((audit_summary or {}).get('passed') or 0) if isinstance(audit_summary, dict) else 0
-        failed = int((audit_summary or {}).get('failed') or 0) if isinstance(audit_summary, dict) else 0
-
-        preview_args = {
-            'km': km_val,
-            'pace': 6.0,
-            'cadence': 150,
-            'waypoints': [list(p) for p in waypoints],
-            'closed': closed,
-            'checkpoints': list(points) if points else [],
-        }
+        audit_data = audit_env.get('data')
+        audit_summary = audit_data.get('summary') if isinstance(audit_data, dict) else None
+        # A missing summary used to be treated as "passed"; that is unsafe.
+        # Refuse to hand an unaudited route to the confirmation gate.
+        if (not isinstance(audit_summary, dict)
+                or not isinstance(audit_summary.get('ok'), bool)):
+            self._set_error(
+                gen,
+                cancel_event,
+                '审计结果格式异常，不能确认路线',
+                tool='audit_run',
+            )
+            return 'error', ''
+        audit_ok = bool(audit_summary.get('ok'))
+        passed = _as_int(audit_summary.get('passed'))
+        failed = _as_int(audit_summary.get('failed'))
 
         with self._lock:
             if self._is_stale(gen, cancel_event):
-                return
+                return 'stale', ''
             self._audit = audit_data
             self._audit_ok = audit_ok
             self._append_log(
@@ -1184,30 +1604,38 @@ class AgentSession:
                 {'audit_ok': audit_ok, 'passed': passed, 'failed': failed},
             )
 
-            # 8. wait_confirm
-            self._preview_args = preview_args
-            self._state = 'wait_confirm'
-            self._error = ''
-            self._fallback = ''
-            self._updated_at_ms = _now_ms()
-            self._append_log(
-                'info',
-                '已准备好路线，请确认后前往跑步页预览',
-                tool='wait_confirm',
-                data={'km': km_val, 'closed': closed, 'waypoints': len(waypoints)},
-            )
-            self._write_trace(
-                'wait_confirm',
-                'wait_confirm',
-                True,
-                {'km': km_val, 'closed': closed, 'waypoints': len(waypoints)},
-            )
+        return ('ok' if audit_ok else 'audit_failed'), ''
 
     def message(self, text: str) -> dict:
         msg = str(text or '').strip()
+        new_km = parse_distance_km(msg)
+        m_sel = _SELECT_N_RE.search(msg)
+        sel_idx = _cn_to_int(m_sel.group(1)) if m_sel else None
+
+        # Parse every intent before acting.  Substring checks on their own made
+        # "不要取消" cancel and "换一条3公里" ignore the new distance; explicit
+        # flags keep the tool call aligned with what the user actually asked.
+        wants_cancel = _wants_cancel(msg, new_km)
+        wants_confirm = _intent_present(
+            msg, '确认', '就这条', '就用这条', '可以了', '就这样')
+        wants_rotate = _intent_present(msg, '换一条', '下一条', '换一个')
+        wants_reverse = _intent_present(msg, '反向', '反着跑')
+        wants_relearn = _intent_present(msg, '重新学习', '再学一次')
+
+        m_mode = ''
+        tpl_id = ''
+        km_val = 0.0
+        points: list[dict] = []
+        gen = 0
+        cancel_event = None
+        rev_pair = None
+        skip_learn_flag = False
+
         with self._lock:
             state = self._state
-            if any(k in msg for k in ('取消', '算了')):
+            # Cancel wins unless it was negated ("不要取消") or "算了" is only
+            # filler before a new target ("算了，跑3公里").
+            if wants_cancel:
                 return self.cancel()
 
             if state in ('idle', 'cancelled', 'confirmed'):
@@ -1224,7 +1652,10 @@ class AgentSession:
                 self._updated_at_ms = _now_ms()
                 return self.status()
 
-            if any(k in msg for k in ('确认', '就这条')):
+            # A distance change and a confirmation cannot both be the primary
+            # intent; the distance wins so "确认3公里" does not confirm a stale
+            # 2.5 km plan.
+            if wants_confirm and new_km is None and not m_sel:
                 res = self.confirm()
                 if res.get('ok'):
                     snap = self.status()
@@ -1232,15 +1663,49 @@ class AgentSession:
                     return snap
                 return res
 
-            # 用第 N 条
-            m_sel = _SELECT_N_RE.search(msg)
-            if m_sel:
+            if new_km is not None:
+                gen = self._generation
+                cancel_event = self._cancel_event
+                self._raw_km = new_km
+                self._goal['km'] = new_km
+                self._state = 'suggest'
+                # "跑3公里，用第2条": remember the ordinal and apply it after
+                # the fresh suggestion list is available.  Out-of-range values
+                # fall back to the normal ranking with a warning.
+                self._prefer_index = (
+                    sel_idx if sel_idx is not None and 1 <= sel_idx <= 3 else None
+                )
+                self._candidates = []
+                self._selected = ''
+                self._waypoints = []
+                self._preview = None
+                self._audit = None
+                self._audit_ok = False
+                self._preview_args = None
+                if wants_relearn:
+                    m_mode = 'relearn'
+                    self._force_learn = True
+                else:
+                    m_mode = 'distance'
+                    skip_learn_flag = state == 'wait_confirm'
+                self._append_log(
+                    'info',
+                    f'收到新目标：{new_km:g} 公里',
+                    tool='collect',
+                    data={'km': new_km, 'preferred': self._prefer_index or 0},
+                )
+                if wants_rotate or wants_reverse:
+                    self._append_log(
+                        'info',
+                        '已按新目标重新推荐；换一条/反向会在新候选上重新计算',
+                        tool='message',
+                    )
+            elif m_sel:
                 if state != 'wait_confirm':
                     self._append_log('warn', '当前不在等待确认阶段，无法切换候选路线', tool='message')
                     self._updated_at_ms = _now_ms()
                     return self.status()
-                idx_num = _cn_to_int(m_sel.group(1))
-                if idx_num is None or idx_num < 1 or idx_num > len(self._candidates):
+                if sel_idx is None or sel_idx < 1 or sel_idx > len(self._candidates):
                     self._append_log(
                         'warn',
                         f'候选序号无效，目前有 {len(self._candidates)} 条候选',
@@ -1248,23 +1713,24 @@ class AgentSession:
                     )
                     self._updated_at_ms = _now_ms()
                     return self.status()
-                tpl_id = str(self._candidates[idx_num - 1].get('template_id') or '')
+                tpl_id = str(self._candidates[sel_idx - 1].get('template_id') or '')
                 km_val = float(self._goal.get('km') or 2.5)
                 points = list(self._points)
                 gen = self._generation
                 cancel_event = self._cancel_event
+                m_mode = 'select'
                 self._append_log(
                     'info',
-                    f'切换到第 {idx_num} 条候选路线',
+                    f'切换到第 {sel_idx} 条候选路线',
                     tool='message',
-                    data={'index': idx_num, 'template_id': tpl_id},
+                    data={'index': sel_idx, 'template_id': tpl_id},
                 )
                 self._state = 'adapt'
                 self._preview = None
                 self._audit = None
                 self._audit_ok = False
                 self._preview_args = None
-            elif any(k in msg for k in ('换一条', '下一条', '换一个')):
+            elif wants_rotate:
                 if state != 'wait_confirm':
                     self._append_log('warn', '当前不在等待确认阶段，不能换一条', tool='message')
                     self._updated_at_ms = _now_ms()
@@ -1284,6 +1750,7 @@ class AgentSession:
                 points = list(self._points)
                 gen = self._generation
                 cancel_event = self._cancel_event
+                m_mode = 'rotate'
                 self._append_log(
                     'info',
                     f'换用第 {nxt_idx + 1} 条候选路线',
@@ -1295,7 +1762,7 @@ class AgentSession:
                 self._audit = None
                 self._audit_ok = False
                 self._preview_args = None
-            elif any(k in msg for k in ('反向', '反着跑')):
+            elif wants_reverse:
                 if state != 'wait_confirm':
                     self._append_log('warn', '当前不在等待确认阶段，不能反向', tool='message')
                     self._updated_at_ms = _now_ms()
@@ -1331,7 +1798,7 @@ class AgentSession:
                 self._audit = None
                 self._audit_ok = False
                 self._preview_args = None
-            elif any(k in msg for k in ('重新学习', '再学一次')):
+            elif wants_relearn:
                 gen = self._generation
                 cancel_event = self._cancel_event
                 self._force_learn = True
@@ -1347,37 +1814,23 @@ class AgentSession:
                 self._audit_ok = False
                 self._preview_args = None
             else:
-                new_km = parse_distance_km(msg)
-                if new_km is not None:
-                    gen = self._generation
-                    cancel_event = self._cancel_event
-                    self._raw_km = new_km
-                    self._goal['km'] = new_km
-                    m_mode = 'distance'
-                    skip_learn_flag = state == 'wait_confirm'
-                    self._state = 'suggest'
-                    self._candidates = []
-                    self._selected = ''
-                    self._waypoints = []
-                    self._preview = None
-                    self._audit = None
-                    self._audit_ok = False
-                    self._preview_args = None
-                else:
-                    self._append_log(
-                        'info',
-                        '没听懂你的意思，想跑多少公里？（支持如“2.5公里”“换一条”“反向”“重新学习”“确认”“取消”）',
-                        tool='message',
-                    )
-                    self._updated_at_ms = _now_ms()
-                    return self.status()
+                self._append_log(
+                    'info',
+                    '没听懂你的意思，想跑多少公里？（支持如“2.5公里”“换一条”“反向”“重新学习”“确认”“取消”）',
+                    tool='message',
+                )
+                self._updated_at_ms = _now_ms()
+                return self.status()
 
         # Execute selected synchronous step outside lock
-        if m_sel or any(k in msg for k in ('换一条', '下一条', '换一个')):
-            self._adapt_preview_audit(gen, cancel_event, tpl_id, km_val, points)
+        if m_mode in ('select', 'rotate'):
+            self._adapt_preview_audit(
+                gen, cancel_event, tpl_id, km_val, points,
+                allow_rotation=(m_mode != 'select'),
+            )
             return self.status()
 
-        if 'm_mode' in locals() and m_mode == 'reverse':
+        if m_mode == 'reverse':
             self._adapt_preview_audit(
                 gen,
                 cancel_event,
@@ -1385,14 +1838,15 @@ class AgentSession:
                 km_val,
                 points,
                 reversed_override=rev_pair,
+                allow_rotation=False,
             )
             return self.status()
 
-        if 'm_mode' in locals() and m_mode == 'relearn':
+        if m_mode == 'relearn':
             self._run_pipeline(gen, cancel_event, skip_learn=False, force_learn_override=True)
             return self.status()
 
-        if 'm_mode' in locals() and m_mode == 'distance':
+        if m_mode == 'distance':
             self._run_pipeline(
                 gen,
                 cancel_event,
