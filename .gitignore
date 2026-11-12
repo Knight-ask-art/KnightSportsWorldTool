@@ -34,6 +34,8 @@ node_modules/
 go/hxp-guard/hxp-guard
 go/hxp-guard/hxp-guard.exe
 go/hxp-guard/data/
+go/hxp-launcher/hxp-launcher
+go/hxp-launcher/hxp-launcher.exe
 
 # C++ shield build artifacts (never commit the binary)
 cpp/hxp-shield/hxp-shield.exe
