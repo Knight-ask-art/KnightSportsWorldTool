@@ -127,12 +127,20 @@ claude mcp list | Select-String instabox
 版本号改完要先提交，脚本默认拒绝在脏工作区上打正式包：
 
 ```powershell
+# 0) 新构建机：把旧机器的 %USERPROFILE%\.hxp\manifest.key 拷过来；
+#    只有轮换密钥时才 keygen --force --apply（旧包会验签失败）
+
 # 先看参数，不编译
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2 -Plan
 
 # 预检 + 本地测试 + 编译 + 深度校验
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2
 ```
+
+打包时 `build.ps1` 会计算三层 native 的 SHA-256、写 `version=2` 的
+`runtime/integrity.json`、用构建机私钥签名，再用编译进程序的公钥验一遍；
+任一步失败直接终止。私钥丢了就换新公钥重新发版，旧包无法升级到新的
+manifest 体系，所以 `%USERPROFILE%\.hxp\manifest.key` 要备份。
 
 等价的手工命令：
 
@@ -156,7 +164,10 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
 2. `--no-window --port <port>` 登录页 200；
 3. zip 221 项左右，不含 `data/`、`*.py`、`*.pyc`；
 4. `installer.nsi` 前三字节是 `EF BB BF`；
-5. `latest.json` 的 zip / setup / rollback 各 4 个 URL。
+5. `latest.json` 的 zip / setup / rollback 各 4 个 URL；
+6. `dist/好想跑_v<version>/runtime/integrity.json` 有 `sig` 且能被
+   `MANIFEST_PUBKEY` 验过（`release_check --deep` 已包含这一项）；
+   对不上就说明用错了密钥或包是 `-Unsigned` 打的。
 
 ### 2.6 发布
 

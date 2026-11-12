@@ -72,8 +72,10 @@ def _candidates() -> list[str]:
         root = app_root()
         compiled = is_compiled()
     except Exception:  # noqa: BLE001 - build_info is optional at import time
+        # Fail closed: if we cannot tell whether this is a packaged build,
+        # assume it is, so an environment override cannot pick the sidecar.
         root = os.path.join(_repo_root(), 'app')
-        compiled = False
+        compiled = True
     # A path override is a developer aid.  In a frozen build it would let
     # anyone swap in a stub that always answers "ok", so it stays a source
     # checkout feature.
@@ -165,13 +167,14 @@ def require(store_dir: str) -> dict:
     Any exception is swallowed into the fixed message: a traceback here would
     otherwise leak a path or an internal layer name into the UI or a log.
     """
-    # A shipped sidecar whose bytes changed is either a damaged install or a
-    # patched one; both end in the same repair sentence.  This runs before the
-    # JHP_SHIELD switch: that switch skips the derivation for local debugging,
-    # it does not make a modified install valid.  Missing files are not tested
-    # here -- a quarantine is not tampering, and the layer check below already
-    # refuses a frozen build that cannot derive a credential.
-    damage = integrity.mismatch_message()
+    # An install whose manifest or signature does not check out, or whose
+    # sidecar bytes changed, is either damaged or patched; both end in the
+    # same repair sentence.  This runs before the JHP_SHIELD switch: that
+    # switch skips the derivation for local debugging, it does not make a
+    # modified install valid.  Missing files are not tested here -- a
+    # quarantine is not tampering, and the layer check below already refuses
+    # a frozen build that cannot derive a credential.
+    damage = integrity.tamper_message()
     if damage:
         return _blocked(damage)
 

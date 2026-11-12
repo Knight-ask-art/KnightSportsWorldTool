@@ -42,16 +42,21 @@ def _repo_root() -> str:
 
 def _candidates() -> list[str]:
     out: list[str] = []
-    explicit = os.environ.get('JHP_RUST_CORE_PATH')
-    if explicit:
-        out.append(explicit)
     try:
         from ..build_info import app_root, is_compiled
         root = app_root()
         compiled = is_compiled()
     except Exception:  # noqa: BLE001 - build_info is optional at import time
+        # Fail closed: if we cannot tell whether this is a packaged build,
+        # assume it is, so an environment override cannot pick the sidecar.
         root = os.path.join(_repo_root(), 'app')
-        compiled = False
+        compiled = True
+    # A path override is a developer aid.  In a frozen build it would let
+    # anyone swap in a stub, so it stays a source-checkout feature.
+    if not compiled:
+        explicit = os.environ.get('JHP_RUST_CORE_PATH')
+        if explicit:
+            out.append(explicit)
     out.append(os.path.join(root, 'runtime', 'rust', _EXE))
     if not compiled:
         out.append(os.path.join(_repo_root(), 'rust', 'hxp-core',

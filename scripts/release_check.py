@@ -97,6 +97,41 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def check_signing_key(report: Report) -> None:
+    """The public key is committed; the private key is not.  An empty constant
+    ships a build that refuses every login, so fail before compiling."""
+    text = (ROOT / 'app' / 'replica' / 'application' / 'integrity.py').read_text(
+        encoding='utf-8')
+    match = re.search(r"^MANIFEST_PUBKEY = '([0-9a-f]{64})'$", text, re.M)
+    report.check(bool(match), 'manifest public key',
+                 'embedded' if match else
+                 'missing; run python scripts/manifest_sign.py keygen --apply')
+
+
+def deep_integrity(report: Report, version: str) -> None:
+    """Verify the signature and hashes of the packaged install, not the source."""
+    install = ROOT / 'app' / 'dist' / f'好想跑_v{version}'
+    manifest = install / 'runtime' / 'integrity.json'
+    report.check(manifest.is_file(), 'deep integrity manifest',
+                 str(manifest.relative_to(ROOT)))
+    if not manifest.is_file():
+        return
+    sys.path.insert(0, str(ROOT / 'app'))
+    from replica.application import integrity as I
+    try:
+        doc = json.loads(manifest.read_text(encoding='utf-8'))
+    except ValueError as exc:
+        report.check(False, 'deep integrity parses', str(exc))
+        return
+    report.check(doc.get('version') == I.MANIFEST_VERSION,
+                 'deep integrity version', str(doc.get('version')))
+    out = I.check_native(manifest_path=str(manifest), root=str(install))
+    detail = 'ok' if out.get('ok') else json.dumps(
+        {k: out.get(k) for k in ('reason', 'missing', 'mismatch') if out.get(k)},
+        ensure_ascii=False)
+    report.check(out.get('ok') is True, 'deep integrity verify', detail)
+
+
 def deep_assets(report: Report, manifest: dict | None) -> None:
     if not manifest:
         return
@@ -175,6 +210,9 @@ def main(argv=None) -> int:
     report.check(f'VERSION "{version}"' in nsi_text,
                  'installer.nsi version', version)
 
+    # 2b. the shipping build must be able to sign its native manifest
+    check_signing_key(report)
+
     # 3. manifests that drive the updater (post-build only)
     if not args.source_only:
         check_manifest(report, ROOT / 'github-release' / 'latest.json',
@@ -183,7 +221,10 @@ def main(argv=None) -> int:
             report, ROOT / 'app' / 'dist' / 'latest.json',
             version, 'dist/latest.json')
         if args.deep:
+            report.check(dist_manifest is not None, 'deep dist manifest',
+                         'app/dist/latest.json')
             deep_assets(report, dist_manifest)
+            deep_integrity(report, version)
 
     # 4. release hygiene
     dirty = git('status', '--porcelain')

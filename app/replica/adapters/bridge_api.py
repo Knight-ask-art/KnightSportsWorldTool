@@ -48,6 +48,7 @@ from .bridge_common import (
     _ok,
     _read_json,
     _write_json,
+    integrity_message,
     plausibility_warnings,  # noqa: F401 - re-exported for tests
 )
 from .bridge_agent import AgentBridgeMixin
@@ -1106,6 +1107,9 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         return out
 
     def real_get_session(self):
+        message = integrity_message()
+        if message:
+            return _fail(message, code=403, data={'reason': 'integrity'})
         return _ok(self._public_session(self._read_session()))
 
     def real_set_session(self, uid=None, token=None, campusName=None,
@@ -1383,6 +1387,9 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         it to ``v70400``; the older ``v70100`` is kept as a 404-only fallback
         (see ``replica/transport/routes.py``).
         """
+        message = integrity_message()
+        if message:
+            return _fail(message, code=403, data={'reason': 'integrity'})
         try:
             acct = self._real_account()
         except DP.DeviceProfileError as e:
@@ -2664,10 +2671,11 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
     def real_integrity_status(self):
         """Native sidecar report for diagnostics and support.
 
-        ``mismatch`` also gates a login (``shield.require``); ``missing`` and
-        a bad manifest are reported but never block, because a quarantine or
-        an interrupted copy should not look like tampering.  ``selfcheck`` is
-        the sidecar's own debugger/image verdict and gates nothing.
+        ``mismatch`` and a bad/missing signature also gate login, session
+        restore and submit (``shield.require`` / ``bridge_common``); a missing
+        file is reported but never blocks, because a quarantine should not
+        look like tampering.  ``selfcheck`` is the sidecar's own
+        debugger/image verdict and gates nothing.
         """
         from ..application import integrity as I
         try:

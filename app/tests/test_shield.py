@@ -373,14 +373,14 @@ def test_require_returns_blocked_within_the_ttl_when_the_child_hangs(monkeypatch
 def test_a_changed_sidecar_blocks_before_any_layer_runs(monkeypatch):
     monkeypatch.setattr(shield, '_binaries',
                         lambda: pytest.fail('must not probe binaries'))
-    monkeypatch.setattr(shield.integrity, 'mismatch_message',
+    monkeypatch.setattr(shield.integrity, 'tamper_message',
                         lambda: shield.integrity.REPAIR_MESSAGE)
     assert shield.require('store') == {
         'blocked': True, 'message': shield.integrity.REPAIR_MESSAGE}
 
 
 def test_a_missing_sidecar_is_left_to_the_layer_check(monkeypatch):
-    monkeypatch.setattr(shield.integrity, 'mismatch_message', lambda: None)
+    monkeypatch.setattr(shield.integrity, 'tamper_message', lambda: None)
     monkeypatch.setattr(shield, '_binaries', lambda: (None, None, None))
     monkeypatch.setattr(shield, '_is_frozen', lambda: False)
     assert shield.require('store') == {'allowed': True, 'skipped': True}
@@ -390,7 +390,7 @@ def test_jhp_shield_zero_does_not_hide_a_changed_sidecar(monkeypatch):
     # The switch skips the derivation for local debugging; it must not make a
     # modified install valid.
     monkeypatch.setenv('JHP_SHIELD', '0')
-    monkeypatch.setattr(shield.integrity, 'mismatch_message',
+    monkeypatch.setattr(shield.integrity, 'tamper_message',
                         lambda: shield.integrity.REPAIR_MESSAGE)
     out = shield.require('store')
     assert out == {'blocked': True, 'message': shield.integrity.REPAIR_MESSAGE}
@@ -398,7 +398,7 @@ def test_jhp_shield_zero_does_not_hide_a_changed_sidecar(monkeypatch):
 
 def test_a_frozen_build_ignores_the_disable_switch(monkeypatch):
     monkeypatch.setenv('JHP_SHIELD', '0')
-    monkeypatch.setattr(shield.integrity, 'mismatch_message', lambda: None)
+    monkeypatch.setattr(shield.integrity, 'tamper_message', lambda: None)
     monkeypatch.setattr(shield, '_is_frozen', lambda: True)
     called = {}
 
@@ -422,6 +422,23 @@ def test_a_frozen_build_ignores_the_path_override(tmp_path, monkeypatch):
     # Only <app_root>/runtime/cpp is considered; a stub pointed to by the
     # environment must not become the sidecar.
     assert shield.find_shield() is None
+
+
+def test_a_frozen_build_ignores_the_guard_and_core_paths(tmp_path, monkeypatch):
+    import replica.build_info as BI
+    from replica.transport import rustcore as RC
+
+    guard = tmp_path / 'hxp-guard.exe'
+    core = tmp_path / 'hxp-core.exe'
+    guard.write_bytes(b'MZ')
+    core.write_bytes(b'MZ')
+    monkeypatch.setenv('JHP_ACCOUNT_GUARD_PATH', str(guard))
+    monkeypatch.setenv('JHP_RUST_CORE_PATH', str(core))
+    monkeypatch.setattr(BI, 'is_compiled', lambda: True)
+    monkeypatch.setattr(BI, 'app_root', lambda: str(tmp_path))
+
+    assert AG.find_guard() is None
+    assert RC.find_core() is None
 
 
 def test_selfcheck_is_skipped_when_the_binary_is_absent(monkeypatch):

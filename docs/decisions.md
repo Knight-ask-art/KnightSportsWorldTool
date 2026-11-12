@@ -753,17 +753,18 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 蜜罐做成独立、名字直白的 `license_decoy.py`，只被 bridge 显式调用 | 逆向者会顺着 `LICENSE_SECRET` / `verify_license` 找到它；让它看起来像真实鉴权，比隐藏一个空模块更能消耗分析时间 | 不是授权：不联网、不写文件、不记 key、不导入登录/提交；正常 UI 没有入口，正常用户不会走到 |
 | 命中后先返回假的 `pro` 计划，3 秒后转为 `expired` | “假成功 → 延迟失败”会让补丁者以为找到了入口，实际拿不到任何长期状态；3 秒与真实设备 token 的 TTL 一致，不额外暴露一个新的时间窗口 | 状态只活在进程内存；过期后保持 `expired`，不重试、不续期、不再弹提示 |
 | 不做死循环、不删文件、不弹窗轰炸 | 这些行为会伤到正常用户（误判、杀软拦截、数据丢失），也会把“加固”变成“恶意软件特征”；诱饵的目的只是观察，不是报复 | 蜜罐只有纯函数式状态变化；崩溃或异常也不会影响登录、提交或本地数据 |
-| 完整性清单只提示、不阻塞登录/提交 | 杀毒隔离、更新中断、半拷贝都可能让哈希对不上；为此拒绝登录会把可恢复的安装问题变成硬锁死。完整性是诊断信息，真正的信任边界在服务端 | `real_integrity_status` 只返回 `ok/checked/missing/mismatch`；登录、提交、保活不读取它；源码 checkout 返回 `skipped` |
+| 完整性清单只提示、不阻塞登录/提交 | 杀毒隔离、更新中断、半拷贝都可能让哈希对不上；为此拒绝登录会把可恢复的安装问题变成硬锁死。完整性是诊断信息，真正的信任边界在服务端 | **已被 §32/§34 取代**：mismatch、签名/manifest 错误会拦登录、恢复会话和提交；只有 missing 不拦 |
 | manifest 缺失或格式错也返回 `ok=False, reason='manifest'` | 打包失败要能在诊断里看见，但不应让程序崩溃或静默当作正常 | 不读取 `data/`、不联网、不自动修复；打包脚本写 manifest 失败直接 `throw`，问题留在构建阶段 |
 
 ## 32. 原生自检与篡改降级（2026-11-12）
 
-§31 的“完整性只提示、不阻塞”在这里收窄：只有“文件在、哈希不对”拦登录；
-`missing`、manifest 缺失/格式错仍是诊断信息。
+§31 的“完整性只提示、不阻塞”在这里收窄：mismatch、签名错误、manifest
+缺失/格式错都拦登录；只有“文件不在”（missing）不拦；“文件在但读不了”
+（unreadable）也拦，但给的是先关杀软的提示。
 
 | 决策 | 理由 | 边界 |
 |---|---|---|
-| 完整性 mismatch 成为登录门，missing / manifest 不拦 | “文件在但字节不同”只有两种解释：装坏了或被改过，两种都该在派生前停下并给重装提示；隔离和半拷贝留下的是 missing，不该被当成篡改 | 文案固定为「安装文件校验未通过，请重新安装软件后再试」，不提文件名、层名或哈希；`mismatch_message()` 自身异常时 fail open |
+| 完整性 mismatch / 签名错误 / manifest 错误都成为登录门，missing 不拦 | “文件在但字节不同”要么装坏要么被改；签名不对或没有签名说明清单本身不可信；两类都该在派生前停下。隔离和半拷贝留下的是 missing，不该被当成篡改 | 文案固定为「安装文件校验未通过，请重新安装软件后再试」，不提文件名、层名或哈希；`tamper_message()` 只在“检查器自身有 bug”时 fail open——坏 manifest（含深层嵌套 JSON）在 `check_native()` 内部就变成 `reason`，不会漏出去 |
 | 自检放在 `hxp-shield --selfcheck`，走独立进程 | 它已经持有 PE 映像和进程句柄，不需要新 DLL；独立进程崩溃或被杀不影响登录 | 只做 `IsDebuggerPresent`/`CheckRemoteDebuggerPresent` 和 PE 自洽检查；不扫内存、不枚举进程 |
 | 调试器/可写 `.text` 只写诊断，不拦登录 | 开发机常挂调试器，部分终端安全软件以调试方式探测；拦它等于随机锁死正常用户，而真正的补丁者会顺手绕掉 | 结果进 `real_integrity_status` 与诊断包 `integrity.json`；前端无入口 |
 | 不做自毁、不删文件、不弹指控文案 | 能改二进制的人会先复制目录再 NOP 检查，自毁只惩罚误报的正常用户；删 `data/` 还会丢记录、路线和绑定 | 所有分支保留用户数据；处置只到“拒绝这次登录 / 提示重装” |
@@ -775,3 +776,13 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | frozen 下 `JHP_SHIELD=0/off/false/no` 不再生效 | 一个环境变量就能跳过整条四层派生，等于加固只在源码环境有效；排错旁路不该存在于发布包 | `enabled()` 先看 `is_compiled()`；源码 checkout 行为不变，`pytest` 与本地调试不受影响 |
 | frozen 下忽略 `JHP_SHIELD_PATH` | 指向任意 exe 比关开关更彻底：可以塞一个永远返回 ok 的 stub，而且完全绕过完整性清单 | 只从 `<app_root>/runtime/cpp/hxp-shield.exe` 取；源码 checkout 仍可指定 |
 | `app.py` 不再写 `JHP_SHIELD=1` | 开关在 frozen 下已无意义，继续写只会让人以为它还能关 | `JHP_RUST_CORE=1` 保持原样，那一层仍靠环境变量钉住 |
+
+## 34. manifest 签名与 fail-closed 验签（2026-11-12）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| manifest 升级到 version 2，增加 Ed25519 `sig`，签名覆盖 `{"version","files"}` 的 canonical JSON | 只存哈希时，改 exe 的人顺手改 manifest 就通过；签名把“改哈希”这条路堵死。签名不覆盖 `sig` 本身和文件格式，改缩进不会误伤 | v1 manifest 在 frozen 下按 `reason='manifest'` 拒绝；源码 checkout 没有 manifest，仍 `skipped` |
+| frozen 下 `reason='manifest'` / `'signature'` 也拦登录 | 能删的签名不算签名；只拦 mismatch 等于把签名做成装饰 | 仍然只给固定重装文案，不暴露文件名或原因；`missing`（文件不在）不拦，隔离和半拷贝不算篡改 |
+| 私钥放 `JHP_MANIFEST_KEY` 或 `%USERPROFILE%\.hxp\manifest.key`，公钥常量编进 `integrity.py` | 仓库是公开的，私钥进仓库等于没有签名；公钥放旁边的文件会被一起替换 | `keygen` 拒绝写进仓库目录；打包时 `sign` 后用**已编译的公钥**再 `verify`，密钥配错死在构建机而不是用户登录页 |
+| Ed25519 用纯 Python 实现（RFC 8032），零新依赖 | 运行时只有验签，2–3 ms；签名只在构建机跑一次。RSA 要管 PEM，Ed25519 只有 32 B 密钥 | 实现非恒定时间，只用于公开消息 + 固定公钥；用 RFC 8032 三组向量逐字节校验 |
+| 保留 `-Unsigned` 打包开关 | 本地冒烟需要能出包，否则没有密钥就没法验证打包流程 | 这样的包在 frozen 下登录会被拒；发布流程不带这个开关 |

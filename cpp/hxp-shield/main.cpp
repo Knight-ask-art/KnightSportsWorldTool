@@ -541,6 +541,18 @@ bool ImageLooksIntact() {
         return false;
     }
 
+    // Everything we are about to read must sit inside the header region the
+    // loader mapped.  A corrupt e_lfanew or section count must not walk past
+    // SizeOfHeaders.
+    const uint64_t table_end =
+        (uint64_t)dos->e_lfanew + 4u + sizeof(IMAGE_FILE_HEADER) +
+        fh->SizeOfOptionalHeader +
+        (uint64_t)fh->NumberOfSections * sizeof(IMAGE_SECTION_HEADER);
+    if (oh->SizeOfHeaders == 0 || table_end > (uint64_t)oh->SizeOfHeaders ||
+        table_end > (uint64_t)oh->SizeOfImage) {
+        return false;
+    }
+
     const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
     const uint32_t entry = oh->AddressOfEntryPoint;
     uint32_t span = 0;
@@ -568,11 +580,13 @@ bool ImageLooksIntact() {
 
     // A trampoline or an inline patch needs the code page writable.  Windows
     // maps .text PAGE_EXECUTE_READ, so RWX here means someone changed it.
+    // WRITECOPY is not flagged: a few loaders/EDR setups use it legitimately
+    // and the build treats "image" as a hard defect.
     MEMORY_BASIC_INFORMATION mbi;
     if (VirtualQuery(base + entry, &mbi, sizeof(mbi)) == 0) {
         return false;
     }
-    if ((mbi.Protect & (PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0) {
+    if ((mbi.Protect & PAGE_EXECUTE_READWRITE) != 0) {
         return false;
     }
     return true;

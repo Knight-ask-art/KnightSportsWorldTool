@@ -44,6 +44,20 @@
   `JHP_SHIELD=0` 不再生效）；源码运行缺二进制则跳过，保证 `pytest` 不依赖
   native 产物。
 
+## manifest 签名
+
+- 打包脚本写完 SHA-256 清单后调用 `scripts/manifest_sign.py sign`，再用
+  **编译进 `integrity.py` 的公钥**跑一次 `verify`；任何一步失败直接
+  `throw`。
+- 私钥只在构建机：`JHP_MANIFEST_KEY`（64 hex）或
+  `%USERPROFILE%\.hxp\manifest.key`。新机器把私钥文件拷过去即可；仓库里
+  已有公钥时 `keygen --apply` 会拒绝，避免静默轮换（确实要换钥匙用
+  `keygen --force --apply`）。
+- 换机器构建要先把私钥文件拷过去；丢了就只能 `keygen` 换新公钥并重新发版，
+  旧包无法再升级到新 manifest 体系。
+- `-Unsigned` 只用于本地冒烟：这样的包在 frozen 下会以“安装文件校验未通过”
+  拒绝登录，不能发布。
+
 ## 默认后端：Nuitka standalone
 
 `packaging/build.ps1` 默认使用 Nuitka 4.x，把 Python 模块编译成 C 再链接，

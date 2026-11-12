@@ -22,6 +22,20 @@ CAMPUS_POINTS_DISTANCE_M = 2500
 AMAP_KEY = os.environ.get('JHP_AMAP_KEY', '')
 
 
+def integrity_message():
+    """Manifest gate message for paths that skip the login shield.
+
+    Module-level so every mixin can call it without depending on
+    ``ReplicaApi``'s private methods.  A source checkout returns ``None``
+    (``skipped``); a frozen build returns the repair sentence.
+    """
+    try:
+        from ..application import integrity as I
+        return I.tamper_message()
+    except Exception:  # noqa: BLE001 - a gate bug must not break the UI
+        return None
+
+
 def _ok(data=None, message='success'):
     return {'code': 200, 'message': message, 'data': data}
 
