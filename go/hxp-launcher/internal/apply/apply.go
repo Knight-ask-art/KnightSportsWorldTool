@@ -261,6 +261,9 @@ func Apply(opts Options, deps Deps) error {
 			logger.Error("copy data %s -> %s failed: %s", src, dst, worker.SanitizeErrorString(err.Error()))
 			return false
 		}
+		if err := deps.RemoveAll(src); err != nil {
+			logger.Warn("copied data but could not remove %s: %s", src, worker.SanitizeErrorString(err.Error()))
+		}
 		return true
 	}
 

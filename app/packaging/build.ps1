@@ -82,12 +82,18 @@ $LAUNCHER = Join-Path $REPO 'go\hxp-launcher'
 $LAUNCHER_EXE = Join-Path $LAUNCHER 'hxp-launcher.exe'
 $makeLatest = Join-Path $PSScriptRoot 'make_latest.py'
 
+$info = Join-Path $ROOT 'replica\build_info.py'
+$match = Select-String -Path $info -Pattern "^VERSION\s*=\s*'([^']+)'" -Encoding UTF8 |
+    Select-Object -First 1
+if (-not $match) { throw "Cannot read VERSION from $info" }
+$sourceVersion = $match.Matches[0].Groups[1].Value
 if (-not $Version) {
-    $info = Join-Path $ROOT 'replica\build_info.py'
-    $match = Select-String -Path $info -Pattern "^VERSION\s*=\s*'([^']+)'" -Encoding UTF8 |
-        Select-Object -First 1
-    if (-not $match) { throw "Cannot read VERSION from $info" }
-    $Version = $match.Matches[0].Groups[1].Value
+    $Version = $sourceVersion
+} elseif ($Version -ne $sourceVersion) {
+    $msg = ('-Version {0} does not match replica/build_info.py {1}; the app ' +
+            'would report a different version than build_info.json and ' +
+            'boot-ok would roll every update back') -f $Version, $sourceVersion
+    throw $msg
 }
 $NAME = '好想跑_v' + $Version
 $TARGET = Join-Path $DIST $NAME

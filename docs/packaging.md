@@ -119,12 +119,20 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Backend pyinstalle
 
 ```text
 dist/好想跑_v<version>/好想跑.exe
+dist/好想跑_v<version>/hxp-launcher.exe      # 正式入口，负责静默更新
+dist/好想跑_v<version>/build_info.json       # launcher 版本比较用
 dist/haoxiangpao_v<version>_win64.zip
 dist/haoxiangpao_v<version>_win64.sha256
 dist/haoxiangpao_v<version>_win64_setup.exe
 dist/haoxiangpao_v<version>_win64_setup.sha256
 dist/latest.json
 ```
+
+`hxp-launcher.exe` 由 `go/hxp-launcher` 编译（`CGO_ENABLED=0`），构建时用
+`-ldflags -X ...injectedPublicKeys=<key_id>:<base64>` 注入更新清单公钥；
+不传 `-SignKey` 的构建不注入，launcher 会 fail-open 跳过更新。NSIS 快捷方式
+指向 launcher；`好想跑.exe` 仍可手动直接运行。zip 更新会保留 `data/` 和
+`Uninstall.exe`，安装版的卸载项不会因为一次静默更新而失效。
 
 ## 安装包：NSIS（v0.1.3 起为发布标准）
 
@@ -142,7 +150,9 @@ dist/latest.json
    程序把 `data/` 写在 exe 旁边，装进 `Program Files` 会写不进去，登录状态都保存不了。
 2. **升级只删程序文件，`data/` 永远不动**。`installer.nsi` 用 `FindFirst` 逐项删除并跳过
    `data`；卸载默认保留，静默卸载也保留。
-3. **静默安装 `/S` 必须可用**。应用内更新就是靠它：下载 → 校验 → 等进程退出 → `/S` 安装 → 重启。
+3. **静默安装 `/S` 必须可用**。旧客户端和完整安装包升级靠它：下载 → 校验 →
+   等进程退出 → `/S` 安装 → 重启。Go launcher 的 zip 更新直接替换程序目录，
+   不走 `/S`，但会保留 `data/` 与 `Uninstall.exe`。
 
 ### 构建（不需要安装 NSIS）
 

@@ -47,6 +47,9 @@ func Recover(appDir, dataDir string, logger *logx.Logger) error {
 			logger.Error("recover: copy data %s -> %s failed: %s", src, dst, worker.SanitizeErrorString(err.Error()))
 			return false
 		}
+		if err := os.RemoveAll(src); err != nil {
+			logger.Warn("recover: copied data but could not remove %s: %s", src, worker.SanitizeErrorString(err.Error()))
+		}
 		return true
 	}
 
