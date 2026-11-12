@@ -160,6 +160,7 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
 ### 镜像注册表与发布前体检
 
 - `app/packaging/update_mirrors.json` 是**候选镜像表**，不保证每个镜像长期可用；官方地址始终排在第一位。
+- 主 `url` 走 `gh-proxy.com` 时，必须同时传 `--registry-base-url <官方 GitHub release base>`；否则注册表会把代理地址再套一层。`release.ps1` 已自动传官方 base。
 - 发布流程：**打包 → 体检 → 过滤 → 签名生成**（先用 `packaging/check_update_mirrors.py --manifest ... --write-registry ...` 探测真实资产并筛出健康镜像，再用 `make_latest.py --mirror-registry ... --require-mirrors N` 重新生成最终清单）。
 - 所有镜像 URL 都写入签名保护的 `latest.json`（`assets.*.urls[]` 与 `rollback.urls[]`），且每次下载仍校验资产的 `size` 与 `sha256`。
 - 失效镜像、返回非预期魔数（如 HTML 拦截页）的节点以及明文 `http://` / `file://` 模板一律拒绝或剔除，绝不随正式清单发布。

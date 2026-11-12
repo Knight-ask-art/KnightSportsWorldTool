@@ -115,6 +115,9 @@ if ($MirrorRegistry) {
 if ($SignKey) {
     $SignKey = (Resolve-Path -LiteralPath $SignKey).Path
 }
+if ($Makensis) {
+    $Makensis = (Resolve-Path -LiteralPath $Makensis).Path
+}
 if ($RequireSignature -and -not $SignKey) {
     throw '-RequireSignature requires -SignKey'
 }
