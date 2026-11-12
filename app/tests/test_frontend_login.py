@@ -4,9 +4,14 @@ The full interaction test is Playwright-based (mocked bridge), but these checks
 make sure a future edit cannot silently remove the gate, re-introduce a
 blocking external font request, or break the external CSS/JS links.
 """
+import json
 import re
+import shutil
 import struct
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / 'frontend'
@@ -772,3 +777,158 @@ def test_docs_match_the_close_toggle_default():
     assert '闭合开关默认关' in usage
     assert '闭合开关默认开' not in usage
     assert '需要绕圈时手动打开「闭合」' in usage
+
+
+def test_login_errors_explain_the_guard_and_device_check():
+    pretty = _js_function('prettyLoginError')
+    assert '/设备校验未通过|账号绑定校验失败/' in pretty
+    assert '第一次登录的本地校验没通过' in pretty
+    assert '诊断包发到 QQ 群' in pretty
+    assert '/一号一设备/' in pretty
+    assert '这台电脑已经绑定了另一个账号' in pretty
+    assert '帮你解绑' in pretty
+    # The raw server/guard sentence stays first, the readable hint is the
+    # second line, which needs `white-space: pre-line` to survive.
+    assert "return msg + '\\n第一次登录的本地校验没通过" in pretty
+    assert "return msg + '\\n这台电脑已经绑定了另一个账号" in pretty
+    assert 'white-space:pre-line' in CSS
+
+
+def test_submit_explain_waits_only_when_a_code_exists():
+    render = _js_function('renderSubmitExplain')
+    assert "if(r.state === 'ok' || code == null){ box.hidden = true; return; }" in render
+    worker = _js_function('explainSubmitResult')
+    assert "if(code == null){ renderSubmitExplain(r); return; }" in worker
+    submit = _js_function('doSubmitRun')
+    # The backend classifies the failure; the frontend only renders it.  The
+    # prefix rules below remain a fallback for older sidecars.
+    assert 'const unknown = submitFailureKind(j) === \'unknown\';' in submit
+    assert 'j.code === 500' not in submit
+    kind = _js_function('submitFailureKind')
+    assert "if(data.failure_kind === 'fail' || data.failure_kind === 'unknown'){" in kind
+    assert "if(/^提交被拒[:：]/.test(msg)) return 'fail';" in kind
+
+
+def test_submit_failure_kind_separates_refusal_from_unknown():
+    """Behaviour test: feed envelopes to the extracted pure function."""
+    fn = _js_function('submitFailureKind')
+    cases = [
+        ({'code': 500, 'message': '提交被拒: error=10001 该时段已锁定 (HTTP 200)',
+          'data': {'failure_kind': 'fail'}}, 'fail'),
+        ({'code': 500, 'message': '提交被拒：error=10001 该时段已锁定 (HTTP 400)',
+          'data': {'failure_kind': 'fail'}}, 'fail'),
+        ({'code': 500, 'message': '提交结果未知（已锁定该时段，请勿重试）: timed out',
+          'data': {'failure_kind': 'unknown'}}, 'unknown'),
+        ({'code': 500, 'message': '服务器已受理但未返回记录号，结果未知（已锁定该时段）',
+          'data': {'failure_kind': 'unknown'}}, 'unknown'),
+        # The backend decision wins even when the message reads like the
+        # other branch; the frontend must not re-derive it.
+        ({'code': 500, 'message': '提交结果未知（已锁定该时段）',
+          'data': {'failure_kind': 'fail'}}, 'fail'),
+        ({'code': 500, 'message': '提交被拒: error=10001 该时段已锁定',
+          'data': {'failure_kind': 'unknown'}}, 'unknown'),
+        # Legacy envelopes without failure_kind still use the prefixes.
+        ({'code': 500, 'message': '提交被拒: error=10001 该时段已锁定 (HTTP 500)',
+          'data': None}, 'fail'),
+        ({'code': 500, 'message': '提交异常，结果未知（已锁定该时段）: connection reset',
+          'data': None}, 'unknown'),
+        ({'code': 500, 'message': '本地服务超时（后台可能仍在执行，请勿重复提交）',
+          'data': None}, 'unknown'),
+        ({'code': 500, 'message': '本地服务不可用：TypeError: Failed to fetch',
+          'data': None}, 'unknown'),
+        ({'code': 500, 'message': '本地服务返回了无法识别的内容',
+          'data': None}, 'unknown'),
+        # An unknown enum value or a non-object data payload falls back to the
+        # legacy prefixes instead of throwing.
+        ({'code': 500, 'message': '提交被拒: error=10001',
+          'data': {'failure_kind': 'bogus'}}, 'fail'),
+        ({'code': 500, 'message': '提交结果未知: timed out',
+          'data': 'oops'}, 'unknown'),
+        ({'code': 500, 'message': '服务器拒绝了这次提交。', 'data': None}, 'fail'),
+    ]
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node is not installed; submitFailureKind behaviour test skipped')
+    script = '\n'.join([
+        fn,
+        'const envelopes = ' + json.dumps([j for j, _ in cases], ensure_ascii=False) + ';',
+        'const expected = ' + json.dumps([k for _, k in cases]) + ';',
+        'const got = envelopes.map(j => submitFailureKind(j));',
+        'console.log(JSON.stringify(got));',
+    ])
+    proc = subprocess.run([node, '-e', script], capture_output=True, text=True,
+                          encoding='utf-8')
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == [k for _, k in cases]
+
+
+def test_rules_guidance_explains_an_empty_school_configuration():
+    assert '学校要求全部留空：如果学校确实没有配置要求，可以保存' in JS
+    assert '学校没配置要求时，点「从服务器读取」确认一次' in JS
+    assert '学校没配置要求时，点「从服务器读取」确认一次' in HTML
+    dock = _js_function('liveDockClick')
+    assert "switchRunTab('submit')" in dock
+    assert "document.querySelector('#checks .check-row.warn')" in dock
+    assert 'scrollIntoView' in dock
+
+
+def test_narrow_layout_scrolls_records_and_stacks_check_notes():
+    marker = '#recordTable{overflow-x:auto}'
+    start = CSS.rindex('@media (max-width:760px){', 0, CSS.index(marker))
+    narrow = CSS[start:CSS.index('\n}', start)]
+    assert marker in narrow
+    assert '#recordTable .thead,#recordTable .trow{min-width:520px}' in narrow
+    # The account table must keep its own minmax template: the old unscoped
+    # min-width forced every .simple-table row to 520px and clipped it.
+    assert '.simple-table .thead,.simple-table .trow{min-width:520px}' not in CSS
+    assert '.check-row{grid-template-columns:19px 1fr}' in narrow
+    assert '.check-row .cnote{grid-column:2;text-align:left;max-width:none}' in narrow
+    # Same specificity as the wide-screen cap, otherwise 145px still wins.
+    assert '.run-panel .check-row .cnote{max-width:none}' in narrow
+    wide = CSS[CSS.index('@media (min-width:761px){'):]
+    assert '.run-panel .check-row .cnote{max-width:145px}' in wide
+
+    # The record column has to be allowed to shrink below its content width,
+    # or the grid track stays 520px and .page{overflow-x:hidden} clips it.
+    assert '.records-layout>div{min-width:0}' in CSS
+    marker = '.records-layout{grid-template-columns:minmax(0,1fr)}'
+    start = CSS.rindex('@media (max-width:900px){', 0, CSS.index(marker))
+    mobile = CSS[start:CSS.index('\n}', start)]
+    assert marker in mobile
+
+
+def test_main_copy_drops_the_remaining_internal_terms():
+    assert '没有 token 时不会生成假点位' not in HTML
+    assert '没有登录时不会生成假点位' in HTML
+    assert "toast('请填写设备编号')" in JS
+    assert '回读风险标记：' in JS
+    # The record detail main row says it in plain language; isCheat only
+    # survives as the tooltip/raw value.
+    assert "risk.push('isCheat=1')" not in JS
+    assert "risk.push('有风险标记')" in JS
+    assert "$('#rdCheat').title = cheatRaw;" in JS
+    # The raw bridge line (rrid=, OBS) may stay inside 详情/日志.
+    assert "const rawSummary = 'rrid='" in JS
+
+
+def test_usage_docs_explain_account_binding_without_scaring_users():
+    usage = (ROOT.parent / 'docs' / 'usage.md').read_text(encoding='utf-8')
+    assert '### 账号与这台电脑' in usage
+    assert '登录保持（probe-only' in usage
+    assert 'probe-only token 保活' not in usage
+    assert '退出登录**不会**释放' in usage
+    # Same-machine reinstall keeps the binding; moving machines does not.
+    assert '同一台电脑重装' in usage
+    assert '**换电脑**：绑定不会随 `data/` 迁移' in usage
+    assert '整个 `data/` 目录一起带' not in usage
+    assert '「设备校验未通过」' in usage
+    assert '换电脑就废了' not in usage
+    kb = (ROOT.parent / 'docs' / 'kb' / '46-account-guard.md').read_text(
+        encoding='utf-8')
+    assert '## 7. 用户指引' in kb
+    assert '由维护者确认后解绑' in kb
+    assert 'reset --state data\\account_binding.json --yes' in kb
+    assert '同一台电脑重装' in kb
+    assert '换电脑：绑定不会随 `data/` 迁移' in kb
+    assert '新机器设备 ID 不同，视为未绑定' in kb
+    assert '整个 `data/` 目录一起带' not in kb

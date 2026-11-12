@@ -122,3 +122,17 @@ def test_splash_owns_focus_and_releases_the_login_gate():
     assert 'loginGate.inert = false' in JS
     assert 'hxp:boot-done' in JS
     assert "event.key === 'Tab'" in JS
+
+
+def test_splash_hides_the_login_gate_until_it_drops():
+    """A slow bridge boot used to flash the login form for ~1.2 s."""
+    hidden_at = JS.index("loginGate.style.visibility = 'hidden'")
+    # Early exits (?boot=0, reduced motion, already played) must not hide or
+    # inert a gate they never owned.
+    early = JS[JS.index('if (off || reduced'):JS.index('/* The login gate sits behind')]
+    assert 'visibility' not in early
+    assert 'loginGate.inert = true' not in early
+    assert JS.index('if (off || reduced') < hidden_at < JS.index('function showPanel()')
+    drop = JS[JS.index('function drop()'):JS.index('function remember()')]
+    assert "loginGate.style.visibility = ''" in drop
+    assert 'loginGate.inert = false' in drop
