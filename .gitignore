@@ -51,6 +51,9 @@ reverse-engineering/
 third_party/
 *.apk
 
+# ---- 本地 git worktrees ----
+_worktrees/
+
 # ---- 截图 / 浏览器调试 / 审查产物 ----
 .playwright-cli/
 output/
