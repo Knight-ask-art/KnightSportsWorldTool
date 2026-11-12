@@ -2,8 +2,7 @@
 
 > 日期：2026-11-12
 > 分支：`task/arch-guardrails`
-> 合并状态：`master` 当前在 `好想跑-user-review` 工作树检出且有未提交的用户改动，
-> 本轮未强行 merge；待该工作树提交/暂存后再合并。
+> 合并状态：已合并到 `master`（merge `23c0bac`）；工作树干净。
 > 计划：`PLAN.md`
 
 ## 已完成
