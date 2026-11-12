@@ -210,10 +210,16 @@ https://github.com/<owner>/<repo>/releases/latest/download/haoxiangpao_v0.1.3_wi
 发布构建（正式签名 + 镜像体检）：
 
 ```powershell
+# 推荐走包装脚本（会先做版本预检、跑测试、传完整镜像数组）
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2
+
+# 等价手工命令（主 url 走 gh-proxy，镜像注册表按官方 base 展开）
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
-  -DownloadBaseUrl https://github.com/<owner>/<repo>/releases/download/v<version> `
-  -RollbackBaseUrl https://github.com/<owner>/<repo>/releases/download/v<rollback> `
-  -SignKey D:\keys\hxp-release-ed25519.pem `
+  -DownloadBaseUrl https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v<version> `
+  -RegistryBaseUrl https://github.com/<owner>/<repo>/releases/download/v<version> `
+  -RollbackBaseUrl https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/v<rollback> `
+  -RollbackRegistryBaseUrl https://github.com/<owner>/<repo>/releases/download/v<rollback> `
+  -SignKey "$env:USERPROFILE\.hxp\update-signing.pem" `
   -RequireSignature -MinHealthyMirrors 5
 ```
 

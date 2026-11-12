@@ -127,8 +127,10 @@ claude mcp list | Select-String instabox
 版本号改完要先提交，脚本默认拒绝在脏工作区上打正式包：
 
 ```powershell
-# 0) 新构建机：把旧机器的 %USERPROFILE%\.hxp\manifest.key 拷过来；
-#    只有轮换密钥时才 keygen --force --apply（旧包会验签失败）
+# 0) 新构建机：把旧机器的 %USERPROFILE%\.hxp\manifest.key（native 完整性）
+#    和 %USERPROFILE%\.hxp\update-signing.pem（latest.json）拷过来。
+#    update 密钥首次生成：python scripts\update_keygen.py
+#    只有轮换时才加 --force；旧 launcher 会因公钥不匹配而拒绝新清单
 
 # 先看参数，不编译
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2 -Plan
@@ -137,10 +139,15 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2 -Pla
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2
 ```
 
+`release.ps1` 默认要求 `%USERPROFILE%\.hxp\update-signing.pem`，并把
+`-RequireSignature -MinHealthyMirrors 5` 传给 `build.ps1`：更新清单必须签名，
+镜像探活不达标就终止。离线调试可加 `-SkipMirrorCheck -MinHealthyMirrors 0`
+（这样打出的包不要发布）。
+
 打包时 `build.ps1` 会计算三层 native 的 SHA-256、写 `version=2` 的
 `runtime/integrity.json`、用构建机私钥签名，再用编译进程序的公钥验一遍；
-任一步失败直接终止。私钥丢了就换新公钥重新发版，旧包无法升级到新的
-manifest 体系，所以 `%USERPROFILE%\.hxp\manifest.key` 要备份。
+同时把 update 公钥注入 `hxp-launcher.exe`、写 `build_info.json`。任一步失败
+直接终止。两把私钥都要备份；丢了只能换新公钥重新发版。
 
 等价的手工命令：
 

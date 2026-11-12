@@ -52,6 +52,8 @@ param(
     [string]$Makensis = '',
     [string]$SignKey = '',
     [string]$KeyID = 'release',
+    [string]$RegistryBaseUrl = '',
+    [string]$RollbackRegistryBaseUrl = '',
     [switch]$RequireSignature,
     [int]$MinHealthyMirrors = 0,
     [double]$MirrorCheckBudget = 6.0,
@@ -585,11 +587,17 @@ function New-LatestArgs {
     if ($DownloadBaseUrl) {
         $a += @('--base-url', $DownloadBaseUrl)
     }
-    foreach ($mirror in $MirrorBaseUrl) {
-        if ($mirror) { $a += @('--mirror-base-url', $mirror) }
+    if ($RegistryBaseUrl) {
+        $a += @('--registry-base-url', $RegistryBaseUrl)
     }
     if ($RollbackBaseUrl) {
         $a += @('--rollback-base-url', $RollbackBaseUrl)
+    }
+    if ($RollbackRegistryBaseUrl) {
+        $a += @('--rollback-registry-base-url', $RollbackRegistryBaseUrl)
+    }
+    foreach ($mirror in $MirrorBaseUrl) {
+        if ($mirror) { $a += @('--mirror-base-url', $mirror) }
     }
     foreach ($mirror in $RollbackMirrorBaseUrl) {
         if ($mirror) { $a += @('--rollback-mirror-base-url', $mirror) }
@@ -638,6 +646,12 @@ if ($DownloadBaseUrl -and $MinHealthyMirrors -gt 0) {
             '--write-registry', $healthyRegistry)
         if ($MirrorRegistry) {
             $checkArgs += @('--registry', $MirrorRegistry)
+        }
+        if ($RegistryBaseUrl) {
+            $checkArgs += @('--registry-base-url', $RegistryBaseUrl)
+        }
+        if ($RollbackRegistryBaseUrl) {
+            $checkArgs += @('--rollback-registry-base-url', $RollbackRegistryBaseUrl)
         }
         & python @checkArgs
         if ($LASTEXITCODE -ne 0) {

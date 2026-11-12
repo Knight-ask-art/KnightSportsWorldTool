@@ -267,6 +267,72 @@ def test_registry_expands_enabled_official_first_dedupe_and_skips_disabled(tmp_p
     assert manifest['rollback']['urls'] == expected_rb_urls
 
 
+def test_registry_uses_official_base_when_primary_is_a_proxy(tmp_path):
+    zip_path = _write_asset(tmp_path / 'haoxiangpao_v0.3.0_win64.zip', ZIP)
+    reg = {
+        'schema': 1,
+        'mirrors': [
+            {'name': 'official', 'template': '{base}', 'priority': 0, 'enabled': True},
+            {'name': 'fast', 'template': 'https://fast.example/{base}', 'priority': 10, 'enabled': True},
+        ],
+    }
+    official = 'https://github.com/o/r/releases/download/v0.3.0'
+    primary = 'https://gh-proxy.com/' + official
+    manifest = make_latest.build_manifest(
+        '0.3.0',
+        zip_path,
+        base_url=primary,
+        registry_base_url=official,
+        mirror_registry=reg,
+    )
+    urls = manifest['assets']['windows-x64']['urls']
+    expected = [
+        f'{primary}/{zip_path.name}',
+        f'{official}/{zip_path.name}',
+        f'https://fast.example/{official}/{zip_path.name}',
+    ]
+    assert manifest['assets']['windows-x64']['url'] == expected[0]
+    assert urls == expected
+
+
+def test_health_filter_uses_registry_base_for_proxy_primary():
+    official = 'https://github.com/o/r/releases/download/v0.3.0'
+    primary = 'https://gh-proxy.com/' + official
+    name = 'haoxiangpao_v0.3.0_win64.zip'
+    registry = {
+        'schema': 1,
+        'mirrors': [
+            {'name': 'official', 'template': '{base}', 'priority': 0, 'enabled': True},
+            {'name': 'fast', 'template': 'https://fast.example/{base}', 'priority': 10, 'enabled': True},
+            {'name': 'dead', 'template': 'https://dead.example/{base}', 'priority': 20, 'enabled': True},
+        ],
+    }
+    manifest = {
+        'assets': {
+            'windows-x64': {
+                'file': name,
+                'url': f'{primary}/{name}',
+                'urls': [
+                    f'{primary}/{name}',
+                    f'{official}/{name}',
+                    f'https://fast.example/{official}/{name}',
+                    f'https://dead.example/{official}/{name}',
+                ],
+            },
+        },
+    }
+    results = {
+        f'{primary}/{name}': {'ok': True},
+        f'{official}/{name}': {'ok': True},
+        f'https://fast.example/{official}/{name}': {'ok': True},
+        f'https://dead.example/{official}/{name}': {'ok': False},
+    }
+    filtered = check_update_mirrors.filter_registry(
+        registry, manifest, results, registry_base_url=official,
+    )
+    assert [m['name'] for m in filtered['mirrors']] == ['official', 'fast']
+
+
 def test_registry_caps_urls_at_40(tmp_path):
     zip_path = _write_asset(tmp_path / 'haoxiangpao_v0.3.0_win64.zip', ZIP)
     mirrors = [{'name': 'official', 'template': '{base}', 'priority': 0, 'enabled': True}]

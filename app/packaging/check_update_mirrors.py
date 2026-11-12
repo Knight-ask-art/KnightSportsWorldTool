@@ -243,11 +243,14 @@ def filter_registry(
     registry: dict,
     manifest: dict,
     results: dict[str, dict],
+    *,
+    registry_base_url: str = '',
+    rollback_registry_base_url: str = '',
 ) -> dict:
     assets_map = manifest.get('assets') or {}
     assets = [
-        asset
-        for asset in assets_map.values()
+        (key, asset)
+        for key, asset in assets_map.items()
         if isinstance(asset, dict) and asset_urls(asset)
     ]
     healthy_mirrors: list[dict] = []
@@ -262,12 +265,19 @@ def filter_registry(
             continue
         matched_any = False
         all_ok = True
-        for asset in assets:
+        for key, asset in assets:
             urls = asset_urls(asset)
             primary = str(asset.get('url') or urls[0]).strip()
             if '/' not in primary:
                 continue
-            base = primary.rsplit('/', 1)[0]
+            override = (
+                rollback_registry_base_url
+                if key == 'rollback'
+                else registry_base_url
+            )
+            base = (override or '').strip().rstrip('/')
+            if not base:
+                base = primary.rsplit('/', 1)[0]
             filename = str(asset.get('file') or '').strip()
             quoted_name = quote(filename) if filename else primary.rsplit('/', 1)[-1]
             candidate_base = template.replace('{base}', base).rstrip('/')
@@ -337,6 +347,19 @@ def main(argv=None) -> int:
              f'(default: {DEFAULT_MIRROR_REGISTRY})',
     )
     ap.add_argument(
+        '--registry-base-url',
+        default='',
+        metavar='URL',
+        help='official base used to expand the registry; needed when the '
+             'manifest primary URL is a proxy',
+    )
+    ap.add_argument(
+        '--rollback-registry-base-url',
+        default='',
+        metavar='URL',
+        help='official rollback base for registry expansion',
+    )
+    ap.add_argument(
         '--budget',
         type=float,
         default=DEFAULT_BUDGET,
@@ -380,7 +403,13 @@ def main(argv=None) -> int:
         except (OSError, json.JSONDecodeError) as exc:
             print(f'error: cannot read registry {reg_path}: {exc}', file=sys.stderr)
             return 1
-        filtered = filter_registry(source_registry, manifest, results)
+        filtered = filter_registry(
+            source_registry,
+            manifest,
+            results,
+            registry_base_url=args.registry_base_url,
+            rollback_registry_base_url=args.rollback_registry_base_url,
+        )
         _write_json(filtered, Path(args.write_registry))
 
     print(

@@ -321,6 +321,7 @@ def _asset(path: Path, base_url: str, version: str, *,
 
 def build_manifest(version: str, zip_path: Path, *,
                    base_url: str = '',
+                   registry_base_url: str = '',
                    mirrors: tuple = (),
                    mirror_registry: Path | str | dict | None = _UNSET,
                    channel: str = DEFAULT_CHANNEL,
@@ -330,6 +331,7 @@ def build_manifest(version: str, zip_path: Path, *,
                    rollback_version: str | None = None,
                    rollback_zip: Path | None = None,
                    rollback_base_url: str = '',
+                   rollback_registry_base_url: str = '',
                    rollback_mirrors: tuple = (),
                    setup_path: Path | None = None,
                    entry: str = DEFAULT_ENTRY) -> dict:
@@ -357,15 +359,16 @@ def build_manifest(version: str, zip_path: Path, *,
 
     registry_mirrors: tuple[str, ...] = ()
     warned_relative = False
+    registry_base = (registry_base_url or '').strip() or base_url
     if registry is not None:
-        if _is_absolute_base_url(base_url):
+        if _is_absolute_base_url(registry_base):
             registry_mirrors = tuple(
-                expand_mirror_registry(registry, base_url)
+                expand_mirror_registry(registry, registry_base)
             )
         else:
             print(
-                'warning: --base-url is relative or empty; skipping mirror '
-                'registry',
+                'warning: --registry-base-url/--base-url is relative or '
+                'empty; skipping mirror registry',
                 file=sys.stderr,
             )
             warned_relative = True
@@ -403,11 +406,17 @@ def build_manifest(version: str, zip_path: Path, *,
         rollback_zip = Path(rollback_zip)
         if rollback_zip.is_file():
             eff_rollback_base = (rollback_base_url or '').strip() or base_url
+            eff_rollback_registry_base = (
+                (rollback_registry_base_url or '').strip()
+                or eff_rollback_base
+            )
             rb_registry_mirrors: tuple[str, ...] = ()
             if registry is not None:
-                if _is_absolute_base_url(eff_rollback_base):
+                if _is_absolute_base_url(eff_rollback_registry_base):
                     rb_registry_mirrors = tuple(
-                        expand_mirror_registry(registry, eff_rollback_base)
+                        expand_mirror_registry(
+                            registry, eff_rollback_registry_base
+                        )
                     )
                 elif not warned_relative:
                     print(
@@ -485,6 +494,9 @@ def main(argv=None) -> int:
     ap.add_argument('--out', default=None, help='defaults to <dist>/latest.json')
     ap.add_argument('--base-url', default='',
                     help='absolute download base; omit for relative URLs')
+    ap.add_argument('--registry-base-url', default='',
+                    help='official base used to expand the mirror registry; '
+                         'defaults to --base-url')
     ap.add_argument('--mirror-base-url', action='append', default=[],
                     metavar='URL',
                     help='extra download base (repeatable); written to urls[]')
@@ -513,6 +525,9 @@ def main(argv=None) -> int:
                          f'(default: {DEFAULT_ROLLBACK_VERSION})')
     ap.add_argument('--rollback-base-url', default='',
                     help='download base for the rollback zip; defaults to --base-url')
+    ap.add_argument('--rollback-registry-base-url', default='',
+                    help='official base used to expand the rollback mirror '
+                         'registry; defaults to --rollback-base-url')
     ap.add_argument('--rollback-mirror-base-url', action='append', default=[],
                     metavar='URL',
                     help='extra download base for the rollback zip (repeatable)')
@@ -618,6 +633,7 @@ def main(argv=None) -> int:
         manifest = build_manifest(
             version, zip_path,
             base_url=args.base_url,
+            registry_base_url=args.registry_base_url,
             mirrors=tuple(args.mirror_base_url or ()),
             mirror_registry=mirror_registry,
             channel=args.channel,
@@ -627,6 +643,7 @@ def main(argv=None) -> int:
             rollback_version=rollback_version,
             rollback_zip=rollback_zip,
             rollback_base_url=args.rollback_base_url,
+            rollback_registry_base_url=args.rollback_registry_base_url,
             rollback_mirrors=tuple(args.rollback_mirror_base_url or ()),
             setup_path=setup_path,
         )

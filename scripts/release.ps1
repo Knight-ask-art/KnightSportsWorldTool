@@ -16,12 +16,29 @@ param(
     [switch]$SkipTests,
     [switch]$NoDataMigration,
     [switch]$AllowDirty,
-    [switch]$Plan
+    [switch]$Plan,
+    [string]$UpdateSignKey = '',
+    [int]$MinHealthyMirrors = 5,
+    [switch]$SkipMirrorCheck
 )
 
 $ErrorActionPreference = 'Stop'
 $ROOT = Split-Path $PSScriptRoot -Parent
 $BUILD = Join-Path $ROOT 'app\packaging\build.ps1'
+
+if (-not $UpdateSignKey) {
+    $UpdateSignKey = Join-Path $env:USERPROFILE '.hxp\update-signing.pem'
+}
+if (-not (Test-Path -LiteralPath $UpdateSignKey)) {
+    $msg = ('update signing key not found: {0}' +
+            "`nCreate one with python scripts\update_keygen.py, or pass " +
+            '-UpdateSignKey') -f $UpdateSignKey
+    throw $msg
+}
+$UpdateSignKey = (Resolve-Path -LiteralPath $UpdateSignKey).Path
+if ($MinHealthyMirrors -lt 0) {
+    throw '-MinHealthyMirrors must be >= 0'
+}
 
 Push-Location $ROOT
 try {
@@ -60,14 +77,20 @@ try {
     )
 
     $buildArgs = @{
-        Version                = $Version
-        RollbackVersion        = $RollbackVersion
-        DownloadBaseUrl        = $mirrors[0]
-        MirrorBaseUrl          = $mirrors[1..($mirrors.Count - 1)]
-        RollbackBaseUrl        = $rollbackMirrors[0]
-        RollbackMirrorBaseUrl  = $rollbackMirrors[1..($rollbackMirrors.Count - 1)]
+        Version                    = $Version
+        RollbackVersion            = $RollbackVersion
+        DownloadBaseUrl            = $mirrors[0]
+        RegistryBaseUrl            = $base
+        MirrorBaseUrl              = $mirrors[1..($mirrors.Count - 1)]
+        RollbackBaseUrl            = $rollbackMirrors[0]
+        RollbackRegistryBaseUrl    = $rollbackBase
+        RollbackMirrorBaseUrl      = $rollbackMirrors[1..($rollbackMirrors.Count - 1)]
+        SignKey                    = $UpdateSignKey
+        RequireSignature           = $true
+        MinHealthyMirrors          = $MinHealthyMirrors
     }
     if ($NoDataMigration) { $buildArgs['NoDataMigration'] = $true }
+    if ($SkipMirrorCheck) { $buildArgs['SkipMirrorCheck'] = $true }
 
     if ($Plan) {
         Write-Host '== plan =='
