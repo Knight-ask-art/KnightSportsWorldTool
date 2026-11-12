@@ -585,7 +585,7 @@
                 <span id="goalLine2">预计 —</span>
               </div>
 
-              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位与围栏来自登录后的服务器接口；没有 token 时不会生成假点位。</div>
+              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位与围栏来自登录后的服务器接口；没有登录时不会生成假点位。</div>
             </section>
 
             <section class="rsec" id="rsec-params">
@@ -1319,7 +1319,7 @@
           </div>
           <div class="form-actions">
             <button class="btn small primary" id="saveRules">保存要求</button>
-            <span class="hint" id="rulesHint" style="margin:0">任意填写一项即可启用模型；留空项不检查。</span>
+            <span class="hint" id="rulesHint" style="margin:0">学校没配置要求时，点「从服务器读取」确认一次；仍为空可以直接去跑步，模型会按已填写项检查。</span>
           </div>
         </section>
 
