@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "app": "haoxiangpao",
+  "name": "好想跑",
+  "channel": "stable",
+  "version": "9.9.9",
+  "min_version": "0.1.4",
+  "released_at": "2026-11-12T12:00:00+08:00",
+  "notes": [
+    "中文说明",
+    "quote \" and slash \\",
+    "control \u0001"
+  ],
+  "assets": {
+    "windows-x64": {
+      "file": "haoxiangpao_v9.9.9_win64.zip",
+      "url": "https://example.com/haoxiangpao_v9.9.9_win64.zip",
+      "size": 123456,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "format": "zip",
+      "layout": "onedir",
+      "entry": "好想跑.exe",
+      "version": "9.9.9"
+    },
+    "windows-x64-setup": {
+      "file": "haoxiangpao_v9.9.9_win64_setup.exe",
+      "url": "https://example.com/haoxiangpao_v9.9.9_win64_setup.exe",
+      "size": 234567,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "format": "installer",
+      "layout": "installer",
+      "entry": "好想跑.exe",
+      "version": "9.9.9"
+    }
+  },
+  "rollback": {
+    "version": "0.2.2",
+    "file": "haoxiangpao_v0.2.2_win64.zip",
+    "url": "https://example.com/haoxiangpao_v0.2.2_win64.zip",
+    "size": 345678,
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "format": "zip",
+    "layout": "onedir",
+    "entry": "好想跑.exe"
+  },
+  "generated_by": "test",
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "test",
+    "value": "wqhfnmSTIrauVUP7NYSofNFltMi296JXRTGXjWN50iKvKBHidt/fyX8pyPfmzRJc4nhO4MOxe9yv+b2nrWxAAg=="
+  }
+}
