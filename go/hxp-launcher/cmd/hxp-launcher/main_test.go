@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"haoxiangpao/hxp-launcher/internal/app"
+	"haoxiangpao/hxp-launcher/internal/apply"
 	"haoxiangpao/hxp-launcher/internal/manifest"
 	"haoxiangpao/hxp-launcher/internal/worker"
 )
@@ -528,5 +529,281 @@ func TestWorkerOnceCLIExitCodes(t *testing.T) {
 	st, ok, err := worker.LoadState(worker.StatePath(dataDir))
 	if err != nil || !ok || st.Phase != worker.PhaseReady {
 		t.Fatalf("expected ready state after CLI --once success, got ok=%v err=%v st=%+v", ok, err, st)
+	}
+}
+
+func TestMaybeApplySpawnsHelperOnlyForReadyAndNewer(t *testing.T) {
+	dir := t.TempDir()
+	writeBuildInfo(t, dir, "0.2.2")
+	appPath := filepath.Join(dir, "好想跑.exe")
+	dataDir := filepath.Join(dir, "data")
+	logPath := filepath.Join(dataDir, "updates", "launcher.log")
+	pkgPath := filepath.Join(dataDir, "updates", "haoxiangpao_v0.3.0_win64.zip")
+	if err := os.MkdirAll(filepath.Dir(pkgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pkgPath, []byte("PK\x03\x04dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	writeReadyState := func(phase, ver, pkg string) {
+		if err := worker.SaveState(worker.StatePath(dataDir), worker.State{
+			Schema:  worker.StateSchema,
+			Version: ver,
+			Phase:   phase,
+			Package: pkg,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. ready + newer + existing package -> spawns apply helper, does NOT launch app.
+	writeReadyState(worker.PhaseReady, "0.3.0", pkgPath)
+	var (
+		launched   bool
+		gotApply   ApplySpawnOptions
+		applyCount int
+	)
+	deps := launcherDeps{
+		launch: func(opts app.LaunchOptions) (int, error) {
+			launched = true
+			return 1111, nil
+		},
+		spawnWorker: func(opts WorkerSpawnOptions) (int, error) {
+			return 2222, nil
+		},
+		spawnApply: func(opts ApplySpawnOptions) (int, error) {
+			applyCount++
+			gotApply = opts
+			return 3333, nil
+		},
+		currentPID: func() int { return 7777 },
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{
+		"--app", appPath,
+		"--data", dataDir,
+		"--log", logPath,
+	}, &stdout, &stderr, dir, deps)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if launched {
+		t.Fatal("expected normal launcher not to launch app when apply helper spawned")
+	}
+	if applyCount != 1 {
+		t.Fatalf("expected 1 apply helper spawn, got %d", applyCount)
+	}
+	if gotApply.PackagePath != pkgPath || gotApply.Version != "0.3.0" || gotApply.WaitPID != 7777 || gotApply.BootTimeoutSec != 30 {
+		t.Fatalf("unexpected ApplySpawnOptions: %+v", gotApply)
+	}
+
+	// 2. Non-qualifying states must not spawn apply helper and must launch app.
+	nonApplying := []struct {
+		name  string
+		phase string
+		ver   string
+		pkg   string
+	}{
+		{"same version", worker.PhaseReady, "0.2.2", pkgPath},
+		{"older version", worker.PhaseReady, "0.2.1", pkgPath},
+		{"missing package", worker.PhaseReady, "0.3.0", filepath.Join(dataDir, "updates", "missing.zip")},
+		{"downloading phase", worker.PhaseDownloading, "0.3.0", pkgPath},
+		{"rolled_back phase", worker.PhaseRolledBack, "0.3.0", pkgPath},
+	}
+	for _, tc := range nonApplying {
+		t.Run(tc.name, func(t *testing.T) {
+			writeReadyState(tc.phase, tc.ver, tc.pkg)
+			launched = false
+			applyCount = 0
+			stdout.Reset()
+			stderr.Reset()
+			code := runWithDeps([]string{
+				"--app", appPath,
+				"--data", dataDir,
+				"--log", logPath,
+			}, &stdout, &stderr, dir, deps)
+			if code != 0 || applyCount != 0 || !launched {
+				t.Fatalf("case %s: code=%d applyCount=%d launched=%v", tc.name, code, applyCount, launched)
+			}
+		})
+	}
+
+	// 3. Helper spawn failure -> fail-open, launches current app.
+	writeReadyState(worker.PhaseReady, "0.3.0", pkgPath)
+	launched = false
+	deps.spawnApply = func(opts ApplySpawnOptions) (int, error) {
+		return 0, errors.New("spawn denied")
+	}
+	code = runWithDeps([]string{
+		"--app", appPath,
+		"--data", dataDir,
+		"--log", logPath,
+	}, &stdout, &stderr, dir, deps)
+	if code != 0 || !launched {
+		t.Fatalf("expected fail-open launch when apply helper spawn fails: code=%d launched=%v", code, launched)
+	}
+}
+
+func TestCheckDryRunNoUpdateNeverApply(t *testing.T) {
+	manifestBytes, err := os.ReadFile(testdataPath("manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(manifestBytes)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeBuildInfo(t, dir, "0.2.2")
+	appPath := filepath.Join(dir, "好想跑.exe")
+	dataDir := filepath.Join(dir, "data")
+	logPath := filepath.Join(dataDir, "updates", "launcher.log")
+	pkgPath := filepath.Join(dataDir, "updates", "pkg.zip")
+	if err := os.MkdirAll(filepath.Dir(pkgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pkgPath, []byte("PK\x03\x04"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.SaveState(worker.StatePath(dataDir), worker.State{
+		Schema:  worker.StateSchema,
+		Version: "0.3.0",
+		Phase:   worker.PhaseReady,
+		Package: pkgPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	applySpawned := false
+	deps := launcherDeps{
+		launch: func(opts app.LaunchOptions) (int, error) {
+			return 123, nil
+		},
+		spawnWorker: func(opts WorkerSpawnOptions) (int, error) {
+			return 456, nil
+		},
+		spawnApply: func(opts ApplySpawnOptions) (int, error) {
+			applySpawned = true
+			return 789, nil
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	for _, extra := range [][]string{{"--check"}, {"--dry-run"}, {"--no-update"}} {
+		args := []string{
+			"--app", appPath,
+			"--data", dataDir,
+			"--log", logPath,
+			"--allow-local",
+			"--manifest", srv.URL,
+			"--pubkey", testdataPath("pubkey.b64"),
+		}
+		args = append(args, extra...)
+		stdout.Reset()
+		stderr.Reset()
+		code := runWithDeps(args, &stdout, &stderr, dir, deps)
+		if code != 0 || applySpawned {
+			t.Fatalf("flags %v must exit 0 and never apply: code=%d applySpawned=%v stderr=%s", extra, code, applySpawned, stderr.String())
+		}
+	}
+}
+
+func TestBuildApplyCommandIncludesRequiredArgs(t *testing.T) {
+	tempExe := filepath.Join(os.TempDir(), "hxp-apply-999.exe")
+	cmd := buildApplyCommand(tempExe, ApplySpawnOptions{
+		AppPath:        `C:\app\好想跑.exe`,
+		DataDir:        `C:\app\data`,
+		PackagePath:    `C:\app\data\updates\pkg.zip`,
+		Version:        "0.3.0",
+		WaitPID:        999,
+		BootTimeoutSec: 45,
+		LogPath:        `C:\app\data\updates\launcher.log`,
+	})
+	wantPairs := [][2]string{
+		{"--apply-package", `C:\app\data\updates\pkg.zip`},
+		{"--apply-version", "0.3.0"},
+		{"--apply-wait-pid", "999"},
+		{"--apply-boot-timeout", "45"},
+		{"--app", `C:\app\好想跑.exe`},
+		{"--data", `C:\app\data`},
+		{"--log", `C:\app\data\updates\launcher.log`},
+	}
+	if !slices.Contains(cmd.Args, "--apply-helper") {
+		t.Fatalf("missing --apply-helper in %v", cmd.Args)
+	}
+	for _, pair := range wantPairs {
+		idx := slices.Index(cmd.Args, pair[0])
+		if idx < 0 || idx+1 >= len(cmd.Args) || cmd.Args[idx+1] != pair[1] {
+			t.Fatalf("missing %s %s in %v", pair[0], pair[1], cmd.Args)
+		}
+	}
+	if cmd.Dir != os.TempDir() {
+		t.Fatalf("expected apply helper Dir=%q, got %q", os.TempDir(), cmd.Dir)
+	}
+	if cmd.SysProcAttr == nil {
+		t.Fatal("expected detached SysProcAttr on apply helper command")
+	}
+}
+
+func TestApplyHelperCLIAndBadUsage(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+
+	// Bad usage checks
+	badCases := [][]string{
+		{"--apply-helper"},
+		{"--apply-helper", "--apply-package", "pkg.zip"},
+		{"--apply-helper", "--apply-package", "pkg.zip", "--apply-version", "0.3.0", "--check"},
+		{"--apply-package", "pkg.zip"},
+		{"--apply-helper", "--apply-package", "pkg.zip", "--apply-version", "0.3.0", "--apply-boot-timeout", "0"},
+		{"--apply-helper", "--apply-package", "pkg.zip", "--apply-version", "0.3.0", "--apply-wait-pid", "-1"},
+	}
+	for _, args := range badCases {
+		stdout.Reset()
+		stderr.Reset()
+		if code := run(args, &stdout, &stderr, dir); code != 2 {
+			t.Fatalf("expected exit 2 for %v, got %d", args, code)
+		}
+	}
+
+	// Valid --apply-helper delegates to runApply and exits without manifest check.
+	var gotOpts apply.Options
+	deps := launcherDeps{
+		runApply: func(opts apply.Options) error {
+			gotOpts = opts
+			return nil
+		},
+	}
+	code := runWithDeps([]string{
+		"--app", filepath.Join(dir, "好想跑.exe"),
+		"--data", filepath.Join(dir, "data"),
+		"--log", filepath.Join(dir, "data", "updates", "launcher.log"),
+		"--apply-helper",
+		"--apply-package", filepath.Join(dir, "pkg.zip"),
+		"--apply-version", "0.3.0",
+		"--apply-wait-pid", "0",
+		"--apply-boot-timeout", "12",
+	}, &stdout, &stderr, dir, deps)
+	if code != 0 {
+		t.Fatalf("expected exit 0 from --apply-helper, got %d; stderr=%s", code, stderr.String())
+	}
+	if gotOpts.Version != "0.3.0" || gotOpts.BootTimeout != 12*time.Second || gotOpts.PackagePath != filepath.Join(dir, "pkg.zip") {
+		t.Fatalf("unexpected apply.Options: %+v", gotOpts)
+	}
+
+	deps.runApply = func(opts apply.Options) error {
+		return errors.New("apply boom")
+	}
+	code = runWithDeps([]string{
+		"--app", filepath.Join(dir, "好想跑.exe"),
+		"--apply-helper",
+		"--apply-package", filepath.Join(dir, "pkg.zip"),
+		"--apply-version", "0.3.0",
+	}, &stdout, &stderr, dir, deps)
+	if code != 1 {
+		t.Fatalf("expected exit 1 on apply failure, got %d", code)
 	}
 }

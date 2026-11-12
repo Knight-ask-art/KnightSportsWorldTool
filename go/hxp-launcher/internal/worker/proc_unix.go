@@ -13,7 +13,7 @@ func DetachedSysProcAttr() *syscall.SysProcAttr {
 	}
 }
 
-func isProcessAlive(pid int) bool {
+func IsProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -22,4 +22,8 @@ func isProcessAlive(pid int) bool {
 		return true
 	}
 	return errors.Is(err, syscall.EPERM)
+}
+
+func isProcessAlive(pid int) bool {
+	return IsProcessAlive(pid)
 }

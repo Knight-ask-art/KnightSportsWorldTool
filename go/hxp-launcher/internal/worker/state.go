@@ -18,6 +18,9 @@ const (
 	StateSchema      = 1
 	PhaseDownloading = "downloading"
 	PhaseReady       = "ready"
+	PhaseApplying    = "applying"
+	PhaseApplied     = "applied"
+	PhaseRolledBack  = "rolled_back"
 )
 
 type State struct {

@@ -11,9 +11,11 @@ import inspect
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from .. import build_info
 from ..build_info import app_root, is_compiled
 from ..compat.mocks.mock_65530 import MockBackendState, serve as serve_be
 from ..compat.mocks.mock_iydsj import MockIydsjState, serve as serve_iydsj
@@ -401,6 +403,36 @@ def build_api(store_dir: str | None = None) -> ReplicaApi:
                       f'http://127.0.0.1:{bsrv.server_port}', pub, store_dir)
 
 
+def _write_boot_ok() -> None:
+    raw_path = (os.environ.get('JHP_BOOT_OK_PATH') or '').strip()
+    if not raw_path:
+        return
+    tmp_path = ''
+    try:
+        path = os.path.abspath(os.path.expanduser(raw_path))
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        payload = {
+            'version': build_info.VERSION,
+            'pid': os.getpid(),
+            'at': int(time.time() * 1000),
+        }
+        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        tmp_path = f'{path}.{os.getpid()}.tmp'
+        with open(tmp_path, 'wb') as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    except Exception:  # noqa: BLE001 - boot marker must never break startup
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
 def serve(port: int = 65520, store_dir: str | None = None,
           quiet: bool = False) -> ThreadingHTTPServer:
     global API
@@ -417,6 +449,7 @@ def serve(port: int = 65520, store_dir: str | None = None,
         print(f'replica up: http://127.0.0.1:{port}/')
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
+    _write_boot_ok()
     return srv
 
 
