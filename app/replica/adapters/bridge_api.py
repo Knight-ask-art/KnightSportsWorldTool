@@ -638,8 +638,13 @@ class ReplicaApi:
             'finished_at_ms': 0,
         }
         self._rm_thread = None
+        self._rm_cache_lock = threading.RLock()
+        self._rm_suggest_cache = None
+        self._rm_apply_cache = None
+        self._rm_fence_cache = None
         self._agent_lock = threading.RLock()
         self._agent_session = None
+        self._agent_choice_cache_obj = None
         self._device_lock = threading.RLock()
         self._device_cache = None
         self._device_migration = None
@@ -4713,6 +4718,45 @@ class ReplicaApi:
             self._rm_exec = lock
         return lock
 
+    def _rm_suggest_cache_obj(self):
+        with self._rm_cache_lock:
+            if self._rm_suggest_cache is None:
+                from ..application import agent_cache
+                self._rm_suggest_cache = agent_cache.TTLCache(
+                    ttl_s=90.0, max_entries=16)
+            return self._rm_suggest_cache
+
+    def _rm_apply_cache_obj(self):
+        with self._rm_cache_lock:
+            if self._rm_apply_cache is None:
+                from ..application import agent_cache
+                self._rm_apply_cache = agent_cache.TTLCache(
+                    ttl_s=300.0, max_entries=24)
+            return self._rm_apply_cache
+
+    def _rm_fence_cache_obj(self):
+        with self._rm_cache_lock:
+            if self._rm_fence_cache is None:
+                from ..application import agent_cache
+                self._rm_fence_cache = agent_cache.TTLCache(
+                    ttl_s=60.0, max_entries=4)
+            return self._rm_fence_cache
+
+    def _agent_choice_cache(self):
+        with self._rm_cache_lock:
+            if self._agent_choice_cache_obj is None:
+                from ..application import agent_cache
+                self._agent_choice_cache_obj = agent_cache.ChoiceCache(
+                    self.store_dir)
+            return self._agent_choice_cache_obj
+
+    def _rm_cache_clear(self):
+        with self._rm_cache_lock:
+            if self._rm_suggest_cache is not None:
+                self._rm_suggest_cache.clear()
+            if self._rm_apply_cache is not None:
+                self._rm_apply_cache.clear()
+
     def _rm_run_learn_guarded(self, acct, limit_n: int, campus: dict) -> dict:
         # Serialize every learn (sync or background) so two callers never
         # rewrite progress.json / the memory doc at the same time.
@@ -4968,6 +5012,9 @@ class ReplicaApi:
 
             self._rm_set_progress(phase='saving')
             RM.save(self.store_dir, acct.uid, acct.unid, doc)
+            # The memory revision changed, so every cached suggestion/apply
+            # result is stale even if the file signature happens to collide.
+            self._rm_cache_clear()
             summary = RM.summarize(doc)
             progress = self._rm_set_progress(
                 running=False,
@@ -5008,6 +5055,11 @@ class ReplicaApi:
             'summary': summary,
             'templates': templates,
             'progress': self._rm_progress_for(f'{acct.uid}:{acct.unid}'),
+            'cache': {
+                'suggest': self._rm_suggest_cache_obj().stats(),
+                'apply': self._rm_apply_cache_obj().stats(),
+                'fence': self._rm_fence_cache_obj().stats(),
+            },
         })
 
     def real_route_memory_learn(self, limit=50, force=False, wait=True):
@@ -5084,11 +5136,13 @@ class ReplicaApi:
 
     def real_route_memory_suggest(self, km=2.5, points=None, fence=None,
                                   run_area_id=None):
+        from ..application import agent_cache
         from ..application import route_memory as RM
 
         acct, err = self._rm_require_account()
         if err is not None:
             return err
+        owner = f'{acct.uid}:{acct.unid}'
 
         try:
             km_val = float(km)
@@ -5104,21 +5158,38 @@ class ReplicaApi:
         if fence is None:
             # The caller usually passes LIVE.fences.  When it does not, try the
             # same fence endpoint the map uses; a failure simply means "no
-            # fence filter", never an error.
-            got = None
-            try:
-                got = self.real_fetch_fence()
-            except Exception:  # noqa: BLE001 - offline or policy unavailable
+            # fence filter", never an error.  A short-lived fence cache keeps
+            # repeated suggest calls from re-hitting the network.
+            fence_cache = self._rm_fence_cache_obj()
+            fence_key = f'{owner}|{run_area_id}'
+            cached_fence = fence_cache.get(fence_key)
+            if isinstance(cached_fence, dict):
+                fence_norm = cached_fence.get('fence')
+                cached_center = cached_fence.get('center')
+                if (isinstance(cached_center, (list, tuple))
+                        and len(cached_center) == 2):
+                    fence_center = (float(cached_center[0]),
+                                    float(cached_center[1]))
+            else:
                 got = None
-            data = (got.get('data') if isinstance(got, dict)
-                    and got.get('code') == 200 else None)
-            if isinstance(data, dict):
-                fence_norm = self._rm_normalise_fence(
-                    data.get('polygons') if data.get('polygons') is not None
-                    else data.get('polygon'))
-                c = data.get('center')
-                if isinstance(c, dict) and self._center_ok(c.get('lat'), c.get('lon')):
-                    fence_center = (float(c['lat']), float(c['lon']))
+                try:
+                    got = self.real_fetch_fence()
+                except Exception:  # noqa: BLE001 - offline or policy unavailable
+                    got = None
+                data = (got.get('data') if isinstance(got, dict)
+                        and got.get('code') == 200 else None)
+                if isinstance(data, dict):
+                    fence_norm = self._rm_normalise_fence(
+                        data.get('polygons') if data.get('polygons') is not None
+                        else data.get('polygon'))
+                    c = data.get('center')
+                    if isinstance(c, dict) and self._center_ok(c.get('lat'), c.get('lon')):
+                        fence_center = (float(c['lat']), float(c['lon']))
+                    if fence_norm is not None or fence_center is not None:
+                        fence_cache.put(fence_key, {
+                            'fence': fence_norm,
+                            'center': list(fence_center) if fence_center else None,
+                        })
 
         center = None
         if cps:
@@ -5132,6 +5203,26 @@ class ReplicaApi:
             elif self._center_ok(getattr(acct, 'center_lat', 0),
                                  getattr(acct, 'center_lng', 0)):
                 center = (float(acct.center_lat), float(acct.center_lng))
+
+        # The geometry is deterministic for a given memory revision and input
+        # set.  The cache key therefore includes the memory file signature so
+        # learning a new route invalidates every old answer.
+        cache_key = agent_cache.stable_hash({
+            'owner': owner,
+            'doc': agent_cache.file_signature(
+                RM.memory_path(self.store_dir, acct.uid, acct.unid)),
+            'km': round(km_val, 3),
+            'points': cps,
+            'fence': fence_norm,
+            'center': center,
+        })
+        cache = self._rm_suggest_cache_obj()
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            data = dict(cached)
+            data['progress'] = self._rm_progress_for(owner)
+            data['cached'] = True
+            return _ok(data, message=data.get('message') or 'success')
 
         doc = RM.load(self.store_dir, acct.uid, acct.unid)
         summary = RM.summarize(doc)
@@ -5162,13 +5253,19 @@ class ReplicaApi:
             'templates': summary.get('templates', 0),
             'target_m': round(km_val * 1000.0, 1),
             'status': status,
-            'progress': self._rm_progress_for(f'{acct.uid}:{acct.unid}'),
+            'progress': self._rm_progress_for(owner),
+            'cached': False,
         }
         if msg:
             data['message'] = msg
+        if status == 'ok' and candidates:
+            cache.put(cache_key, {
+                key: value for key, value in data.items() if key != 'progress'
+            })
         return _ok(data, message=msg or 'success')
 
     def real_route_memory_apply(self, template_id, km=2.5, points=None):
+        from ..application import agent_cache
         from ..application import route_memory as RM
 
         acct, err = self._rm_require_account()
@@ -5184,11 +5281,30 @@ class ReplicaApi:
         km_val = max(0.5, min(20.0, km_val))
 
         cps = self._rm_normalise_points(points)
+        owner = f'{acct.uid}:{acct.unid}'
+        cache_key = agent_cache.stable_hash({
+            'owner': owner,
+            'doc': agent_cache.file_signature(
+                RM.memory_path(self.store_dir, acct.uid, acct.unid)),
+            'template_id': str(template_id or ''),
+            'km': round(km_val, 3),
+            'points': cps,
+        })
+        cache = self._rm_apply_cache_obj()
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            out = dict(cached)
+            out['cached'] = True
+            return _ok(out)
+
         doc = RM.load(self.store_dir, acct.uid, acct.unid)
         res = RM.apply_template(doc, str(template_id or ''), km_val, points=cps)
         if not res.get('ok'):
             return _fail(res.get('error') or '模板应用失败')
-        return _ok(res)
+        out = dict(res)
+        out['cached'] = False
+        cache.put(cache_key, {k: v for k, v in out.items() if k != 'cached'})
+        return _ok(out)
 
     def real_route_memory_clear(self):
         from ..application import route_memory as RM
@@ -5197,6 +5313,7 @@ class ReplicaApi:
         if err is not None:
             return err
         RM.clear(self.store_dir, acct.uid, acct.unid)
+        self._rm_cache_clear()
         self._rm_set_progress(**self._rm_default_progress())
         return _ok({'cleared': True})
 
@@ -5274,13 +5391,45 @@ class ReplicaApi:
     def _agent_build_tools(self) -> dict:
         def _llm_choose(candidates, target_m):
             try:
-                from ..application import llm_client, llm_settings
+                from ..application import agent_cache, llm_client, llm_settings
             except Exception:  # noqa: BLE001
                 return None
             settings = llm_settings.effective(self.store_dir)
             if settings is None:
                 return None
+
+            # Choosing a candidate is a classification task, not creative
+            # writing.  Temperature 0 makes the same prompt reproducible and
+            # lets the local cache return the same decision safely.
+            settings = dict(settings)
+            settings['temperature'] = 0.0
+            model = str(settings.get('model') or '')
             messages = llm_settings.build_choice_prompt(candidates, target_m)
+            cache_key = agent_cache.stable_hash({
+                'protocol': settings.get('protocol'),
+                'base_url': settings.get('base_url'),
+                'model': model,
+                'temperature': 0.0,
+                'messages': messages,
+            })
+
+            cache = self._agent_choice_cache()
+            hit = cache.get(cache_key)
+            if isinstance(hit, dict):
+                cached_id = str(hit.get('template_id') or '')
+                if any(
+                    isinstance(c, dict)
+                    and str(c.get('template_id') or '') == cached_id
+                    for c in (candidates or [])
+                ):
+                    return {
+                        'template_id': cached_id,
+                        'model': model,
+                        'error': '',
+                        'cached': True,
+                        'prompt_sha256': cache_key,
+                    }
+
             proxy = (os.environ.get('JHP_PROXY') or '').strip()
             proxies = {'http': proxy, 'https': proxy} if proxy else None
             res = llm_client.chat(settings, messages, proxies=proxies)
@@ -5291,13 +5440,18 @@ class ReplicaApi:
             if not picked:
                 return {
                     'template_id': '',
-                    'model': str(settings.get('model') or ''),
+                    'model': model,
                     'error': '模型返回无效候选序号',
+                    'cached': False,
+                    'prompt_sha256': cache_key,
                 }
+            cache.put(cache_key, picked, model)
             return {
                 'template_id': picked,
-                'model': str(settings.get('model') or ''),
+                'model': model,
                 'error': '',
+                'cached': False,
+                'prompt_sha256': cache_key,
             }
 
         return {

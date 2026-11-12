@@ -423,11 +423,22 @@ class AgentSession:
     "preview": {...},          # 现有 preview_route 的返回
     "audit": {...},            # 现有 audit_run 的返回
     "llm": {"used": false, "model": "", "error": ""},
+    "stats": {
+      "tool_calls": 8, "tool_retries": 0,
+      "cache_hits": 2, "cache_misses": 1,
+      "llm_calls": 0, "llm_cache_hits": 1, "llm_cache_misses": 0,
+      "candidates_tried": 1
+    },
     "error": "",
     "updated_at_ms": ...
   }
   ```
 - `log` 只保留最近 200 条；`data` 字段不得含 token、uid、完整坐标。
+- 工具返回必须过结构校验：`status/learn` 缺 `summary`、`suggest` 缺候选列表、`apply` 缺有效控制点、`audit` 缺布尔 `summary.ok`，一律进入 `error`；**缺审计 summary 不得当作通过**。
+- 瞬时错误（超时/网络/429/5xx/繁忙）自动重试 1 次；token/401/403 不重试。
+- 审计失败时自动尝试下一条候选，最多 3 条；全部失败仍停在 `wait_confirm` 并保持 `audit.summary.ok=false`，确认按钮不可用。
+- 显式「用第 N 条」是用户决定，不参与自动轮换；审计失败时保留该候选，并在 `wait_confirm` 日志/提示中写明“未自动替换”。
+- `suggest/apply` 使用进程内 TTL 缓存；缓存键包含记忆文件内容哈希，`learn/clear` 主动失效。`fence=None` 时围栏结果另缓存 60 秒，避免重复联网。
 - 同一时间只允许一个运行中的会话；`start` 会取消旧线程（设置 `cancel_event`）。
 - `confirm()` 只在 `wait_confirm` 状态有效；返回：
   ```python
@@ -441,12 +452,15 @@ class AgentSession:
 
 | 输入 | 动作 |
 |---|---|
-| 含 `2.5 km` / `2.5公里` / `跑三公里` | 设置目标距离，重新 `suggest` |
+| 含 `2.5 km` / `2.5公里` / `跑三公里` / `3km路线` | 设置目标距离，重新 `suggest` |
 | `换一条` / `下一条` | 候选列表轮换，重新 `adapt/preview/audit` |
 | `反向` / `反着跑` | 闭环候选反向，重新预览 |
 | `重新学习` / `再学一次` | 强制 `learn(force=True)` |
 | `确认` / `就这条` | 等价 `confirm()` |
 | `取消` / `算了` | `cancel()` |
+| `跑3公里，用第2条` | 距离优先；新候选生成后优先第 2 条 |
+| `换一条3公里` / `反向3公里` | 距离优先，重新推荐；动作在新候选上重新计算 |
+| `不要取消` / `别再反向` | 否定词不触发对应动作 |
 | 其他 | 记一条“没听懂”的提示，保持当前状态，不报错 |
 
 中文数字要支持：一/二/三/四/五/六/七/八/九/十，以及 `半`（0.5）。
@@ -728,7 +742,7 @@ def test_connection(settings: dict, proxies: dict | None = None) -> dict:
 
 ### 11.5 脱敏与隐私（硬门禁）
 
-- `build_choice_prompt` 的输入只允许：候选序号、`lap_m` 取整、`laps`、`samples`、`missed` 数量、`fence_ok`、`detour_m` 取整、目标距离取整。
+- `build_choice_prompt` 的输入只允许：候选序号、`lap_m` 取整、`laps`、`samples`、`missed` 数量、`fence_ok`、`detour_m` 取整、`score`、`coverage`、目标距离取整。
 - 禁止出现：任何经纬度、完整 `line`、`template_id` 以外的 id、uid/unid、token、设备指纹、校区名、账号昵称。
 - 测试必须用正则断言 prompt 序列化后不含 `\d{2,3}\.\d{4,}`、`token`、`uid`、`unid`。
 - LLM 返回只用于“选第几条 + 解释”；最终 `line` 必须来自本地候选。
@@ -765,6 +779,10 @@ def test_connection(settings: dict, proxies: dict | None = None) -> dict:
 
 - 有 LLM：把 `build_choice_prompt` 的结果发给模型，解析 `template_id`；失败则回退到确定性 top 1。
 - 无 LLM：直接 top 1，不提示“AI 未配置”。
+- 选路调用固定 `temperature=0`，让同一 prompt 的决策可复现。
+- 本地缓存 `data/agent_llm_choices.json`：键是 model + base_url + messages 的 SHA-256，值是 `template_id`；默认 30 天、最多 200 条。缓存不写 prompt 原文、坐标、uid/unid 或 key。
+- 缓存命中时仍要校验 `template_id` 在本次候选列表中；不在则视为 miss。
+- 模型选中的候选若比本地第 1 名低超过 0.15 分，回退到第 1 名并记录原因，避免“模型选了明显更差的路线”。
 - LLM 解释只作为 `reasons` 的补充，不得覆盖本地计算出的硬指标（围栏、点位、距离）。
 - 每次选择写 `data/agent_runs/<timestamp>.jsonl`：记录 `template_id`、模型名、延迟、prompt 的 sha256；**不记录 prompt 原文**。
 

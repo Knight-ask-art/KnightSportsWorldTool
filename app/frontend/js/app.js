@@ -7382,15 +7382,21 @@ function renderAgentGoalBar(st){
   }
   if(llmEl){
     const llm = (st && st.llm && typeof st.llm === 'object') ? st.llm : {};
+    const stats = (st && st.stats && typeof st.stats === 'object') ? st.stats : {};
+    const cacheHits = (+stats.cache_hits || 0) + (+stats.llm_cache_hits || 0);
+    const cacheMisses = (+stats.cache_misses || 0) + (+stats.llm_cache_misses || 0);
+    const cacheText = (cacheHits + cacheMisses)
+      ? (' · 缓存 ' + cacheHits + '/' + (cacheHits + cacheMisses))
+      : '';
     if(llm.used){
-      llmEl.textContent = '模型：' + (llm.model || '已启用');
+      llmEl.textContent = '模型：' + (llm.model || '已启用') + cacheText;
     }else if(llm.error){
-      llmEl.innerHTML = '本地规则（模型已回退） · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+      llmEl.innerHTML = '本地规则（模型已回退）' + esc(cacheText) + ' · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
     }else if(LIVE.llmSettings && LIVE.llmSettings.enabled &&
              (LIVE.llmSettings.has_key || LIVE.llmSettings.protocol === 'ollama' || LIVE.llmSettings.protocol === 'custom')){
-      llmEl.textContent = '本地规则 · 已配置 ' + (LIVE.llmSettings.model || '模型');
+      llmEl.textContent = '本地规则 · 已配置 ' + (LIVE.llmSettings.model || '模型') + cacheText;
     }else{
-      llmEl.innerHTML = '本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+      llmEl.innerHTML = '本地规则' + esc(cacheText) + ' · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
     }
   }
 }
@@ -7671,7 +7677,12 @@ function renderAgentStatus(st){
         hintEl.textContent = errMsg;
       }
     }else if(state === 'wait_confirm' && !auditOk){
-      hintEl.textContent = '本地检查未通过，暂不可确认；请点「换一条」或调整目标距离。';
+      // Surface the Agent's final explanation (it knows whether the user's
+      // chosen candidate was kept or whether several candidates were tried).
+      const waitLog = [...logs].reverse().find(e => e && e.tool === 'wait_confirm' && e.text);
+      hintEl.textContent = waitLog
+        ? String(waitLog.text)
+        : '候选路线均未通过本地检查，暂不可确认；请调整目标距离或点位，或换一条再试。';
     }else if(canConfirm){
       hintEl.textContent = '路线与本地检查已就绪；点击「确认，去跑步页预览」前往跑步页确认。';
     }else if(state === 'cancelled'){

@@ -132,6 +132,10 @@ def test_agent_states_tool_cards_and_confirm_gating():
     assert '本地规则' in goal_fn
     assert 'data-goto="settings"' in goal_fn
     assert '配置模型（可选）' in goal_fn
+    assert 'cache_hits' in goal_fn
+    assert 'llm_cache_hits' in goal_fn
+    assert '缓存 ' in goal_fn
+    assert '候选路线均未通过本地检查' in render_fn
 
     apply_fn = _js_function('applyAgentRouteResult')
     assert 'setCloseUI(' in apply_fn

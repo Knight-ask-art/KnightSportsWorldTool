@@ -295,8 +295,12 @@ def test_parse_choice_formats():
     assert llm_settings.parse_choice('1', candidates) == 'lr_aaa'
     assert llm_settings.parse_choice('2', candidates) == 'lr_bbb'
     assert llm_settings.parse_choice('第2条', candidates) == 'lr_bbb'
+    assert llm_settings.parse_choice('第二条', candidates) == 'lr_bbb'
+    assert llm_settings.parse_choice('二', candidates) == 'lr_bbb'
     assert llm_settings.parse_choice('候选 2', candidates) == 'lr_bbb'
+    assert llm_settings.parse_choice('候选三', candidates) == 'lr_ccc'
     assert llm_settings.parse_choice('{"choice": 2}', candidates) == 'lr_bbb'
+    assert llm_settings.parse_choice('{"choice": "二"}', candidates) == 'lr_bbb'
     assert llm_settings.parse_choice('```json\n{"choice": 3}\n```', candidates) == 'lr_ccc'
 
     assert llm_settings.parse_choice('', candidates) is None
