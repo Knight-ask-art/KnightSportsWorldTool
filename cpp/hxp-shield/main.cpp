@@ -498,6 +498,86 @@ bool SealMake(const uint8_t* nonce, const uint8_t* go, const uint8_t* rust,
     return ok;
 }
 
+// ------------------------------------------------------------ self check ---
+//
+// Conservative by design: every test below must be true on a clean machine
+// running a normal build, because a false positive sends the maintainer after
+// a bug that does not exist.  The result is diagnostic; it never gates a
+// login.
+
+bool NoDebugger() {
+    if (IsDebuggerPresent()) {
+        return false;
+    }
+    BOOL remote = FALSE;
+    if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remote) && remote) {
+        return false;
+    }
+    return true;
+}
+
+bool ImageLooksIntact() {
+    const uint8_t* base = (const uint8_t*)GetModuleHandleW(nullptr);
+    if (base == nullptr) {
+        return false;
+    }
+    const IMAGE_DOS_HEADER* dos = (const IMAGE_DOS_HEADER*)base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+        dos->e_lfanew > 0x1000) {
+        return false;
+    }
+    const IMAGE_NT_HEADERS* nt =
+        (const IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) {
+        return false;
+    }
+    const IMAGE_FILE_HEADER* fh = &nt->FileHeader;
+    const IMAGE_OPTIONAL_HEADER* oh = &nt->OptionalHeader;
+    if (fh->NumberOfSections == 0 || fh->NumberOfSections > 96) {
+        return false;
+    }
+    if (oh->SectionAlignment == 0 ||
+        (oh->SectionAlignment & (oh->SectionAlignment - 1u)) != 0) {
+        return false;
+    }
+
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    const uint32_t entry = oh->AddressOfEntryPoint;
+    uint32_t span = 0;
+    bool entry_ok = false;
+    for (uint32_t i = 0; i < fh->NumberOfSections; ++i) {
+        const uint32_t va = sec[i].VirtualAddress;
+        const uint32_t vs = sec[i].Misc.VirtualSize;
+        const uint32_t rounded =
+            (vs + oh->SectionAlignment - 1u) & ~(oh->SectionAlignment - 1u);
+        if (va + rounded > span) {
+            span = va + rounded;
+        }
+        if (entry >= va && entry < va + (vs ? vs : 1u)) {
+            const uint32_t ch = sec[i].Characteristics;
+            entry_ok = (ch & IMAGE_SCN_MEM_EXECUTE) != 0 &&
+                       (ch & IMAGE_SCN_MEM_WRITE) == 0;
+        }
+    }
+    // SizeOfImage is the rounded end of the last section.  Allow the tail
+    // padding a linker may leave, but not a section table that disagrees.
+    if (!entry_ok || span > oh->SizeOfImage ||
+        oh->SizeOfImage - span >= oh->SectionAlignment) {
+        return false;
+    }
+
+    // A trampoline or an inline patch needs the code page writable.  Windows
+    // maps .text PAGE_EXECUTE_READ, so RWX here means someone changed it.
+    MEMORY_BASIC_INFORMATION mbi;
+    if (VirtualQuery(base + entry, &mbi, sizeof(mbi)) == 0) {
+        return false;
+    }
+    if ((mbi.Protect & (PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0) {
+        return false;
+    }
+    return true;
+}
+
 // ------------------------------------------------------------- opcode path -
 
 bool RunSelftest() {
@@ -833,6 +913,20 @@ int main(int argc, char** argv) {
             }
             Err("frame-test: fail\n");
             return 1;
+        }
+        if (strcmp(argv[1], "--selfcheck") == 0) {
+            // No path, module name or address is printed: the caller only
+            // needs a verdict, and a support log is not a map for a patcher.
+            if (!NoDebugger()) {
+                Err("selfcheck: debugger\n");
+                return 1;
+            }
+            if (!ImageLooksIntact()) {
+                Err("selfcheck: image\n");
+                return 1;
+            }
+            Say("selfcheck: ok\n");
+            return 0;
         }
         Err("bad arg\n");
         return 2;

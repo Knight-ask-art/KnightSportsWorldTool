@@ -370,6 +370,77 @@ def test_require_returns_blocked_within_the_ttl_when_the_child_hangs(monkeypatch
     assert box['proc'].poll() is not None
 
 
+def test_a_changed_sidecar_blocks_before_any_layer_runs(monkeypatch):
+    monkeypatch.setattr(shield, '_binaries',
+                        lambda: pytest.fail('must not probe binaries'))
+    monkeypatch.setattr(shield.integrity, 'mismatch_message',
+                        lambda: shield.integrity.REPAIR_MESSAGE)
+    assert shield.require('store') == {
+        'blocked': True, 'message': shield.integrity.REPAIR_MESSAGE}
+
+
+def test_a_missing_sidecar_is_left_to_the_layer_check(monkeypatch):
+    monkeypatch.setattr(shield.integrity, 'mismatch_message', lambda: None)
+    monkeypatch.setattr(shield, '_binaries', lambda: (None, None, None))
+    monkeypatch.setattr(shield, '_is_frozen', lambda: False)
+    assert shield.require('store') == {'allowed': True, 'skipped': True}
+
+
+def test_jhp_shield_zero_does_not_hide_a_changed_sidecar(monkeypatch):
+    # The switch skips the derivation for local debugging; it must not make a
+    # modified install valid.
+    monkeypatch.setenv('JHP_SHIELD', '0')
+    monkeypatch.setattr(shield.integrity, 'mismatch_message',
+                        lambda: shield.integrity.REPAIR_MESSAGE)
+    out = shield.require('store')
+    assert out == {'blocked': True, 'message': shield.integrity.REPAIR_MESSAGE}
+
+
+def test_selfcheck_is_skipped_when_the_binary_is_absent(monkeypatch):
+    monkeypatch.setattr(shield, 'find_shield', lambda: None)
+    assert shield.selfcheck() == {'ok': None, 'skipped': True}
+
+
+def test_selfcheck_reads_the_sidecar_verdict(monkeypatch, tmp_path):
+    exe = tmp_path / 'hxp-shield.exe'
+    exe.write_bytes(b'stub')
+    seen = {}
+
+    class Proc:
+        def __init__(self, code, err=b''):
+            self.returncode = code
+            self.stderr = err
+
+    def fake_run(argv, **kwargs):
+        seen['argv'] = argv
+        seen['stdin'] = kwargs.get('stdin')
+        return Proc(0)
+
+    monkeypatch.setattr(shield.subprocess, 'run', fake_run)
+    assert shield.selfcheck(str(exe)) == {'ok': True}
+    assert seen['argv'] == [str(exe), '--selfcheck']
+    assert seen['stdin'] is shield.subprocess.DEVNULL
+
+    monkeypatch.setattr(shield.subprocess, 'run',
+                        lambda argv, **kw: Proc(1, b'selfcheck: image\n'))
+    assert shield.selfcheck(str(exe)) == {'ok': False, 'reason': 'image'}
+
+    monkeypatch.setattr(shield.subprocess, 'run',
+                        lambda argv, **kw: Proc(1, b'selfcheck: debugger\n'))
+    assert shield.selfcheck(str(exe)) == {'ok': False, 'reason': 'debugger'}
+
+
+def test_selfcheck_failure_to_start_is_reported_not_raised(monkeypatch, tmp_path):
+    exe = tmp_path / 'hxp-shield.exe'
+    exe.write_bytes(b'stub')
+
+    def nope(argv, **kwargs):
+        raise OSError('cannot start')
+
+    monkeypatch.setattr(shield.subprocess, 'run', nope)
+    assert shield.selfcheck(str(exe)) == {'ok': False, 'reason': 'unavailable'}
+
+
 def test_read_exact_raises_when_the_pipe_stays_blocked():
     class BlockedPipe:
         def read(self, size):

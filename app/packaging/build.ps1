@@ -263,6 +263,19 @@ if ($LASTEXITCODE -ne 0) {
     throw "bundled hxp-shield --selftest failed with exit code $LASTEXITCODE"
 }
 
+# The self-check is diagnostic, so an attached debugger must not fail a release
+# build.  A writable .text section, however, means the linker settings are
+# wrong and every copy would report "image", which is a build defect.
+$selfcheckOut = & (Join-Path $runtimeCpp 'hxp-shield.exe') --selfcheck 2>&1
+if ($LASTEXITCODE -ne 0) {
+    if ($selfcheckOut -match 'image') {
+        throw ("bundled hxp-shield --selfcheck failed: {0}" -f $selfcheckOut)
+    }
+    Write-Host ("   hxp-shield --selfcheck: {0} (debugger attached)" -f $selfcheckOut)
+} else {
+    Write-Host '   hxp-shield --selfcheck: ok'
+}
+
 # The Go and Rust copies must also answer their protocol before packaging:
 # a corrupt/missing-dependency/wrong-architecture sidecar would otherwise
 # build cleanly and fail only at the user's first login.

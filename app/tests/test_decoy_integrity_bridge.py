@@ -66,6 +66,17 @@ def test_bridge_integrity_reports_a_manifest_error_without_raising(
     assert out['data']['reason'] == 'manifest'
 
 
+def test_bridge_integrity_adds_the_selfcheck_outside_a_source_checkout(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': True, 'checked': 3, 'missing': [], 'mismatch': []})
+    monkeypatch.setattr(shield, 'selfcheck',
+                        lambda: {'ok': False, 'reason': 'image'})
+    out = _api(tmp_path).real_integrity_status()
+    assert out['code'] == 200
+    assert out['data']['selfcheck'] == {'ok': False, 'reason': 'image'}
+
+
 def test_decoy_and_integrity_calls_do_not_bypass_the_login_gate(
         tmp_path, monkeypatch):
     monkeypatch.setattr(D, '_activated_at', None)

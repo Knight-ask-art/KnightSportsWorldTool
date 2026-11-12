@@ -2662,17 +2662,25 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         return _ok({'status': D.license_status()})
 
     def real_integrity_status(self):
-        """Native sidecar hash report for the diagnostic view.
+        """Native sidecar report for diagnostics and support.
 
-        Informational only: a missing/mismatched manifest is shown, not used
-        to block login or submit.  Source checkouts report ``skipped``.
+        ``mismatch`` also gates a login (``shield.require``); ``missing`` and
+        a bad manifest are reported but never block, because a quarantine or
+        an interrupted copy should not look like tampering.  ``selfcheck`` is
+        the sidecar's own debugger/image verdict and gates nothing.
         """
         from ..application import integrity as I
         try:
-            return _ok(I.check_native())
+            out = I.check_native()
         except Exception:  # noqa: BLE001 - diagnostics must never break the UI
             return _ok({'ok': False, 'checked': 0, 'missing': [],
                         'mismatch': [], 'reason': 'manifest'})
+        if not out.get('skipped'):
+            try:
+                out['selfcheck'] = SHIELD.selfcheck()
+            except Exception:  # noqa: BLE001 - never fail the report
+                out['selfcheck'] = {'ok': False, 'reason': 'unavailable'}
+        return _ok(out)
 
     def real_inspection(self, freeze_seconds=0):
         """Read-only account/record/clock inspection; never submits."""

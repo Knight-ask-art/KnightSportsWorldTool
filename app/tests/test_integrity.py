@@ -1,8 +1,8 @@
 """Native integrity manifest: match, missing, mismatch, bad manifest.
 
 All fixtures live under ``tmp_path``; nothing reads ``app/data`` and no native
-binary is started.  The check is diagnostic only -- these tests assert that a
-failure is reported, not that anything is blocked.
+binary is started.  ``check_native`` only reports; ``mismatch_message`` is the
+narrow login gate and must fire for a changed file, never for a missing one.
 """
 from __future__ import annotations
 
@@ -117,3 +117,46 @@ def test_frozen_manifest_path_is_runtime_integrity_json(tmp_path, monkeypatch):
     monkeypatch.setattr(BI, 'app_root', lambda: str(tmp_path))
     expected = os.path.join(str(tmp_path), 'runtime', 'integrity.json')
     assert I.native_manifest_path() == expected
+
+
+def test_a_changed_sidecar_is_the_only_blocking_shape(monkeypatch):
+    # Present but different bytes: damaged or edited, so the login stops.
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': False, 'checked': 3, 'missing': [],
+        'mismatch': ['hxp-guard.exe']})
+    assert I.mismatch_message() == I.REPAIR_MESSAGE
+
+
+def test_missing_files_do_not_block_here(monkeypatch):
+    # A quarantine or an interrupted copy must not look like tampering; the
+    # layer check in shield.require decides whether the build can run.
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': False, 'checked': 2, 'missing': ['hxp-core.exe'],
+        'mismatch': []})
+    assert I.mismatch_message() is None
+
+
+def test_bad_or_absent_manifest_does_not_block(monkeypatch):
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
+        'reason': 'manifest'})
+    assert I.mismatch_message() is None
+
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': True, 'checked': 0, 'missing': [], 'mismatch': [],
+        'skipped': True})
+    assert I.mismatch_message() is None
+
+
+def test_a_broken_check_fails_open(monkeypatch):
+    def boom():
+        raise OSError('disk went away')
+    monkeypatch.setattr(I, 'check_native', boom)
+    assert I.mismatch_message() is None
+
+
+def test_repair_message_names_no_file_or_layer():
+    lowered = I.REPAIR_MESSAGE.lower()
+    for token in ('hxp', '.exe', 'sha', 'hash', '哈希', 'rust', 'go', 'cpp',
+                  'nonce', 'token'):
+        assert token not in lowered

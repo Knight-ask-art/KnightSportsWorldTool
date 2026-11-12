@@ -9,7 +9,7 @@ minted itself.
 
 | File | Purpose |
 |---|---|
-| `main.cpp` | Everything: frame codec, SHA-256/HMAC, VEH state machine, self-test |
+| `main.cpp` | Everything: frame codec, SHA-256/HMAC, VEH state machine, self-test, self-check |
 | `build.ps1` | MSVC x64 build (`vcvars64.bat` + `cl`, no PDB) |
 | `hxp-shield.exe` | Build output, ignored by git |
 
@@ -124,12 +124,33 @@ No `/Zi`, no `/DEBUG`, no PDB. The `.obj` is removed after a successful link.
 ```powershell
 .\cpp\hxp-shield\hxp-shield.exe --selftest     # exit 0 on pass, 1 on fail
 .\cpp\hxp-shield\hxp-shield.exe --frame-test   # same checks through in-memory frames
+.\cpp\hxp-shield\hxp-shield.exe --selfcheck    # debugger / image verdict
 ```
 
 `--selftest` seals fixed nonce/go/rust, checks the token immediately, mutates
 one token byte and expects rejection, then seals with a past expiry and expects
 rejection. `--frame-test` drives the same frame path (header parse + response
 build) without touching the OS handles.
+
+## Self-check (`--selfcheck`)
+
+Two conservative tests, both of which must pass on a clean machine:
+
+| Test | What it looks for |
+|---|---|
+| debugger | `IsDebuggerPresent` or a remote debug object on this process |
+| image | entry point in an executable, non-writable section; section table agrees with `SizeOfImage`; the entry page is not `PAGE_EXECUTE_READWRITE` |
+
+Exit `0` / `selfcheck: ok`, or `1` / `selfcheck: debugger` / `selfcheck: image`.
+Nothing else is printed: no path, no module name, no address.
+
+The verdict is **diagnostic**. `shield.selfcheck()` puts it in the support
+bundle so a patched copy is visible when a user sends a log; it never gates a
+login. An attached debugger is routine on a developer machine and some
+endpoint agents probe processes that way, so blocking on it would lock out
+real users. A writable `.text` section is the one signal that also shows up
+when someone flips the section flags to patch code; it is still a hint, not
+proof.
 
 ## Verify no exports
 

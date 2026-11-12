@@ -158,6 +158,27 @@ def _int(value) -> int:
         return 0
 
 
+def _integrity_report() -> dict:
+    """Native sidecar status for the support bundle.
+
+    Never raises: the archive has to survive a broken install, which is
+    exactly when this section matters.  Source checkouts report ``skipped``.
+    """
+    try:
+        from . import integrity as I
+        out = I.check_native()
+        if out.get('skipped'):
+            return out
+        try:
+            from . import shield as S
+            out['selfcheck'] = S.selfcheck()
+        except Exception:  # noqa: BLE001 - a probe must not fail the bundle
+            out['selfcheck'] = {'ok': False, 'reason': 'unavailable'}
+        return out
+    except Exception as e:  # noqa: BLE001
+        return {'ok': False, 'reason': 'unavailable', 'detail': scrub_text(e)}
+
+
 def _clock_json() -> dict:
     try:
         from ..domain import clock
@@ -202,6 +223,7 @@ def build(store_dir: str = '', *, diagnostics_text: str = '',
 
     files = {
         'diagnostics.txt': (diag + '\n').encode('utf-8'),
+        'integrity.json': _dump(_integrity_report()),
         'audit.json': _dump(redact_audit(audit) if audit else
                             {'note': '未运行提交前审计'}),
         'clock.json': _dump(scrub(clock_state) if clock_state
@@ -268,5 +290,5 @@ def self_test() -> list[tuple[str, bool, str]]:
                            'distance_m': 2500, 'state': 'accepted',
                            'uuid': 'u-1'}])
     info = inspect(res['data_b64'])
-    return [('zip files', len(info['files']) == 5, str(sorted(info['files']))),
+    return [('zip files', len(info['files']) == 6, str(sorted(info['files']))),
             ('no leaks', not info['leaks'], str(info['leaks']))]

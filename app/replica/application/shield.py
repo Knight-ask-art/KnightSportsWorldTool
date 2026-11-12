@@ -28,6 +28,7 @@ import threading
 
 from ..transport import rustcore
 from . import account_guard
+from . import integrity
 
 SHIELD_MESSAGE = '设备校验未通过，请重启软件后再试'
 
@@ -87,6 +88,35 @@ def enabled() -> bool:
     return (os.environ.get('JHP_SHIELD') or '').strip().lower() not in _DISABLED
 
 
+def selfcheck(exe: str | None = None, timeout: float = 2.0) -> dict:
+    """Run the shield's own debugger/image check (``--selfcheck``).
+
+    Diagnostic only.  An attached debugger is routine on a developer machine
+    and some endpoint agents probe processes that way, so a failure here must
+    never gate a login.  The verdict goes into the support bundle: it tells
+    the maintainer whether a reported bug came from a patched copy.
+    """
+    path = exe or find_shield()
+    if not path:
+        return {'ok': None, 'skipped': True}
+    flags = (getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+             if os.name == 'nt' else 0)
+    try:
+        proc = subprocess.run(
+            [path, '--selfcheck'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, timeout=timeout, creationflags=flags,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {'ok': False, 'reason': 'unavailable'}
+    if proc.returncode == 0:
+        return {'ok': True}
+    # The binary prints only ``selfcheck: debugger`` or ``selfcheck: image``.
+    detail = (proc.stderr or b'').decode('utf-8', 'replace').strip()
+    reason = detail.split(':', 1)[-1].strip() if ':' in detail else 'unknown'
+    return {'ok': False, 'reason': reason[:24] or 'unknown'}
+
+
 def _is_frozen() -> bool:
     from ..build_info import is_compiled
     return is_compiled()
@@ -101,8 +131,8 @@ def _binaries() -> tuple[str | None, str | None, str | None]:
     )
 
 
-def _blocked() -> dict:
-    return {'blocked': True, 'message': SHIELD_MESSAGE}
+def _blocked(message: str = SHIELD_MESSAGE) -> dict:
+    return {'blocked': True, 'message': message}
 
 
 def _allowed(skipped: bool = False) -> dict:
@@ -117,6 +147,16 @@ def require(store_dir: str) -> dict:
     Any exception is swallowed into the fixed message: a traceback here would
     otherwise leak a path or an internal layer name into the UI or a log.
     """
+    # A shipped sidecar whose bytes changed is either a damaged install or a
+    # patched one; both end in the same repair sentence.  This runs before the
+    # JHP_SHIELD switch: that switch skips the derivation for local debugging,
+    # it does not make a modified install valid.  Missing files are not tested
+    # here -- a quarantine is not tampering, and the layer check below already
+    # refuses a frozen build that cannot derive a credential.
+    damage = integrity.mismatch_message()
+    if damage:
+        return _blocked(damage)
+
     if not enabled():
         return _allowed(skipped=True)
 

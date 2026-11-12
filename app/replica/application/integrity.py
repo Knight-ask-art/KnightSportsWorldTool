@@ -1,4 +1,4 @@
-"""Native component hash manifest (diagnostic only).
+"""Native component hash manifest.
 
 The packaged build ships three sidecars next to the Python code::
 
@@ -10,11 +10,15 @@ The packaged build ships three sidecars next to the Python code::
 
     {"version": 1, "files": {"hxp-core.exe": "<sha256>", ...}}
 
-This module re-hashes those three files on demand.  A mismatch is **not** a
-login gate: it is reported through ``real_integrity_status`` so the operator
-can see a damaged or replaced sidecar in the diagnostic view.  Blocking on it
-would let a read-only antivirus quarantine, a failed update, or an unlucky
-partial copy lock a user out of an otherwise working install.
+This module re-hashes those three files on demand.
+
+The gate is narrow on purpose.  A file that is **present but hashes
+differently** is either damaged or edited, so ``mismatch_message`` stops the
+login with a repair sentence.  A **missing** file is not a gate here: an
+antivirus quarantine, a failed update or a half-finished copy are far more
+common than tampering, and ``shield.require`` already refuses a frozen build
+that cannot derive a credential.  A missing/malformed manifest stays
+diagnostic for the same reason.
 
 Source checkouts have no manifest and return ``skipped``.  Nothing here reads
 ``data/`` or touches the network.
@@ -33,6 +37,11 @@ NATIVE_FILES = (
 )
 
 MANIFEST_VERSION = 1
+
+#: Shown when a shipped sidecar is present but does not match the manifest.
+#: It names neither the file nor the reason: the user cannot act on either,
+#: and a patcher should not learn which check fired.
+REPAIR_MESSAGE = '安装文件校验未通过，请重新安装软件后再试'
 
 
 def _manifest_error() -> dict:
@@ -129,3 +138,20 @@ def check_native(manifest_path: str | None = None,
 
     return {'ok': not missing and not mismatch, 'checked': checked,
             'missing': missing, 'mismatch': mismatch}
+
+
+def mismatch_message() -> str | None:
+    """Blocking reason for a sidecar that exists but is not what we shipped.
+
+    Missing files and a bad manifest deliberately return ``None``: those are
+    the shapes a quarantine or an interrupted update leaves behind, and the
+    layer check in ``shield.require`` already handles a build that cannot
+    derive a credential.  Only a positive byte-level mismatch stops a login.
+    """
+    try:
+        out = check_native()
+    except Exception:  # noqa: BLE001 - a broken check must not lock a user out
+        return None
+    if out.get('skipped') or out.get('ok'):
+        return None
+    return REPAIR_MESSAGE if out.get('mismatch') else None

@@ -22,7 +22,7 @@ def test_archive_contains_the_contract_files():
     res = B.build(app_version='0.1.8')
     files = _files(res)
     assert sorted(files) == ['audit.json', 'clock.json', 'diagnostics.txt',
-                             'recent_receipts.json',
+                             'integrity.json', 'recent_receipts.json',
                              'settings.redacted.json']
     assert res['filename'].endswith('.zip')
     assert res['mime'] == 'application/zip'
