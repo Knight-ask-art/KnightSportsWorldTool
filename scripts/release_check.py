@@ -129,6 +129,49 @@ def check_launcher(report: Report, version: str) -> None:
                  '' if actual == version else f'{actual} != {version}')
 
 
+def check_update_signature(report: Report, manifest: dict | None,
+                           key_path: Path) -> None:
+    """Verify latest.json against the key that was linked into the launcher."""
+    if not manifest:
+        return
+    sig = manifest.get('signature')
+    ok = (isinstance(sig, dict) and sig.get('alg') == 'ed25519'
+          and isinstance(sig.get('value'), str) and bool(sig.get('value')))
+    report.check(ok, 'update manifest signature',
+                 'ed25519' if ok else 'missing or malformed')
+    if not ok:
+        return
+    if not key_path.is_file():
+        report.check(False, 'update signing key',
+                     f'{key_path} missing')
+        return
+    try:
+        from cryptography.hazmat.primitives.serialization import (
+            load_pem_private_key,
+        )
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        key = load_pem_private_key(key_path.read_bytes(), password=None)
+        if not isinstance(key, Ed25519PrivateKey):
+            raise TypeError('not an Ed25519 private key')
+    except Exception as exc:  # noqa: BLE001 - report, never print key bytes
+        report.check(False, 'update signing key parses', str(exc))
+        return
+
+    sys.path.insert(0, str(ROOT / 'app'))
+    from replica.application.update_signature import (
+        ManifestSignatureError,
+        verify_manifest,
+    )
+    try:
+        verify_manifest(manifest, {sig.get('key_id'): key.public_key()})
+    except (ManifestSignatureError, ValueError, TypeError) as exc:
+        report.check(False, 'update manifest verifies', str(exc))
+        return
+    report.check(True, 'update manifest verifies', str(sig.get('key_id')))
+
+
 def deep_integrity(report: Report, version: str) -> None:
     """Verify the signature and hashes of the packaged install, not the source."""
     install = ROOT / 'app' / 'dist' / f'好想跑_v{version}'
@@ -192,6 +235,12 @@ def main(argv=None) -> int:
                         help='skip manifests/tag checks (pre-build)')
     parser.add_argument('--allow-dirty', action='store_true',
                         help='do not fail on an uncommitted working tree')
+    parser.add_argument(
+        '--update-key',
+        default=str(Path.home() / '.hxp' / 'update-signing.pem'),
+        help='Ed25519 PEM used to verify dist/latest.json '
+             '(default: ~/.hxp/update-signing.pem)',
+    )
     args = parser.parse_args(argv)
 
     report = Report()
@@ -244,6 +293,8 @@ def main(argv=None) -> int:
             report, ROOT / 'app' / 'dist' / 'latest.json',
             version, 'dist/latest.json')
         check_launcher(report, version)
+        check_update_signature(
+            report, dist_manifest, Path(args.update_key).expanduser())
         if args.deep:
             report.check(dist_manifest is not None, 'deep dist manifest',
                          'app/dist/latest.json')

@@ -116,7 +116,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed with $LASTEXITCODE" }
 
     Write-Host '== post-build: manifest / assets =='
-    python scripts\release_check.py --deep
+    python scripts\release_check.py --deep --update-key $UpdateSignKey
     if ($LASTEXITCODE -ne 0) { throw 'release_check.py --deep failed' }
 
     Write-Host ''
