@@ -396,6 +396,34 @@ def test_jhp_shield_zero_does_not_hide_a_changed_sidecar(monkeypatch):
     assert out == {'blocked': True, 'message': shield.integrity.REPAIR_MESSAGE}
 
 
+def test_a_frozen_build_ignores_the_disable_switch(monkeypatch):
+    monkeypatch.setenv('JHP_SHIELD', '0')
+    monkeypatch.setattr(shield.integrity, 'mismatch_message', lambda: None)
+    monkeypatch.setattr(shield, '_is_frozen', lambda: True)
+    called = {}
+
+    def binaries():
+        called['probed'] = True
+        return (None, None, None)
+
+    monkeypatch.setattr(shield, '_binaries', binaries)
+    assert shield.require('store') == {'blocked': True,
+                                       'message': shield.SHIELD_MESSAGE}
+    assert called.get('probed') is True
+
+
+def test_a_frozen_build_ignores_the_path_override(tmp_path, monkeypatch):
+    import replica.build_info as BI
+    exe = tmp_path / 'hxp-shield.exe'
+    exe.write_bytes(b'MZ')
+    monkeypatch.setenv('JHP_SHIELD_PATH', str(exe))
+    monkeypatch.setattr(BI, 'is_compiled', lambda: True)
+    monkeypatch.setattr(BI, 'app_root', lambda: str(tmp_path))
+    # Only <app_root>/runtime/cpp is considered; a stub pointed to by the
+    # environment must not become the sidecar.
+    assert shield.find_shield() is None
+
+
 def test_selfcheck_is_skipped_when_the_binary_is_absent(monkeypatch):
     monkeypatch.setattr(shield, 'find_shield', lambda: None)
     assert shield.selfcheck() == {'ok': None, 'skipped': True}

@@ -40,8 +40,9 @@
 - 只复制 exe：`.obj` / `.pdb` 不进入 `runtime/cpp/`，也不进入 zip/安装包。
 - Python 侧 `app/replica/application/shield.py` 在同一个进程里发 `seal`
   再发 `check`；跨进程 token 会被 `check` 拒绝。
-- frozen 构建缺这一层时登录直接失败（`app.py` 默认 `JHP_SHIELD=1`），
-  源码运行缺二进制则跳过，保证 `pytest` 不依赖 native 产物。
+- frozen 构建缺这一层时登录直接失败（`shield.enabled()` 在 frozen 下恒为真，
+  `JHP_SHIELD=0` 不再生效）；源码运行缺二进制则跳过，保证 `pytest` 不依赖
+  native 产物。
 
 ## 默认后端：Nuitka standalone
 

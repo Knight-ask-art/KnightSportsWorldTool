@@ -59,8 +59,8 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
    `check`；check 返回后帧缓冲和 token 视图清零，不缓存到磁盘，过期或
    校验失败就重新派生。
 
-任何一层缺失：开发环境回退到“跳过加固”（`JHP_SHIELD=0` 或二进制不存在）；
-冻结构建必须置 `JHP_SHIELD=1`，缺层直接拒绝登录/提交，错误文案保持笼统。
+任何一层缺失：源码 checkout 回退到“跳过加固”（`JHP_SHIELD=0` 或二进制不存在）；
+冻结构建忽略 `JHP_SHIELD`，缺层直接拒绝登录/提交，错误文案保持笼统。
 
 ## 4. 分阶段交付
 
@@ -218,12 +218,12 @@ python scripts\scan_release_secrets.py dist\好想跑_v0.2.2\好想跑.exe
 - 任何在日志/诊断包/异常信息里出现 token、nonce、密钥、完整 DeviceId 的
   改动直接 BLOCK。
 
-## 8. 已知限制：排错旁路
+## 8. 已知限制：源码 checkout 的排错旁路
 
-- `JHP_SHIELD=0` / `off` / `false` / `no` 会直接跳过四层派生；
-  `JHP_SHIELD_PATH` 可以把 shield 指向任意可执行文件。两者在 frozen 构建里
-  **依然生效**，这是排错用的旁路，不是安全边界。
-- `JHP_SHIELD=1` 目前不是“强制”开关：代码只把 `0/off/false/no` 当作关闭。
-  发布包靠“三层二进制齐全”来保证执行，而不是靠这个变量。
-- 本地用户可以删除 `data/account_binding.json`、替换 native 产物或调试本机
-  进程。客户端加固只提高逆向与改包成本，最终判定仍在服务端。
+- `JHP_SHIELD=0` / `off` / `false` / `no` 和 `JHP_SHIELD_PATH` **只在源码
+  checkout 生效**。frozen 构建忽略两者：否则一个环境变量、或一个指向 stub
+  的路径，就能跳过整条派生链。
+- `JHP_SHIELD=1` 不是“强制”开关；发布包靠“三层二进制齐全 + 完整性清单”
+  保证执行，不靠这个变量。
+- 本地用户仍然可以删除 `data/account_binding.json`、替换 native 产物或
+  调试本机进程。客户端加固只提高逆向与改包成本，最终判定仍在服务端。

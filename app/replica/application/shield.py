@@ -9,7 +9,13 @@ diagnostic bundle.
 Enable/disable with ``JHP_SHIELD``:
   - unset / ``auto`` -> enabled; a source checkout without all three
     binaries skips the shield, a frozen build refuses the login;
-  - ``0``/``off``/``false``/``no`` -> always skip (debugging only).
+  - ``0``/``off``/``false``/``no`` -> skip, **source checkout only**.  A
+    frozen build ignores the switch: leaving it honoured made the whole gate
+    skippable with one environment variable.
+
+``JHP_SHIELD_PATH`` is a developer override and is likewise ignored in a
+frozen build; otherwise it could point the sidecar at a stub that always
+answers "ok".
 
 The user-facing text is deliberately vague: it never names a layer, a
 binary, a path, or a reason.
@@ -61,9 +67,6 @@ def _repo_root() -> str:
 
 def _candidates() -> list[str]:
     out: list[str] = []
-    explicit = os.environ.get('JHP_SHIELD_PATH')
-    if explicit:
-        out.append(explicit)
     try:
         from ..build_info import app_root, is_compiled
         root = app_root()
@@ -71,6 +74,13 @@ def _candidates() -> list[str]:
     except Exception:  # noqa: BLE001 - build_info is optional at import time
         root = os.path.join(_repo_root(), 'app')
         compiled = False
+    # A path override is a developer aid.  In a frozen build it would let
+    # anyone swap in a stub that always answers "ok", so it stays a source
+    # checkout feature.
+    if not compiled:
+        explicit = os.environ.get('JHP_SHIELD_PATH')
+        if explicit:
+            out.append(explicit)
     out.append(os.path.join(root, 'runtime', 'cpp', _EXE))
     if not compiled:
         out.append(os.path.join(_repo_root(), 'cpp', 'hxp-shield', _EXE))
@@ -85,6 +95,14 @@ def find_shield() -> str | None:
 
 
 def enabled() -> bool:
+    """Whether the four-layer derivation runs.
+
+    A frozen build always runs it.  ``JHP_SHIELD=0`` is a source-checkout
+    debugging aid; honouring it in a release made the entire gate skippable
+    with one environment variable.
+    """
+    if _is_frozen():
+        return True
     return (os.environ.get('JHP_SHIELD') or '').strip().lower() not in _DISABLED
 
 

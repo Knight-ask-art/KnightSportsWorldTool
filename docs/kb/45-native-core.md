@@ -112,7 +112,9 @@ Python，因为调参频繁、需要能直接看中间图。上传体只迁字�
 
 ## 8. 设备凭证分层（Phase 2）
 
-一次登录前的派生链，任何一层失败都拒绝登录（仅 frozen；源码环境缺二进制跳过）：
+一次登录前的派生链，任何一层失败都拒绝登录（仅 frozen；源码环境缺二进制跳过）。
+`JHP_SHIELD=0` 与 `JHP_SHIELD_PATH` 只在源码 checkout 生效，frozen 构建忽略
+两者——否则一个环境变量或一个 stub 路径就能跳过整条链：
 
 ```
 Go hxp-guard      op --code 17  -> 32B blob_go   （stdin 读 16B hex nonce；5 goroutine + nonce 置换）

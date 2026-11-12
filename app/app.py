@@ -88,9 +88,8 @@ def _pin_native_core() -> None:
         return
     if not os.environ.get('JHP_RUST_CORE'):
         os.environ['JHP_RUST_CORE'] = '1'
-    # A frozen build must not silently accept a missing C++ shield either.
-    # An explicit JHP_SHIELD=0 still wins for local debugging.
-    os.environ.setdefault('JHP_SHIELD', '1')
+    # The C++ shield is mandatory in a frozen build: shield.enabled() ignores
+    # JHP_SHIELD there, so there is nothing to force into the environment.
 
 
 def main():

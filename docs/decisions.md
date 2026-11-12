@@ -767,3 +767,11 @@ OBS `segment_json` 解码也是空串）。上面的 30 s 分段只用于本工�
 | 自检放在 `hxp-shield --selfcheck`，走独立进程 | 它已经持有 PE 映像和进程句柄，不需要新 DLL；独立进程崩溃或被杀不影响登录 | 只做 `IsDebuggerPresent`/`CheckRemoteDebuggerPresent` 和 PE 自洽检查；不扫内存、不枚举进程 |
 | 调试器/可写 `.text` 只写诊断，不拦登录 | 开发机常挂调试器，部分终端安全软件以调试方式探测；拦它等于随机锁死正常用户，而真正的补丁者会顺手绕掉 | 结果进 `real_integrity_status` 与诊断包 `integrity.json`；前端无入口 |
 | 不做自毁、不删文件、不弹指控文案 | 能改二进制的人会先复制目录再 NOP 检查，自毁只惩罚误报的正常用户；删 `data/` 还会丢记录、路线和绑定 | 所有分支保留用户数据；处置只到“拒绝这次登录 / 提示重装” |
+
+## 33. 发布版忽略排错旁路（2026-11-12）
+
+| 决策 | 理由 | 边界 |
+|---|---|---|
+| frozen 下 `JHP_SHIELD=0/off/false/no` 不再生效 | 一个环境变量就能跳过整条四层派生，等于加固只在源码环境有效；排错旁路不该存在于发布包 | `enabled()` 先看 `is_compiled()`；源码 checkout 行为不变，`pytest` 与本地调试不受影响 |
+| frozen 下忽略 `JHP_SHIELD_PATH` | 指向任意 exe 比关开关更彻底：可以塞一个永远返回 ok 的 stub，而且完全绕过完整性清单 | 只从 `<app_root>/runtime/cpp/hxp-shield.exe` 取；源码 checkout 仍可指定 |
+| `app.py` 不再写 `JHP_SHIELD=1` | 开关在 frozen 下已无意义，继续写只会让人以为它还能关 | `JHP_RUST_CORE=1` 保持原样，那一层仍靠环境变量钉住 |
