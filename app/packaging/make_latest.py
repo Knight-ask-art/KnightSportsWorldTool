@@ -18,12 +18,15 @@ import json
 import re
 import sys
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 DEFAULT_DIST = APP_ROOT / 'dist'
+DEFAULT_MIRROR_REGISTRY = Path(__file__).resolve().with_name('update_mirrors.json')
+MAX_ASSET_URLS = 40
+_UNSET = object()
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
 #: single source of truth, this only keeps standalone runs usable.
@@ -187,6 +190,94 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
+def _is_absolute_base_url(base_url: str) -> bool:
+    raw = (base_url or '').strip()
+    if not raw:
+        return False
+    parsed = urlparse(raw)
+    return parsed.scheme.lower() in ('http', 'https') and bool(parsed.netloc)
+
+
+def validate_mirror_registry(data: dict) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError('mirror registry must be a JSON object')
+    if data.get('schema') != 1:
+        raise ValueError(
+            f'unsupported mirror registry schema: {data.get("schema")!r}'
+        )
+    mirrors = data.get('mirrors')
+    if not isinstance(mirrors, list):
+        raise ValueError('mirror registry "mirrors" must be a list')
+    for idx, entry in enumerate(mirrors):
+        if not isinstance(entry, dict):
+            raise ValueError(f'mirror entry {idx} must be an object')
+        name = entry.get('name')
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f'mirror entry {idx} is missing a valid name')
+        template = entry.get('template')
+        if not isinstance(template, str) or '{base}' not in template:
+            raise ValueError(
+                f'mirror {name!r} template must contain "{{base}}"'
+            )
+        tmpl_stripped = template.strip()
+        is_official = name.strip() == 'official'
+        if is_official:
+            if tmpl_stripped != '{base}':
+                parsed = urlparse(tmpl_stripped)
+                if parsed.scheme.lower() != 'https' or not parsed.netloc:
+                    raise ValueError(
+                        f'official mirror {name!r} template must be '
+                        '"{base}" or an https:// template'
+                    )
+        else:
+            parsed = urlparse(tmpl_stripped)
+            if parsed.scheme.lower() != 'https' or not parsed.netloc:
+                raise ValueError(
+                    f'non-official mirror {name!r} must use an https:// template'
+                )
+        priority = entry.get('priority', 100)
+        if isinstance(priority, bool) or not isinstance(priority, (int, float)):
+            raise ValueError(f'mirror {name!r} priority must be a number')
+    return data
+
+
+def load_mirror_registry(path: Path | str) -> dict:
+    raw = Path(path).read_text(encoding='utf-8')
+    return validate_mirror_registry(json.loads(raw))
+
+
+def expand_mirror_registry(registry: dict, base_url: str) -> list[str]:
+    registry = validate_mirror_registry(registry)
+    clean_base = (base_url or '').strip().rstrip('/')
+    if not _is_absolute_base_url(clean_base):
+        return []
+    indexed = [
+        (idx, entry)
+        for idx, entry in enumerate(registry['mirrors'])
+        if bool(entry.get('enabled', True))
+    ]
+    indexed.sort(
+        key=lambda item: (
+            0 if item[1]['name'].strip() == 'official' else 1,
+            float(item[1].get('priority', 100)),
+            item[0],
+        )
+    )
+    expanded_bases = []
+    for _, entry in indexed:
+        name = entry['name'].strip()
+        value = entry['template'].strip().replace('{base}', clean_base)
+        if name != 'official':
+            parsed = urlparse(value)
+            if parsed.scheme.lower() != 'https' or not parsed.netloc:
+                raise ValueError(
+                    f'non-official mirror {name!r} did not produce an '
+                    'HTTPS URL'
+                )
+        expanded_bases.append(value)
+    return expanded_bases
+
+
 def asset_url(name: str, base_url: str = '') -> str:
     """Percent-encoded name, absolute when a base URL was supplied."""
     quoted = quote(name)
@@ -196,7 +287,8 @@ def asset_url(name: str, base_url: str = '') -> str:
 
 def _asset(path: Path, base_url: str, version: str, *,
            fmt: str = 'zip', layout: str = 'onedir',
-           entry: str = DEFAULT_ENTRY, mirrors: tuple = ()) -> dict:
+           entry: str = DEFAULT_ENTRY, mirrors: tuple = (),
+           max_urls: int = MAX_ASSET_URLS) -> dict:
     """One downloadable file.  ``url`` stays first for old clients; ``urls``
     carries the extra mirrors and is only emitted when there is more than one.
 
@@ -209,6 +301,8 @@ def _asset(path: Path, base_url: str, version: str, *,
         value = asset_url(path.name, base)
         if value and value not in urls:
             urls.append(value)
+            if max_urls and len(urls) >= max_urls:
+                break
     asset = {
         'file': path.name,
         'url': urls[0],
@@ -227,6 +321,7 @@ def _asset(path: Path, base_url: str, version: str, *,
 def build_manifest(version: str, zip_path: Path, *,
                    base_url: str = '',
                    mirrors: tuple = (),
+                   mirror_registry: Path | str | dict | None = _UNSET,
                    channel: str = DEFAULT_CHANNEL,
                    min_version: str = DEFAULT_MIN_VERSION,
                    released_at: str | None = None,
@@ -246,8 +341,37 @@ def build_manifest(version: str, zip_path: Path, *,
         now = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8)))
         released_at = now.replace(microsecond=0).isoformat()
 
+    if mirror_registry is _UNSET:
+        registry = (
+            load_mirror_registry(DEFAULT_MIRROR_REGISTRY)
+            if DEFAULT_MIRROR_REGISTRY.is_file()
+            else None
+        )
+    elif mirror_registry is None:
+        registry = None
+    elif isinstance(mirror_registry, dict):
+        registry = validate_mirror_registry(mirror_registry)
+    else:
+        registry = load_mirror_registry(mirror_registry)
+
+    registry_mirrors: tuple[str, ...] = ()
+    warned_relative = False
+    if registry is not None:
+        if _is_absolute_base_url(base_url):
+            registry_mirrors = tuple(
+                expand_mirror_registry(registry, base_url)
+            )
+        else:
+            print(
+                'warning: --base-url is relative or empty; skipping mirror '
+                'registry',
+                file=sys.stderr,
+            )
+            warned_relative = True
+
+    asset_mirrors = registry_mirrors + tuple(mirrors or ())
     assets = {'windows-x64': _asset(zip_path, base_url, version, entry=entry,
-                                    mirrors=mirrors)}
+                                    mirrors=asset_mirrors)}
     # The installer is the primary asset for new installs and for updating an
     # installed copy.  `windows-x64` stays a zip so that v0.1.2 clients (whose
     # updater only understands zip) can still auto-update instead of failing
@@ -256,7 +380,7 @@ def build_manifest(version: str, zip_path: Path, *,
         setup_path = Path(setup_path)
         if setup_path.is_file():
             assets['windows-x64-setup'] = _asset(
-                setup_path, base_url, version, mirrors=mirrors,
+                setup_path, base_url, version, mirrors=asset_mirrors,
                 fmt='installer', layout='installer', entry=entry)
         else:
             print(f'warning: setup not found: {setup_path}', file=sys.stderr)
@@ -277,10 +401,26 @@ def build_manifest(version: str, zip_path: Path, *,
     if rollback_version and rollback_zip:
         rollback_zip = Path(rollback_zip)
         if rollback_zip.is_file():
+            eff_rollback_base = (rollback_base_url or '').strip() or base_url
+            rb_registry_mirrors: tuple[str, ...] = ()
+            if registry is not None:
+                if _is_absolute_base_url(eff_rollback_base):
+                    rb_registry_mirrors = tuple(
+                        expand_mirror_registry(registry, eff_rollback_base)
+                    )
+                elif not warned_relative:
+                    print(
+                        'warning: rollback base URL is relative or empty; '
+                        'skipping mirror registry for rollback',
+                        file=sys.stderr,
+                    )
+            manual_rb = tuple(rollback_mirrors or ())
+            if not manual_rb and not (rollback_base_url or '').strip():
+                manual_rb = tuple(mirrors or ())
             manifest['rollback'] = _asset(
-                rollback_zip, rollback_base_url or base_url,
+                rollback_zip, eff_rollback_base,
                 rollback_version, entry=entry,
-                mirrors=rollback_mirrors or mirrors)
+                mirrors=rb_registry_mirrors + manual_rb)
         else:
             print(f'warning: rollback zip not found: {rollback_zip}',
                   file=sys.stderr)
@@ -347,6 +487,18 @@ def main(argv=None) -> int:
     ap.add_argument('--mirror-base-url', action='append', default=[],
                     metavar='URL',
                     help='extra download base (repeatable); written to urls[]')
+    registry_group = ap.add_mutually_exclusive_group()
+    registry_group.add_argument(
+        '--mirror-registry', default=None, metavar='PATH',
+        help='mirror registry JSON path '
+             f'(default: {DEFAULT_MIRROR_REGISTRY})')
+    registry_group.add_argument(
+        '--no-mirror-registry', action='store_true',
+        help='disable mirror registry expansion')
+    ap.add_argument('--require-mirrors', type=int, default=0, metavar='N',
+                    help='exit 2 when fewer than N enabled non-official '
+                         'mirror URLs can be generated (or base URL is '
+                         'relative)')
     ap.add_argument('--channel', default=DEFAULT_CHANNEL)
     ap.add_argument('--min-version', default=DEFAULT_MIN_VERSION,
                     help=f'oldest version that may upgrade directly '
@@ -371,11 +523,29 @@ def main(argv=None) -> int:
                     help='exit 2 when --sign-key is not provided')
     args = ap.parse_args(argv)
 
+    if args.require_mirrors < 0:
+        print('error: --require-mirrors must be >= 0', file=sys.stderr)
+        return 2
+
     sign_key_raw = (args.sign_key or '').strip()
     if args.require_signature and not sign_key_raw:
         print('error: --require-signature requires --sign-key',
               file=sys.stderr)
         return 2
+
+    if args.no_mirror_registry:
+        mirror_registry = None
+    elif args.mirror_registry:
+        reg_path = Path(args.mirror_registry)
+        if not reg_path.is_absolute():
+            reg_path = (Path.cwd() / reg_path).resolve()
+        mirror_registry = reg_path
+    else:
+        mirror_registry = (
+            DEFAULT_MIRROR_REGISTRY
+            if DEFAULT_MIRROR_REGISTRY.is_file()
+            else None
+        )
 
     private_key = None
     if sign_key_raw:
@@ -416,20 +586,44 @@ def main(argv=None) -> int:
         # one.  Reusing the new base silently writes a 404 into the manifest.
         print('warning: --rollback-base-url is empty; the rollback URL will '
               'point at the current release and may 404', file=sys.stderr)
-    manifest = build_manifest(
-        version, zip_path,
-        base_url=args.base_url,
-        mirrors=tuple(args.mirror_base_url or ()),
-        channel=args.channel,
-        min_version=args.min_version,
-        released_at=args.released_at,
-        notes=notes,
-        rollback_version=rollback_version,
-        rollback_zip=rollback_zip,
-        rollback_base_url=args.rollback_base_url,
-        rollback_mirrors=tuple(args.rollback_mirror_base_url or ()),
-        setup_path=setup_path,
-    )
+    try:
+        manifest = build_manifest(
+            version, zip_path,
+            base_url=args.base_url,
+            mirrors=tuple(args.mirror_base_url or ()),
+            mirror_registry=mirror_registry,
+            channel=args.channel,
+            min_version=args.min_version,
+            released_at=args.released_at,
+            notes=notes,
+            rollback_version=rollback_version,
+            rollback_zip=rollback_zip,
+            rollback_base_url=args.rollback_base_url,
+            rollback_mirrors=tuple(args.rollback_mirror_base_url or ()),
+            setup_path=setup_path,
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f'error: invalid mirror registry: {exc}', file=sys.stderr)
+        return 2
+
+    if args.require_mirrors > 0:
+        if not _is_absolute_base_url(args.base_url):
+            print(
+                'error: --require-mirrors requires an absolute --base-url',
+                file=sys.stderr,
+            )
+            return 2
+        primary_asset = manifest['assets']['windows-x64']
+        all_urls = primary_asset.get('urls') or [primary_asset['url']]
+        official_url = primary_asset['url']
+        non_official_count = sum(1 for u in all_urls if u != official_url)
+        if non_official_count < args.require_mirrors:
+            print(
+                f'error: generated {non_official_count} non-official mirror '
+                f'URL(s), fewer than --require-mirrors {args.require_mirrors}',
+                file=sys.stderr,
+            )
+            return 2
     if private_key is not None:
         from replica.application.update_signature import (
             ManifestSignatureError,

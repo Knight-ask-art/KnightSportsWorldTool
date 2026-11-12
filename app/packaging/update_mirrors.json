@@ -1,0 +1,187 @@
+{
+  "schema": 1,
+  "note": "Candidate GitHub release mirror registry. Run check_update_mirrors.py --write-registry before release to filter dead links.",
+  "mirrors": [
+    {
+      "name": "official",
+      "template": "{base}",
+      "priority": 0,
+      "enabled": true
+    },
+    {
+      "name": "gh-proxy",
+      "template": "https://gh-proxy.com/{base}",
+      "priority": 10,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "ghfast",
+      "template": "https://ghfast.top/{base}",
+      "priority": 20,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-llkk",
+      "template": "https://gh.llkk.cc/{base}",
+      "priority": 30,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "ghproxy-net",
+      "template": "https://ghproxy.net/{base}",
+      "priority": 40,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "mirror-ghproxy",
+      "template": "https://mirror.ghproxy.com/{base}",
+      "priority": 50,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "ghp-ci",
+      "template": "https://ghp.ci/{base}",
+      "priority": 60,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-ddlc",
+      "template": "https://gh.ddlc.top/{base}",
+      "priority": 70,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-con",
+      "template": "https://gh.con.sh/{base}",
+      "priority": 80,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "ghps-cc",
+      "template": "https://ghps.cc/{base}",
+      "priority": 90,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-boki",
+      "template": "https://gh.boki.moe/{base}",
+      "priority": 100,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "github-moeyy",
+      "template": "https://github.moeyy.xyz/{base}",
+      "priority": 110,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "ghproxy-cn",
+      "template": "https://ghproxy.cn/{base}",
+      "priority": 120,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-idzd",
+      "template": "https://gh.idzd.top/{base}",
+      "priority": 130,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-jcx",
+      "template": "https://gh.jcx.moe/{base}",
+      "priority": 140,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-nxnow",
+      "template": "https://gh.nxnow.top/{base}",
+      "priority": 150,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-api-99988866",
+      "template": "https://gh.api.99988866.xyz/{base}",
+      "priority": 160,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "cf-ghproxy",
+      "template": "https://cf.ghproxy.cc/{base}",
+      "priority": 170,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "ghproxy-cc",
+      "template": "https://ghproxy.cc/{base}",
+      "priority": 180,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-xiaomeng",
+      "template": "https://gh.xiaomeng.icu/{base}",
+      "priority": 190,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-xiu2",
+      "template": "https://gh.xiu2.us.kg/{base}",
+      "priority": 200,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "git-886",
+      "template": "https://git.886.be/{base}",
+      "priority": 210,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-chenc",
+      "template": "https://gh.chenc.dev/{base}",
+      "priority": 220,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "gh-39",
+      "template": "https://gh.39.al/{base}",
+      "priority": 230,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "hub-gitmirror",
+      "template": "https://hub.gitmirror.com/{base}",
+      "priority": 240,
+      "enabled": true,
+      "status": "candidate"
+    },
+    {
+      "name": "dl-ghproxy",
+      "template": "https://dl.ghproxy.top/{base}",
+      "priority": 250,
+      "enabled": true,
+      "status": "candidate"
+    }
+  ]
+}

@@ -156,6 +156,14 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
 0.1.3 及更老的客户端只读 `url`，不会看 `urls`；所以 `url` 必须是一个能用的地址，
 不能写相对路径指望客户端自己拼镜像。
 
+### 镜像注册表与发布前体检
+
+- `app/packaging/update_mirrors.json` 是**候选镜像表**，不保证每个镜像长期可用；官方地址始终排在第一位。
+- 发布流程：**打包 → 体检 → 过滤 → 签名生成**（先用 `packaging/check_update_mirrors.py --manifest ... --write-registry ...` 探测真实资产并筛出健康镜像，再用 `make_latest.py --mirror-registry ... --require-mirrors N` 重新生成最终清单）。
+- 所有镜像 URL 都写入签名保护的 `latest.json`（`assets.*.urls[]` 与 `rollback.urls[]`），且每次下载仍校验资产的 `size` 与 `sha256`。
+- 失效镜像、返回非预期魔数（如 HTML 拦截页）的节点以及明文 `http://` / `file://` 模板一律拒绝或剔除，绝不随正式清单发布。
+- 客户端策略：优先探测上次成功节点 + 官方地址 + 前几个高优先级镜像，其余按需轮换重试。
+
 ### GitHub Releases
 
 把 `latest.json`、zip、安装包作为**同一个 Release 的资产**上传，客户端请求：
