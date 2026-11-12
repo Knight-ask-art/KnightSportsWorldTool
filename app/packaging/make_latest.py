@@ -21,6 +21,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 APP_ROOT = Path(__file__).resolve().parents[1]
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 DEFAULT_DIST = APP_ROOT / 'dist'
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
@@ -316,6 +318,21 @@ def write_manifest(manifest: dict, out: Path) -> Path:
     return out
 
 
+def _load_sign_key(path: Path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+    )
+    from cryptography.hazmat.primitives.serialization import (
+        load_pem_private_key,
+    )
+
+    pem_bytes = path.read_bytes()
+    key = load_pem_private_key(pem_bytes, password=None)
+    if not isinstance(key, Ed25519PrivateKey):
+        raise TypeError('not an Ed25519 private key')
+    return key
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description='generate dist/latest.json')
     ap.add_argument('--dist', default=str(DEFAULT_DIST))
@@ -346,7 +363,31 @@ def main(argv=None) -> int:
     ap.add_argument('--rollback-mirror-base-url', action='append', default=[],
                     metavar='URL',
                     help='extra download base for the rollback zip (repeatable)')
+    ap.add_argument('--sign-key', default=None, metavar='PATH',
+                    help='unencrypted Ed25519 PEM private key path')
+    ap.add_argument('--key-id', default='release',
+                    help='signature key_id (default: release)')
+    ap.add_argument('--require-signature', action='store_true',
+                    help='exit 2 when --sign-key is not provided')
     args = ap.parse_args(argv)
+
+    sign_key_raw = (args.sign_key or '').strip()
+    if args.require_signature and not sign_key_raw:
+        print('error: --require-signature requires --sign-key',
+              file=sys.stderr)
+        return 2
+
+    private_key = None
+    if sign_key_raw:
+        key_path = Path(sign_key_raw)
+        if not key_path.is_absolute():
+            key_path = (Path.cwd() / key_path).resolve()
+        try:
+            private_key = _load_sign_key(key_path)
+        except (OSError, TypeError, ValueError):
+            print('error: cannot load unencrypted Ed25519 PEM private key: '
+                  f'{key_path}', file=sys.stderr)
+            return 2
 
     dist = Path(args.dist).resolve()
     version = args.version or read_version()
@@ -389,6 +430,18 @@ def main(argv=None) -> int:
         rollback_mirrors=tuple(args.rollback_mirror_base_url or ()),
         setup_path=setup_path,
     )
+    if private_key is not None:
+        from replica.application.update_signature import (
+            ManifestSignatureError,
+            sign_manifest,
+        )
+
+        try:
+            manifest = sign_manifest(manifest, private_key, args.key_id)
+        except ManifestSignatureError as exc:
+            print(f'error: cannot sign manifest: {exc}', file=sys.stderr)
+            return 2
+
     out = Path(args.out) if args.out else dist / 'latest.json'
     write_manifest(manifest, out)
 
@@ -404,6 +457,9 @@ def main(argv=None) -> int:
     if manifest.get('rollback'):
         print(f'rollback:    {manifest["rollback"]["version"]} · '
               f'{manifest["rollback"]["file"]}')
+    if manifest.get('signature'):
+        sig = manifest['signature']
+        print(f'signature:   {sig["alg"]} (key_id={sig["key_id"]})')
     return 0
 
 

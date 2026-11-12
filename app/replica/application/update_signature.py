@@ -1,0 +1,175 @@
+"""Ed25519 signature primitives for ``latest.json`` manifests.
+
+This module is pure in-memory cryptography and canonical JSON serialization:
+no disk, network, environment, or logging access.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+from collections.abc import Mapping
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+
+ALGORITHM = 'ed25519'
+_KEY_BYTES = 32
+_SIG_BYTES = 64
+
+#: Key-id -> 32-byte raw Ed25519 public key (or base64 / Ed25519PublicKey).
+#: Intentionally empty in source; release builds inject the real key in Slice 2.
+PUBLIC_KEYS: dict[str, bytes] = {}
+
+
+class ManifestSignatureError(ValueError):
+    """Raised when a manifest signature is missing, malformed, or invalid."""
+
+
+def canonical_payload(manifest: dict) -> bytes:
+    """Return the canonical UTF-8 JSON bytes for ``manifest`` without ``signature``."""
+    if not isinstance(manifest, dict):
+        raise ManifestSignatureError('manifest must be a dict')
+    payload = dict(manifest)
+    payload.pop('signature', None)
+    try:
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(',', ':'),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ManifestSignatureError(f'manifest cannot be canonicalized: {exc}') from exc
+    return encoded.encode('utf-8')
+
+
+def _validate_key_id(key_id: object) -> str:
+    if not isinstance(key_id, str) or not key_id.strip() or '\x00' in key_id:
+        raise ManifestSignatureError('key_id must be a non-empty string')
+    return key_id
+
+
+def _signing_bytes(manifest: dict, key_id: str) -> bytes:
+    validated_id = _validate_key_id(key_id)
+    return validated_id.encode('utf-8') + b'\x00' + canonical_payload(manifest)
+
+
+def _coerce_private_key(private_key: object) -> Ed25519PrivateKey:
+    if isinstance(private_key, Ed25519PrivateKey):
+        return private_key
+    if isinstance(private_key, (bytes, bytearray, memoryview)):
+        raw = bytes(private_key)
+        if len(raw) != _KEY_BYTES:
+            raise ManifestSignatureError(
+                f'Ed25519 private key seed must be {_KEY_BYTES} bytes, got {len(raw)}'
+            )
+        try:
+            return Ed25519PrivateKey.from_private_bytes(raw)
+        except ValueError as exc:
+            raise ManifestSignatureError(f'invalid Ed25519 private key: {exc}') from exc
+    raise ManifestSignatureError('unsupported private key type')
+
+
+def _coerce_public_key(public_key: object) -> Ed25519PublicKey:
+    if isinstance(public_key, Ed25519PublicKey):
+        return public_key
+    if isinstance(public_key, str):
+        text = public_key.strip()
+        if not text:
+            raise ManifestSignatureError('public key string is empty')
+        try:
+            raw = base64.b64decode(text, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ManifestSignatureError(f'invalid base64 public key: {exc}') from exc
+    elif isinstance(public_key, (bytes, bytearray, memoryview)):
+        raw = bytes(public_key)
+    else:
+        raise ManifestSignatureError('unsupported public key type')
+
+    if len(raw) != _KEY_BYTES:
+        raise ManifestSignatureError(
+            f'Ed25519 public key must be {_KEY_BYTES} bytes, got {len(raw)}'
+        )
+    try:
+        return Ed25519PublicKey.from_public_bytes(raw)
+    except ValueError as exc:
+        raise ManifestSignatureError(f'invalid Ed25519 public key: {exc}') from exc
+
+
+def sign_manifest(manifest: dict, private_key, key_id: str) -> dict:
+    """Return a shallow copy of ``manifest`` with a valid ``signature`` object."""
+    if not isinstance(manifest, dict):
+        raise ManifestSignatureError('manifest must be a dict')
+    validated_id = _validate_key_id(key_id)
+    key = _coerce_private_key(private_key)
+    message = _signing_bytes(manifest, validated_id)
+    sig_bytes = key.sign(message)
+    out = dict(manifest)
+    out['signature'] = {
+        'alg': ALGORITHM,
+        'key_id': validated_id,
+        'value': base64.b64encode(sig_bytes).decode('ascii'),
+    }
+    return out
+
+
+def verify_manifest(
+    manifest: dict,
+    public_keys: dict | None = None,
+    *,
+    required: bool = True,
+) -> dict:
+    """Verify ``manifest['signature']`` and return ``manifest`` unchanged on success."""
+    if not isinstance(manifest, dict):
+        raise ManifestSignatureError('manifest must be a dict')
+
+    if 'signature' not in manifest or manifest['signature'] is None:
+        if not required:
+            return manifest
+        raise ManifestSignatureError('missing manifest signature')
+
+    sig = manifest['signature']
+    if not isinstance(sig, dict):
+        raise ManifestSignatureError('manifest signature must be an object')
+
+    alg = sig.get('alg')
+    if not isinstance(alg, str) or alg != ALGORITHM:
+        raise ManifestSignatureError(f'unsupported signature algorithm: {alg!r}')
+
+    key_id = _validate_key_id(sig.get('key_id'))
+
+    value = sig.get('value')
+    if not isinstance(value, str) or not value:
+        raise ManifestSignatureError('manifest signature value must be a non-empty string')
+
+    keys = PUBLIC_KEYS if public_keys is None else public_keys
+    if not isinstance(keys, Mapping):
+        raise ManifestSignatureError('public_keys must be a mapping')
+    if key_id not in keys:
+        raise ManifestSignatureError(f'unknown key_id: {key_id}')
+
+    pub = _coerce_public_key(keys[key_id])
+
+    try:
+        sig_bytes = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ManifestSignatureError(f'invalid base64 signature: {exc}') from exc
+
+    if len(sig_bytes) != _SIG_BYTES:
+        raise ManifestSignatureError(
+            f'Ed25519 signature must be {_SIG_BYTES} bytes, got {len(sig_bytes)}'
+        )
+
+    message = _signing_bytes(manifest, key_id)
+    try:
+        pub.verify(sig_bytes, message)
+    except InvalidSignature as exc:
+        raise ManifestSignatureError('invalid manifest signature') from exc
+
+    return manifest

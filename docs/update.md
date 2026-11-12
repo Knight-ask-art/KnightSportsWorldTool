@@ -29,7 +29,13 @@ python packaging\make_latest.py --dist dist
 python packaging\make_latest.py --dist dist --base-url https://example.com/hxp
 # 或直接写到 GitHub Release 发布目录
 python packaging\make_latest.py --dist dist --out ..\github-release\latest.json
+# 使用未加密 Ed25519 PEM 私钥签名（Slice 1 原语；不传 --sign-key 时保持无签名输出）
+python packaging\make_latest.py --dist dist --sign-key path\to\release.pem --key-id release --require-signature
 ```
+
+`--sign-key` 读取未加密的 Ed25519 PEM 私钥在写盘前为清单签名，`--key-id` 默认
+`release`；传入 `--require-signature` 但未提供 `--sign-key` 时直接以退出码 `2`
+中止，避免误发未签名清单。私钥不入库、不打印到终端或日志。
 
 生成器从 `replica/build_info.py` 读版本号，从资产现算 SHA-256 和字节数，
 所以不会出现「版本号对了、哈希是旧的」。安装包不存在时只写 zip，并在 stderr
@@ -98,7 +104,12 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
     "layout": "onedir",
     "entry": "好想跑.exe"
   },
-  "generated_by": "packaging/make_latest.py"
+  "generated_by": "packaging/make_latest.py",
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "release",
+    "value": "<base64>"
+  }
 }
 ```
 
@@ -117,6 +128,7 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
 | `url` | 主下载地址，老客户端只认这一个 |
 | `urls` | 同一文件的全部渠道（镜像在前、官方直链在最后）；客户端探测后按实测速度排序，失败依次重试。老客户端忽略该字段 |
 | `rollback` | 上一稳定版，用于手动或自动回滚 |
+| `signature` | 可选的 Ed25519 清单签名（`alg`/`key_id`/`value`）；老客户端忽略该字段。规范载荷为移除顶层 `signature` 后按 `sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False` 序列化的 UTF-8 JSON，并以 `key_id + "\0" + payload` 参与签名；源码中 `PUBLIC_KEYS` 默认为空，客户端验签接入留待后续步骤 |
 
 ## URL 约定
 
