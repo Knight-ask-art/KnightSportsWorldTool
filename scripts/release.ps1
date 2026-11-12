@@ -30,12 +30,18 @@ if (-not $UpdateSignKey) {
     $UpdateSignKey = Join-Path $env:USERPROFILE '.hxp\update-signing.pem'
 }
 if (-not (Test-Path -LiteralPath $UpdateSignKey)) {
-    $msg = ('update signing key not found: {0}' +
-            "`nCreate one with python scripts\update_keygen.py, or pass " +
-            '-UpdateSignKey') -f $UpdateSignKey
-    throw $msg
+    if ($Plan) {
+        Write-Host ('WARN: update signing key missing: {0}' -f $UpdateSignKey)
+        $UpdateSignKey = '<missing>'
+    } else {
+        $msg = ('update signing key not found: {0}' +
+                "`nCreate one with python scripts\update_keygen.py, or pass " +
+                '-UpdateSignKey') -f $UpdateSignKey
+        throw $msg
+    }
+} else {
+    $UpdateSignKey = (Resolve-Path -LiteralPath $UpdateSignKey).Path
 }
-$UpdateSignKey = (Resolve-Path -LiteralPath $UpdateSignKey).Path
 if ($MinHealthyMirrors -lt 0) {
     throw '-MinHealthyMirrors must be >= 0'
 }
@@ -49,17 +55,6 @@ try {
     Write-Host '== preflight: version / BOM / working tree =='
     python scripts\release_check.py --source-only
     if ($LASTEXITCODE -ne 0) { throw 'release_check.py --source-only failed' }
-
-    if (-not $SkipTests) {
-        Write-Host '== preflight: local Windows tests =='
-        Push-Location (Join-Path $ROOT 'app')
-        try {
-            python -m pytest tests -q
-            if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
-        } finally {
-            Pop-Location
-        }
-    }
 
     $base = "https://github.com/$Repo/releases/download/v$Version"
     $rollbackBase = "https://github.com/$Repo/releases/download/v$RollbackVersion"
@@ -103,6 +98,17 @@ try {
             }
         }
         return
+    }
+
+    if (-not $SkipTests) {
+        Write-Host '== preflight: local Windows tests =='
+        Push-Location (Join-Path $ROOT 'app')
+        try {
+            python -m pytest tests -q
+            if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
+        } finally {
+            Pop-Location
+        }
     }
 
     Write-Host '== build =='
