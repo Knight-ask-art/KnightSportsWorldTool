@@ -47,7 +47,14 @@ param(
     [ValidateSet('nuitka', 'pyinstaller')]
     [string]$Backend = 'nuitka',
     [switch]$NoInstaller,
-    [string]$Makensis = ''
+    [string]$Makensis = '',
+    [string]$SignKey = '',
+    [string]$KeyID = 'release',
+    [switch]$RequireSignature,
+    [int]$MinHealthyMirrors = 0,
+    [double]$MirrorCheckBudget = 6.0,
+    [switch]$SkipMirrorCheck,
+    [string]$MirrorRegistry = ''
 )
 $ErrorActionPreference = 'Stop'
 $ROOT = Split-Path $PSScriptRoot -Parent
@@ -69,6 +76,9 @@ $GO = Join-Path $REPO 'go\hxp-guard'
 $GO_EXE = Join-Path $GO 'hxp-guard.exe'
 $CPP = Join-Path $REPO 'cpp\hxp-shield'
 $CPP_EXE = Join-Path $CPP 'hxp-shield.exe'
+$LAUNCHER = Join-Path $REPO 'go\hxp-launcher'
+$LAUNCHER_EXE = Join-Path $LAUNCHER 'hxp-launcher.exe'
+$makeLatest = Join-Path $PSScriptRoot 'make_latest.py'
 
 if (-not $Version) {
     $info = Join-Path $ROOT 'replica\build_info.py'
@@ -82,6 +92,22 @@ $TARGET = Join-Path $DIST $NAME
 $ARTIFACT = 'haoxiangpao_v' + $Version
 $ZIP = Join-Path $DIST ($ARTIFACT + '_win64.zip')
 $SETUP = Join-Path $DIST ($ARTIFACT + '_win64_setup.exe')
+
+if ($MinHealthyMirrors -lt 0) {
+    throw '-MinHealthyMirrors must be >= 0'
+}
+if ($MirrorCheckBudget -le 0) {
+    throw '-MirrorCheckBudget must be positive'
+}
+if ($MirrorRegistry) {
+    $MirrorRegistry = (Resolve-Path -LiteralPath $MirrorRegistry).Path
+}
+if ($SignKey) {
+    $SignKey = (Resolve-Path -LiteralPath $SignKey).Path
+}
+if ($RequireSignature -and -not $SignKey) {
+    throw '-RequireSignature requires -SignKey'
+}
 
 # Build identifier: written into replica/_build_info.py immediately before
 # PyInstaller and removed afterwards.  A frozen build must not run git.
@@ -381,11 +407,57 @@ try {
     if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
 }
 
+Write-Host '== 3b/5 Go launcher =='
+if (-not (Test-Path (Join-Path $LAUNCHER 'go.mod'))) {
+    throw "Go launcher module missing: $LAUNCHER"
+}
+$launcherPubkey = ''
+if ($SignKey) {
+    $pubkeyPath = Join-Path $STAGE 'launcher-pubkey.txt'
+    & python $makeLatest --dump-pubkey $pubkeyPath --sign-key $SignKey --key-id $KeyID
+    if ($LASTEXITCODE -ne 0) {
+        throw "launcher public key extraction failed with exit code $LASTEXITCODE"
+    }
+    $launcherPubkey = (Get-Content -LiteralPath $pubkeyPath -Raw).Trim()
+}
+Push-Location $LAUNCHER
+try {
+    $env:CGO_ENABLED = '0'
+    $ldflags = '-s -w -H=windowsgui'
+    if ($launcherPubkey) {
+        $ldflags += ' -X haoxiangpao/hxp-launcher/internal/manifest.injectedPublicKeys=' + $launcherPubkey
+    }
+    & go build -trimpath -ldflags $ldflags -o $LAUNCHER_EXE ./cmd/hxp-launcher
+    if ($LASTEXITCODE -ne 0) {
+        throw "go build (launcher) failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
+}
+if (-not (Test-Path $LAUNCHER_EXE)) { throw "go build did not produce $LAUNCHER_EXE" }
+if ($launcherPubkey) {
+    Write-Host '   release public key injected'
+} else {
+    Write-Host '   no signing key: launcher will fail open and skip updates'
+}
+Copy-Item $LAUNCHER_EXE (Join-Path $BUILT 'hxp-launcher.exe') -Force
+Write-Host ('   {0}' -f (Join-Path $BUILT 'hxp-launcher.exe'))
+
 Write-Host '== 4/5 Package =='
 # The smoke test can create data/mock_rsa.*; test artifacts never ship.
 $stageData = Join-Path $BUILT 'data'
 if (Test-Path $stageData) { Remove-Item $stageData -Recurse -Force }
 Copy-Item (Join-Path $PSScriptRoot 'USAGE.txt') (Join-Path $BUILT '使用说明.txt') -Force
+# The Go launcher reads this next to the app exe (not the Python build id).
+$buildInfoJson = [ordered]@{
+    version = $Version
+    commit = $commit
+    built_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+} | ConvertTo-Json -Compress
+[System.IO.File]::WriteAllText(
+    (Join-Path $BUILT 'build_info.json'),
+    $buildInfoJson + "`n",
+    (New-Object System.Text.UTF8Encoding($false)))
 if (Test-Path $ZIP) { Remove-Item $ZIP -Force }
 Compress-Archive -Path (Join-Path $BUILT '*') -DestinationPath $ZIP -CompressionLevel Optimal
 
@@ -480,26 +552,80 @@ Use -NoInstaller only for a local smoke build.
 }
 
 Write-Host '== latest.json (auto-update manifest) =='
-$makeLatest = Join-Path $PSScriptRoot 'make_latest.py'
-$latestArgs = @($makeLatest, '--dist', $DIST, '--version', $Version,
-                '--channel', $Channel,
-                '--rollback-version', $RollbackVersion)
-if ($DownloadBaseUrl) {
-    $latestArgs += @('--base-url', $DownloadBaseUrl)
+function New-LatestArgs {
+    param([string]$RegistryPath, [switch]$Unsigned)
+    $a = @($makeLatest, '--dist', $DIST, '--version', $Version,
+           '--channel', $Channel,
+           '--rollback-version', $RollbackVersion)
+    if ($DownloadBaseUrl) {
+        $a += @('--base-url', $DownloadBaseUrl)
+    }
+    foreach ($mirror in $MirrorBaseUrl) {
+        if ($mirror) { $a += @('--mirror-base-url', $mirror) }
+    }
+    if ($RollbackBaseUrl) {
+        $a += @('--rollback-base-url', $RollbackBaseUrl)
+    }
+    foreach ($mirror in $RollbackMirrorBaseUrl) {
+        if ($mirror) { $a += @('--rollback-mirror-base-url', $mirror) }
+    }
+    if ($setupBuilt) {
+        $a += @('--setup', $setupBuilt)
+    }
+    if ($RegistryPath) {
+        $a += @('--mirror-registry', $RegistryPath)
+    }
+    if (-not $Unsigned) {
+        if ($SignKey) {
+            $a += @('--sign-key', $SignKey, '--key-id', $KeyID)
+        }
+        if ($RequireSignature) {
+            $a += '--require-signature'
+        }
+        if ($MinHealthyMirrors -gt 0 -and $DownloadBaseUrl) {
+            $a += @('--require-mirrors', [string]$MinHealthyMirrors)
+        }
+    }
+    return $a
 }
-foreach ($mirror in $MirrorBaseUrl) {
-    if ($mirror) { $latestArgs += @('--mirror-base-url', $mirror) }
+
+# Pass 1: unsigned candidate manifest, used only as the probe input.
+$initialArgs = New-LatestArgs -Unsigned
+& python @initialArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "initial latest.json generation failed with exit code $LASTEXITCODE"
 }
-if ($RollbackBaseUrl) {
-    $latestArgs += @('--rollback-base-url', $RollbackBaseUrl)
+
+$finalRegistry = $MirrorRegistry
+if ($DownloadBaseUrl -and $MinHealthyMirrors -gt 0) {
+    if ($SkipMirrorCheck) {
+        Write-Host '   WARNING: mirror health check skipped by request'
+    } else {
+        Write-Host ('== mirror health check (min {0}) ==' -f $MinHealthyMirrors)
+        $healthPath = Join-Path $DIST 'mirror-health.json'
+        $healthyRegistry = Join-Path $DIST 'update_mirrors.healthy.json'
+        $checkArgs = @(
+            (Join-Path $PSScriptRoot 'check_update_mirrors.py'),
+            '--manifest', (Join-Path $DIST 'latest.json'),
+            '--min-healthy', [string]$MinHealthyMirrors,
+            '--budget', [string]$MirrorCheckBudget,
+            '--out', $healthPath,
+            '--write-registry', $healthyRegistry)
+        if ($MirrorRegistry) {
+            $checkArgs += @('--registry', $MirrorRegistry)
+        }
+        & python @checkArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "mirror health check failed with exit code $LASTEXITCODE; refusing to publish dead mirrors"
+        }
+        $finalRegistry = $healthyRegistry
+    }
 }
-foreach ($mirror in $RollbackMirrorBaseUrl) {
-    if ($mirror) { $latestArgs += @('--rollback-mirror-base-url', $mirror) }
-}
-if ($setupBuilt) {
-    $latestArgs += @('--setup', $setupBuilt)
-}
-& python @latestArgs
+
+# Pass 2: final manifest.  When a signing key is configured this is the only
+# file that gets signed; build.ps1 never writes a release key anywhere else.
+$finalArgs = New-LatestArgs -RegistryPath $finalRegistry
+& python @finalArgs
 if ($LASTEXITCODE -ne 0) {
     throw "latest.json generation failed with exit code $LASTEXITCODE"
 }

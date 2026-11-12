@@ -12,6 +12,7 @@ against the manifest URL, so the same file works on any host or local folder.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as _dt
 import hashlib
 import json
@@ -521,6 +522,9 @@ def main(argv=None) -> int:
                     help='signature key_id (default: release)')
     ap.add_argument('--require-signature', action='store_true',
                     help='exit 2 when --sign-key is not provided')
+    ap.add_argument('--dump-pubkey', default=None, metavar='PATH',
+                    help='write key_id:base64 (raw Ed25519 pubkey) and exit; '
+                         'used to inject the key into the Go launcher')
     args = ap.parse_args(argv)
 
     if args.require_mirrors < 0:
@@ -558,6 +562,28 @@ def main(argv=None) -> int:
             print('error: cannot load unencrypted Ed25519 PEM private key: '
                   f'{key_path}', file=sys.stderr)
             return 2
+
+    if args.dump_pubkey:
+        if private_key is None:
+            print('error: --dump-pubkey requires --sign-key', file=sys.stderr)
+            return 2
+        key_id = (args.key_id or '').strip()
+        if not key_id or any(ord(ch) < 32 for ch in key_id):
+            print('error: --key-id is required and must not contain '
+                  'control characters', file=sys.stderr)
+            return 2
+        from cryptography.hazmat.primitives import serialization
+
+        raw_pub = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        line = f'{key_id}:{base64.b64encode(raw_pub).decode("ascii")}\n'
+        pub_path = Path(args.dump_pubkey)
+        pub_path.parent.mkdir(parents=True, exist_ok=True)
+        pub_path.write_text(line, encoding='utf-8', newline='\n')
+        print(f'public key:  {pub_path} (key_id={key_id})')
+        return 0
 
     dist = Path(args.dist).resolve()
     version = args.version or read_version()

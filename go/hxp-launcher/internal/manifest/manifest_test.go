@@ -201,6 +201,40 @@ func TestFetchErrorRedactsQueryAndFragment(t *testing.T) {
 	}
 }
 
+func TestParseInjectedPublicKeys(t *testing.T) {
+	pub := make(ed25519.PublicKey, ed25519.PublicKeySize)
+	for i := range pub {
+		pub[i] = byte(i + 7)
+	}
+	b64 := base64.StdEncoding.EncodeToString(pub)
+
+	keys := parseInjectedPublicKeys("release:" + b64 + ",backup:" + b64)
+	if len(keys) != 2 || !bytes.Equal(keys["release"], pub) || !bytes.Equal(keys["backup"], pub) {
+		t.Fatalf("unexpected injected keys: %v", keys)
+	}
+	if got := parseInjectedPublicKeys(""); len(got) != 0 {
+		t.Fatalf("empty spec produced keys: %v", got)
+	}
+	if got := parseInjectedPublicKeys("release:not-base64"); len(got) != 0 {
+		t.Fatalf("invalid key was accepted: %v", got)
+	}
+}
+
+func TestInjectedKeyLinkerFlag(t *testing.T) {
+	if injectedPublicKeys == "" {
+		t.Skip("test binary was not built with -X injectedPublicKeys")
+	}
+	injected := parseInjectedPublicKeys(injectedPublicKeys)
+	if len(injected) == 0 {
+		t.Fatalf("injected key spec did not parse: %q", injectedPublicKeys)
+	}
+	for id, key := range injected {
+		if !bytes.Equal(PUBLIC_KEYS[id], key) {
+			t.Fatalf("PUBLIC_KEYS[%q] was not populated by init", id)
+		}
+	}
+}
+
 func TestFetchMalformedURLErrorRedactsSecrets(t *testing.T) {
 	rawURL := "https://user:SECRET_USER@example.com/%zz?token=SECRET_TOKEN#SECRET_FRAG"
 	_, err := Fetch(context.Background(), rawURL, true, 500*time.Millisecond)

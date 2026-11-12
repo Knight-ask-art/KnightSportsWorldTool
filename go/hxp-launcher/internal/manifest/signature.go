@@ -11,8 +11,41 @@ import (
 )
 
 // PUBLIC_KEYS holds trusted Ed25519 release public keys by key_id.
-// Empty in L1; release key injection happens in L2.
+// Release builds inject them through injectedPublicKeys; source builds keep
+// the map empty so the launcher fails open instead of trusting a test key.
 var PUBLIC_KEYS = map[string]ed25519.PublicKey{}
+
+// injectedPublicKeys is set at link time:
+//
+//	-ldflags "-X haoxiangpao/hxp-launcher/internal/manifest.injectedPublicKeys=release:<base64>"
+var injectedPublicKeys string
+
+func init() {
+	for id, key := range parseInjectedPublicKeys(injectedPublicKeys) {
+		PUBLIC_KEYS[id] = key
+	}
+}
+
+func parseInjectedPublicKeys(spec string) map[string]ed25519.PublicKey {
+	out := make(map[string]ed25519.PublicKey)
+	entries := strings.FieldsFunc(spec, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	})
+	for _, entry := range entries {
+		id, b64, ok := strings.Cut(entry, ":")
+		id = strings.TrimSpace(id)
+		b64 = strings.TrimSpace(b64)
+		if !ok || id == "" || b64 == "" {
+			continue
+		}
+		pk, err := decodePublicKey(b64)
+		if err != nil {
+			continue
+		}
+		out[id] = pk
+	}
+	return out
+}
 
 var (
 	ErrSignatureNotConfigured = errors.New("signature not configured")

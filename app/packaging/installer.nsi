@@ -29,7 +29,10 @@ Unicode true
 !endif
 
 !define APPNAME "好想跑"
-!define EXENAME "好想跑.exe"
+; 快捷方式、卸载图标统一指向 Go launcher；它负责静默更新并启动 好想跑.exe。
+; 直接运行 好想跑.exe 仍然可用，只是不会走后台下载/回滚流程。
+!define EXENAME "hxp-launcher.exe"
+!define APPEXE "好想跑.exe"
 !define PUBLISHER "Haoxiangpao"
 !define REGKEY "Software\好想跑"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\好想跑"

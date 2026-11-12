@@ -207,6 +207,22 @@ https://github.com/<owner>/<repo>/releases/latest/download/haoxiangpao_v0.1.3_wi
 
 ## 发布顺序
 
+发布构建（正式签名 + 镜像体检）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
+  -DownloadBaseUrl https://github.com/<owner>/<repo>/releases/download/v<version> `
+  -RollbackBaseUrl https://github.com/<owner>/<repo>/releases/download/v<rollback> `
+  -SignKey D:\keys\hxp-release-ed25519.pem `
+  -RequireSignature -MinHealthyMirrors 5
+```
+
+`build.ps1` 会：编译并注入公钥到 `hxp-launcher.exe` → 写入 `build_info.json`
+→ 打包 zip/安装包 → 生成候选 `latest.json` → 探测镜像并只保留健康节点 →
+用同一把私钥签最终清单。健康节点少于 `-MinHealthyMirrors` 时构建直接失败，
+不会把死链发出去。没有 `-SignKey` 的构建仍可产出未签名包，但 launcher 不会
+启用更新（fail-open）。
+
 1. 打包：`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`
    （需要 `makensis`，见 `docs/packaging.md`）
 2. 上传这五个文件到同一个 Release：
