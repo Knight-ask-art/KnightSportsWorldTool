@@ -18,7 +18,9 @@
     current: null,
     focus: null,
     retry: null,
-    wired: false
+    wired: false,
+    manual: false,
+    loginGate: null
   };
 
   const $ = sel => document.querySelector(sel);
@@ -129,13 +131,28 @@
     $('#announcementOk').textContent = item.ok || '知道了';
   }
 
-  function open(item){
+  function open(item, options){
     if(!item) return;
     state.current = item;
     const modal = ensureModal();
     if(!modal.hidden) return;
-    render(item);
+    state.manual = !!(options && options.manual);
+    // Record the opener before the login gate goes inert; an inert ancestor
+    // makes document.activeElement fall back to body.
     state.focus = document.activeElement;
+    render(item);
+    // A manual open (the login help button) must not consume the automatic
+    // announcement: leave "don't show again" unchecked unless the user
+    // explicitly ticks it before closing.
+    const never = $('#announcementNever');
+    if(never) never.checked = !state.manual;
+    // The login gate is also an aria-modal dialog.  Make it inert while the
+    // announcement is on top; otherwise two aria-modal dialogs are active.
+    const gate = $('#loginGate');
+    if(state.manual && gate && document.body.classList.contains('login-locked')){
+      state.loginGate = gate;
+      gate.inert = true;
+    }
     modal.hidden = false;
     setTimeout(() => {
       const ok = $('#announcementOk');
@@ -161,13 +178,21 @@
     const keep = remember === true
       ? !!(never && never.checked)
       : (remember === false ? false : null);
-    if(remember !== null && state.current){
+    // A manual open only marks the notice seen when the operator explicitly
+    // ticks "don't show again"; otherwise the login help button would use up
+    // the automatic QQ-group notice for the whole machine.
+    if(remember !== null && state.current && (!state.manual || keep === true)){
       // 0 removes the id, so "don't show again" unchecked really shows next
       // launch; keeping the version stops the popup for this content.
       markSeen(state.current, keep ? (state.current.version || 1) : 0);
     }
     if(keep && typeof toast === 'function')
       toast('已关闭自动显示；可在「设置 → 关于」重新打开');
+    if(state.loginGate){
+      state.loginGate.inert = false;
+      state.loginGate = null;
+    }
+    state.manual = false;
     if(state.focus && state.focus.focus){
       try{ state.focus.focus(); }catch(e){}
     }
@@ -214,7 +239,7 @@
       const items = await load();
       item = (items || []).find(x => x.id === id);
     }
-    if(item) open(item);
+    if(item) open(item, {manual: true});
     else if(typeof toast === 'function') toast('公告不存在或已下线');
   }
 

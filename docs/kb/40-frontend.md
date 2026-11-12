@@ -7,7 +7,7 @@
 
 ```text
 app/frontend/
-├─ index.html          单页骨架 + 七页 nav
+├─ index.html          单页骨架 + 八页 nav
 ├─ css/
 │  ├─ app.css          主样式、布局、组件
 │  ├─ skins.css        五套皮肤（data-skin）
@@ -37,13 +37,14 @@ app/frontend/
 - 主题在首屏前由 `/theme-boot.js` 注入（服务端从 `data/ui_state.json` 生成），
   避免先闪一下纸感皮肤。
 
-## 2. 七个页面
+## 2. 八个页面
 
 | `data-page` | 页面 | 主要做什么 |
 |---|---|---|
 | `overview` | 总览 | 学期进度、最近记录、快捷入口 |
 | `accounts` | 账号 | 登录态、校区、保活、设备指纹 |
 | `run` | 跑步 | 点位、路线、节奏、提交 |
+| `agent` | 智能规划 | 候选路线、预览与本地检查（开发中，不自动提交） |
 | `routes` | 路线 | 路线库、GPX、记录生成 |
 | `records` | 记录 | 列表、详情、轨迹、只读对账 |
 | `profile` | 我的 | 个人主页、违规自查 |
