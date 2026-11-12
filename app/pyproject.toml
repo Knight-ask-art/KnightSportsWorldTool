@@ -8,6 +8,7 @@ dependencies = [
     "opencv-python>=4.8",
     "numpy>=1.24",
     "requests>=2.31",
+    "cryptography>=41",
     "pywebview>=5.0",
     "pythonnet>=3.0",
 ]
