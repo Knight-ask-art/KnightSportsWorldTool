@@ -7,7 +7,7 @@
 | 系统 | Windows 10/11（路径里的中文字符不影响，命令里加引号） |
 | Python | 3.11（3.10+ 应该也行，代码用了 `X | None` 语法） |
 | 三方包 | `requests`、`cryptography`（`pip install requests cryptography`） |
-| 可选 | `pywebview`（只有桌面壳 `app.py` 需要；`run.py` 不需要） |
+| 可选 | `pywebview`（只有桌面壳 `app.py` 需要；`run.py` 不需要）；`openai`（OpenAI 兼容协议走官方 SDK，未安装时自动回退内置 HTTP 实现） |
 | 网络 | 直连 `run.gxapp.iydsj.com`；高德吸附需要「Web 服务」类型 Key |
 
 ```powershell
@@ -544,6 +544,7 @@ python -m app.replica.pipeline --plan 14
 | `JHP_NSK_PLATFORM` | `2` | 信封平台的平台号 |
 | `JHP_OBS_CONVERT_BD=1` | 关 | OBS 点从 BD-09 转 GCJ（只有喂真 BD 坐标时才开） |
 | `JHP_UNIDBG` / `JHP_JAVA` | — | 旧 unidbg 后端路径，已退役 |
+| `JHP_LLM_SDK` | `1` | `0`＝强制 LLM 走内置 `requests` 实现；默认在 `openai` 已安装时用它调用 OpenAI 兼容协议（Anthropic / Gemini 始终走 `requests`） |
 | `JHP_UPDATE_MANIFEST` | GitHub 清单 | 自定义更新清单地址；多个用逗号分隔，按顺序尝试 |
 
 ---

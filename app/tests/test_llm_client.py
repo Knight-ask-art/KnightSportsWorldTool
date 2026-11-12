@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
 import requests
 
 from replica.application import llm_client
+
+
+@pytest.fixture(autouse=True)
+def _force_legacy_client(monkeypatch):
+    """These tests guard the requests fallback, not the optional SDK path."""
+    monkeypatch.setenv('JHP_LLM_SDK', '0')
 
 
 class _FakeResponse:

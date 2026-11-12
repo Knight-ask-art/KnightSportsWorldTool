@@ -41,6 +41,14 @@
 - 可观测：`status.stats` 暴露工具重试、缓存命中/未命中、LLM 调用与候选尝试次数；Agent 页显示缓存命中，审计失败时显示 Agent 的最终说明。
 - 测试：`python -m pytest app/tests -q` → **964 passed**；`node --check app/frontend/js/app.js` 通过。
 
+## 2026-11-12 OpenAI SDK 薄适配层（可选）
+
+- 新增 `application/llm_openai_sdk.py`：OpenAI / DeepSeek / OpenRouter / Ollama / Custom 等 `kind=openai` 协议优先走官方 `openai` SDK；Anthropic / Gemini 仍走 `requests`。
+- 默认自动检测 SDK；`JHP_LLM_SDK=0` 强制回退。SDK 适配器内部异常不会回退重发，避免一次操作发两次请求。
+- `max_retries=0`，重试仍由 Agent/UI 控制；代理透传给 `httpx.Client`；响应上限 256 KB；错误统一脱敏 API Key。
+- 可选依赖：`python -m pip install -e .[sdk]`；核心依赖不变，未安装 `openai` 时行为与之前完全一致。
+- 测试：`python -m pytest app/tests -q` → **975 passed**；`node --check app/frontend/js/app.js` 通过。真实第三方模型连通性仍需手动验证。
+
 ## 下一步
 
 1. 交付 `plan/route-memory`（含 SPEC/REVIEW/STATUS、P0 报告、验收记录、两组离线检查脚本）。

@@ -1,12 +1,14 @@
-"""轻量级多协议 LLM 客户端（仅依赖标准库与 ``requests``）。
+"""多协议 LLM 客户端。
 
-支持 OpenAI 兼容接口（OpenAI / DeepSeek / OpenRouter / Ollama / Custom）、
-Anthropic Messages API 与 Google Gemini generateContent API。
-不读取磁盘配置，不打印请求头，错误信息始终做 API Key 脱敏。
+OpenAI 兼容接口优先走官方 ``openai`` SDK 薄适配层（``llm_openai_sdk``）；
+SDK 未安装或 ``JHP_LLM_SDK=0`` 时自动回退到仅依赖 ``requests`` 的实现。
+Anthropic Messages API 与 Google Gemini generateContent API 仍使用
+``requests`` 实现。不读取磁盘配置，不打印请求头，错误信息始终做 Key 脱敏。
 """
 
 from __future__ import annotations
 
+import os
 import time
 from urllib.parse import urlparse
 
@@ -16,6 +18,12 @@ from requests import api as _requests_api
 from . import llm_settings
 
 MAX_RESPONSE_BYTES = 256 * 1024
+
+
+def _sdk_allowed() -> bool:
+    """Allow an explicit opt-out for debugging or minimal installs."""
+    raw = str(os.environ.get('JHP_LLM_SDK', '1')).strip().lower()
+    return raw not in ('0', 'false', 'off', 'no')
 
 
 def _redact(text: str, api_key: str) -> str:
@@ -252,6 +260,22 @@ def chat(settings: dict, messages: list[dict], proxies: dict | None = None) -> d
     except (TypeError, ValueError):
         timeout_s = llm_settings.DEFAULT_TIMEOUT_S
     timeout_s = max(llm_settings.MIN_TIMEOUT_S, min(llm_settings.MAX_TIMEOUT_S, timeout_s))
+
+    kind = llm_settings.PROTOCOLS[protocol]['kind']
+    if kind == 'openai' and _sdk_allowed():
+        try:
+            from . import llm_openai_sdk
+        except Exception:  # noqa: BLE001 - a broken optional import must not block
+            llm_openai_sdk = None
+        if llm_openai_sdk is not None and llm_openai_sdk.available():
+            try:
+                return llm_openai_sdk.chat(settings, messages, proxies=proxies)
+            except Exception as exc:  # noqa: BLE001 - never duplicate the request
+                return _fail_result(
+                    f'OpenAI SDK 适配器异常: {exc}',
+                    'config',
+                    api_key=api_key,
+                )
 
     url, headers, body, kind = _build_request(settings, messages)
     start = time.monotonic()
