@@ -1,6 +1,6 @@
 # Update P0 / Go launcher — L1
 
-Status: implement L1
+Status: L1 implemented; L2A (background download worker + persistent retry) implemented (see `docs/plans/update-p0/L2A.md`); L2B (apply/replace/rollback) deferred
 Branch: `task/update-p0-launcher`
 Base: `master` @ `9d7650c`
 

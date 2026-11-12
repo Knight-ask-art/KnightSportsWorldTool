@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"haoxiangpao/hxp-launcher/internal/logx"
 	"haoxiangpao/hxp-launcher/internal/manifest"
 	"haoxiangpao/hxp-launcher/internal/version"
+	"haoxiangpao/hxp-launcher/internal/worker"
 )
 
 type CheckSummary struct {
@@ -33,6 +36,30 @@ type CheckSummary struct {
 	Error      string   `json:"error,omitempty"`
 }
 
+type WorkerSpawnOptions struct {
+	ExePath      string
+	AppPath      string
+	DataDir      string
+	ManifestURLs []string
+	TimeoutSec   int
+	LogPath      string
+	ParentPID    int
+	AllowLocal   bool
+	PubkeyPath   string
+}
+
+type launcherDeps struct {
+	launch      func(app.LaunchOptions) (int, error)
+	spawnWorker func(WorkerSpawnOptions) (int, error)
+}
+
+func defaultLauncherDeps() launcherDeps {
+	return launcherDeps{
+		launch:      app.Launch,
+		spawnWorker: spawnWorker,
+	}
+}
+
 func main() {
 	exe, err := os.Executable()
 	launcherDir := "."
@@ -43,17 +70,31 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer, launcherDir string) int {
+	return runWithDeps(args, stdout, stderr, launcherDir, defaultLauncherDeps())
+}
+
+func runWithDeps(args []string, stdout, stderr io.Writer, launcherDir string, deps launcherDeps) int {
+	if deps.launch == nil {
+		deps.launch = app.Launch
+	}
+	if deps.spawnWorker == nil {
+		deps.spawnWorker = spawnWorker
+	}
+
 	var (
-		appPath     string
-		dataDir     string
-		manifestRaw string
-		checkMode   bool
-		noUpdate    bool
-		dryRun      bool
-		allowLocal  bool
-		pubkeyPath  string
-		timeoutSec  int
-		logPath     string
+		appPath      string
+		dataDir      string
+		manifestRaw  string
+		checkMode    bool
+		noUpdate     bool
+		dryRun       bool
+		allowLocal   bool
+		pubkeyPath   string
+		timeoutSec   int
+		logPath      string
+		updateWorker bool
+		workerOnce   bool
+		parentPID    int
 	)
 
 	fs := flag.NewFlagSet("hxp-launcher", flag.ContinueOnError)
@@ -68,6 +109,9 @@ func run(args []string, stdout, stderr io.Writer, launcherDir string) int {
 	fs.StringVar(&pubkeyPath, "pubkey", "", "public key file path for --allow-local tests")
 	fs.IntVar(&timeoutSec, "timeout", 8, "manifest fetch timeout in seconds")
 	fs.StringVar(&logPath, "log", "", "log file path")
+	fs.BoolVar(&updateWorker, "update-worker", false, "run background update download worker only")
+	fs.BoolVar(&workerOnce, "once", false, "worker: run one pass over mirrors and exit")
+	fs.IntVar(&parentPID, "parent-pid", 0, "worker: exit when parent process disappears")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -80,12 +124,28 @@ func run(args []string, stdout, stderr io.Writer, launcherDir string) int {
 		fmt.Fprintln(stderr, "--timeout must be positive")
 		return 2
 	}
+	if parentPID < 0 {
+		fmt.Fprintln(stderr, "--parent-pid must be non-negative")
+		return 2
+	}
 	if pubkeyPath != "" && !allowLocal {
 		fmt.Fprintln(stderr, "--pubkey requires --allow-local")
 		return 2
 	}
 	if checkMode && noUpdate {
 		fmt.Fprintln(stderr, "--check and --no-update cannot be used together")
+		return 2
+	}
+	if updateWorker && (checkMode || noUpdate || dryRun) {
+		fmt.Fprintln(stderr, "--update-worker cannot be combined with --check, --no-update, or --dry-run")
+		return 2
+	}
+	if !updateWorker && workerOnce {
+		fmt.Fprintln(stderr, "--once requires --update-worker")
+		return 2
+	}
+	if !updateWorker && parentPID != 0 {
+		fmt.Fprintln(stderr, "--parent-pid requires --update-worker")
 		return 2
 	}
 
@@ -118,11 +178,6 @@ func run(args []string, stdout, stderr io.Writer, launcherDir string) int {
 		manifestURLs = manifest.DefaultManifestURLs
 	}
 
-	if noUpdate {
-		logger.Info("update check skipped (--no-update)")
-		return launchApp(logger, stderr, appPath, dryRun)
-	}
-
 	keys := manifest.PUBLIC_KEYS
 	var keyLoadErr error
 	if pubkeyPath != "" {
@@ -134,34 +189,73 @@ func run(args []string, stdout, stderr io.Writer, launcherDir string) int {
 
 	timeout := time.Duration(timeoutSec) * time.Second
 
+	if updateWorker {
+		if keyLoadErr != nil {
+			logger.Error("worker cannot load public key: %v", keyLoadErr)
+			fmt.Fprintf(stderr, "fatal: %v\n", keyLoadErr)
+			return 1
+		}
+		if len(keys) == 0 {
+			logger.Error("signature not configured")
+			fmt.Fprintf(stderr, "fatal: %v\n", manifest.ErrSignatureNotConfigured)
+			return 1
+		}
+		err := worker.Run(context.Background(), worker.Config{
+			DataDir:      dataDir,
+			ManifestURLs: manifestURLs,
+			Keys:         keys,
+			AllowLocal:   allowLocal,
+			Timeout:      timeout,
+			Once:         workerOnce,
+			ParentPID:    parentPID,
+			Logger:       logger,
+		})
+		if err != nil {
+			logger.Error("update worker failed: %s", worker.SanitizeErrorString(err.Error()))
+			return 1
+		}
+		return 0
+	}
+
+	if noUpdate {
+		logger.Info("update check skipped (--no-update)")
+		_, code := launchApp(deps.launch, logger, stderr, appPath, dryRun)
+		return code
+	}
+
 	if checkMode {
 		return runCheck(stdout, logger, appDir, manifestURLs, keys, keyLoadErr, allowLocal, timeout)
+	}
+
+	appPID, code := launchApp(deps.launch, logger, stderr, appPath, dryRun)
+	if code != 0 {
+		return code
 	}
 
 	info, err := version.ReadBuildInfo(appDir)
 	if err != nil {
 		if errors.Is(err, version.ErrBuildInfoMissing) {
-			logger.Info("build_info.json missing; launching without update check")
+			logger.Info("build_info.json missing; skipping update check")
 		} else {
-			logger.Warn("build_info.json unreadable (%v); launching without update check", err)
+			logger.Warn("build_info.json unreadable (%v); skipping update check", err)
 		}
-		return launchApp(logger, stderr, appPath, dryRun)
+		return 0
 	}
 
 	if keyLoadErr != nil {
 		logger.Warn("manifest check skipped (fail-open): %v", keyLoadErr)
-		return launchApp(logger, stderr, appPath, dryRun)
+		return 0
 	}
 
 	if len(keys) == 0 {
 		logger.Info("signature not configured")
-		return launchApp(logger, stderr, appPath, dryRun)
+		return 0
 	}
 
 	res, err := manifest.FetchAndVerify(context.Background(), manifestURLs, keys, allowLocal, timeout)
 	if err != nil {
 		logger.Warn("manifest check failed (fail-open): %v", err)
-		return launchApp(logger, stderr, appPath, dryRun)
+		return 0
 	}
 
 	state := compareState(res.Manifest.Version, info.Version)
@@ -170,7 +264,30 @@ func run(args []string, stdout, stderr io.Writer, launcherDir string) int {
 		res.Signature.KeyID, res.Source, info.Version, res.Manifest.Version, state,
 	)
 
-	return launchApp(logger, stderr, appPath, dryRun)
+	if state == "available" {
+		if dryRun {
+			logger.Info("dry-run: would spawn update worker")
+			return 0
+		}
+		spawnOpts := WorkerSpawnOptions{
+			AppPath:      absOrRaw(appPath),
+			DataDir:      absOrRaw(dataDir),
+			ManifestURLs: manifestURLs,
+			TimeoutSec:   timeoutSec,
+			LogPath:      absOrRaw(logPath),
+			ParentPID:    appPID,
+			AllowLocal:   allowLocal,
+			PubkeyPath:   absOrRaw(pubkeyPath),
+		}
+		wpid, err := deps.spawnWorker(spawnOpts)
+		if err != nil {
+			logger.Warn("failed to spawn update worker (fail-open): %s", worker.SanitizeErrorString(err.Error()))
+		} else {
+			logger.Info("spawned update worker (pid=%d)", wpid)
+		}
+	}
+
+	return 0
 }
 
 func runCheck(
@@ -273,19 +390,97 @@ func compareState(latest, current string) string {
 	return "unknown"
 }
 
-func launchApp(logger *logx.Logger, stderr io.Writer, appPath string, dryRun bool) int {
-	pid, err := app.Launch(app.LaunchOptions{AppPath: appPath, DryRun: dryRun})
+func launchApp(
+	launchFn func(app.LaunchOptions) (int, error),
+	logger *logx.Logger,
+	stderr io.Writer,
+	appPath string,
+	dryRun bool,
+) (int, int) {
+	pid, err := launchFn(app.LaunchOptions{AppPath: appPath, DryRun: dryRun})
 	if err != nil {
 		logger.Error("failed to launch %s: %v", appPath, err)
 		fmt.Fprintf(stderr, "fatal: %v\n", err)
-		return 1
+		return 0, 1
 	}
 	if dryRun {
 		logger.Info("dry-run: would launch %s", appPath)
 	} else {
 		logger.Info("launched %s (pid=%d)", appPath, pid)
 	}
-	return 0
+	return pid, 0
+}
+
+func buildWorkerArgs(opts WorkerSpawnOptions) []string {
+	args := []string{"--update-worker"}
+	if opts.AppPath != "" {
+		args = append(args, "--app", opts.AppPath)
+	}
+	if opts.DataDir != "" {
+		args = append(args, "--data", opts.DataDir)
+	}
+	if len(opts.ManifestURLs) > 0 {
+		args = append(args, "--manifest", strings.Join(opts.ManifestURLs, ","))
+	}
+	if opts.TimeoutSec > 0 {
+		args = append(args, "--timeout", strconv.Itoa(opts.TimeoutSec))
+	}
+	if opts.LogPath != "" {
+		args = append(args, "--log", opts.LogPath)
+	}
+	if opts.ParentPID > 0 {
+		args = append(args, "--parent-pid", strconv.Itoa(opts.ParentPID))
+	}
+	if opts.AllowLocal {
+		args = append(args, "--allow-local")
+		if opts.PubkeyPath != "" {
+			args = append(args, "--pubkey", opts.PubkeyPath)
+		}
+	}
+	return args
+}
+
+func buildWorkerCommand(opts WorkerSpawnOptions) (*exec.Cmd, error) {
+	exe := opts.ExePath
+	if exe == "" {
+		var err error
+		exe, err = os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("resolve launcher executable: %w", err)
+		}
+	}
+	cmd := exec.Command(exe, buildWorkerArgs(opts)...)
+	if opts.AppPath != "" {
+		cmd.Dir = filepath.Dir(opts.AppPath)
+	} else {
+		cmd.Dir = filepath.Dir(exe)
+	}
+	cmd.SysProcAttr = worker.DetachedSysProcAttr()
+	return cmd, nil
+}
+
+func spawnWorker(opts WorkerSpawnOptions) (int, error) {
+	cmd, err := buildWorkerCommand(opts)
+	if err != nil {
+		return 0, err
+	}
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("start update worker: %w", err)
+	}
+	pid := cmd.Process.Pid
+	_ = cmd.Process.Release()
+	return pid, nil
+}
+
+func absOrRaw(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	return abs
 }
 
 func writeJSON(w io.Writer, v any) {
