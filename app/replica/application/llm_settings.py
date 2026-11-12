@@ -25,6 +25,7 @@ DEFAULT_TIMEOUT_S = 30
 MIN_TIMEOUT_S = 5
 MAX_TIMEOUT_S = 120
 DEFAULT_TEMPERATURE = 0.2
+MAX_RESPONSE_BYTES = 256 * 1024
 MAX_URL_LEN = 500
 MAX_MODEL_LEN = 200
 
@@ -121,7 +122,7 @@ def _defaults() -> dict:
     }
 
 
-def _clamp_temperature(value, *, strict: bool = False) -> float:
+def clamp_temperature(value, *, strict: bool = False) -> float:
     if value is None:
         return DEFAULT_TEMPERATURE
     if isinstance(value, bool):
@@ -141,7 +142,7 @@ def _clamp_temperature(value, *, strict: bool = False) -> float:
     return max(0.0, min(1.0, num))
 
 
-def _clamp_timeout(value, *, strict: bool = False) -> int:
+def clamp_timeout(value, *, strict: bool = False) -> int:
     if value is None:
         return DEFAULT_TIMEOUT_S
     if isinstance(value, bool):
@@ -159,6 +160,23 @@ def _clamp_timeout(value, *, strict: bool = False) -> int:
             raise ValueError('timeout_s 必须是有效数字')
         return DEFAULT_TIMEOUT_S
     return max(MIN_TIMEOUT_S, min(MAX_TIMEOUT_S, int(round(num))))
+
+
+def classify_status(status: int) -> str:
+    """Map an HTTP status to the shared error-kind vocabulary.
+
+    Both the requests client and the optional OpenAI SDK adapter use this so
+    the Agent's retry/rotation policy sees the same value on either path.
+    """
+    if status in (401, 403):
+        return 'auth'
+    if status == 404:
+        return 'not_found'
+    if status == 429:
+        return 'rate_limit'
+    if 500 <= status < 600:
+        return 'server'
+    return 'bad_response'
 
 
 def _validate_base_url(value: object, protocol: str) -> str:
@@ -242,8 +260,8 @@ def load(store_dir: str) -> dict:
         'base_url': base_url,
         'model': model,
         'has_key': bool(sealed),
-        'temperature': _clamp_temperature(doc.get('temperature')),
-        'timeout_s': _clamp_timeout(doc.get('timeout_s')),
+        'temperature': clamp_temperature(doc.get('temperature')),
+        'timeout_s': clamp_timeout(doc.get('timeout_s')),
         'updated_at_ms': updated_at_ms,
         'last_test': _sanitise_last_test(doc.get('last_test')),
     }
@@ -289,12 +307,12 @@ def save(store_dir: str, payload: dict) -> dict:
         enabled = existing['enabled']
 
     if 'temperature' in payload:
-        temperature = _clamp_temperature(payload.get('temperature'), strict=True)
+        temperature = clamp_temperature(payload.get('temperature'), strict=True)
     else:
         temperature = existing['temperature']
 
     if 'timeout_s' in payload:
-        timeout_s = _clamp_timeout(payload.get('timeout_s'), strict=True)
+        timeout_s = clamp_timeout(payload.get('timeout_s'), strict=True)
     else:
         timeout_s = existing['timeout_s']
 

@@ -201,6 +201,22 @@ def test_sdk_reads_content_parts_from_models_or_dicts(monkeypatch):
     assert res['text'] == '1 2'
 
 
+def test_llm_paths_share_the_response_limit_and_status_vocabulary():
+    from replica.application import llm_settings
+
+    assert (llm_client.MAX_RESPONSE_BYTES
+            == llm_openai_sdk.MAX_RESPONSE_BYTES
+            == llm_settings.MAX_RESPONSE_BYTES
+            == 256 * 1024)
+    cases = {
+        401: 'auth', 403: 'auth', 404: 'not_found',
+        429: 'rate_limit', 500: 'server', 503: 'server',
+        418: 'bad_response', 200: 'bad_response',
+    }
+    for status, kind in cases.items():
+        assert llm_settings.classify_status(status) == kind
+
+
 def test_sdk_missing_key_is_a_config_error(monkeypatch):
     _allow_sdk(monkeypatch)
     monkeypatch.setattr(

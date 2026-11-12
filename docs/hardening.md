@@ -181,6 +181,7 @@ cd rust\hxp-core; cargo test; cargo build --release --locked
 
 # Python
 cd app; python -m pytest tests -q
+python -m pytest tests/test_architecture_imports.py tests/test_native_boundaries.py -q
 node --check frontend/js/app.js
 python app.py --check
 
