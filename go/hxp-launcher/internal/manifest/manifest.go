@@ -126,7 +126,7 @@ func Fetch(ctx context.Context, rawURL string, allowLocal bool, timeout time.Dur
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid manifest URL: %w", err)
+		return nil, sanitizeFetchError(err, rawURL)
 	}
 	if !IsAllowedURL(u, allowLocal) {
 		return nil, fmt.Errorf("manifest URL scheme/host not allowed: %s", logx.SanitizeURL(rawURL))
