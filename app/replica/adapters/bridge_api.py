@@ -1106,6 +1106,9 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         return out
 
     def real_get_session(self):
+        message = self._integrity_message()
+        if message:
+            return _fail(message, code=403, data={'reason': 'integrity'})
         return _ok(self._public_session(self._read_session()))
 
     def real_set_session(self, uid=None, token=None, campusName=None,
@@ -1383,6 +1386,9 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         it to ``v70400``; the older ``v70100`` is kept as a 404-only fallback
         (see ``replica/transport/routes.py``).
         """
+        message = self._integrity_message()
+        if message:
+            return _fail(message, code=403, data={'reason': 'integrity'})
         try:
             acct = self._real_account()
         except DP.DeviceProfileError as e:
@@ -1983,6 +1989,19 @@ class ReplicaApi(RunBridgeMixin, AgentBridgeMixin):
         with self._gt4_manual_lock:
             self._gt4_manual.pop(str(token or ''), None)
         return _ok(True)
+
+    def _integrity_message(self):
+        """Cheap manifest gate for paths that do not run the login shield.
+
+        Session restore and submit never derive a device credential, so the
+        four-layer check would be wasted; the signature and three hashes are
+        enough to catch a replaced sidecar.  A source checkout is ``skipped``.
+        """
+        try:
+            from ..application import integrity as I
+            return I.tamper_message()
+        except Exception:  # noqa: BLE001 - a gate bug must not break the UI
+            return None
 
     def _shield_block(self):
         """Require the four-layer device credential before a real login.

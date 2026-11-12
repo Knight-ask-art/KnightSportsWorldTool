@@ -53,10 +53,19 @@ MANIFEST_PUBKEY = '845d046f58c78dd38b3460515723905bcdfb0394d706e021111836c553df2
 #: check fired.
 REPAIR_MESSAGE = '安装文件校验未通过，请重新安装软件后再试'
 
+#: A shipped file exists but the process may not read it (sharing violation,
+#: ACL, antivirus lock).  Separate from REPAIR_MESSAGE because reinstalling is
+#: not the first thing to try.
+READ_MESSAGE = '安装文件无法读取，请关闭杀毒软件后重启软件'
+
+#: A sidecar larger than this is not one of ours; hashing it would also stall
+#: the login thread.  The real files are a few MB at most.
+MAX_HASH_BYTES = 64 << 20
+
 
 def _manifest_error(reason: str = 'manifest') -> dict:
-    return {'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
-            'reason': reason}
+    return {'ok': False, 'checked': 0, 'missing': [], 'unreadable': [],
+            'mismatch': [], 'reason': reason}
 
 
 def signing_bytes(doc: dict) -> bytes:
@@ -132,8 +141,8 @@ def check_native(manifest_path: str | None = None,
     """
     path = native_manifest_path(root) if manifest_path is None else manifest_path
     if path is None:
-        return {'ok': True, 'checked': 0, 'missing': [], 'mismatch': [],
-                'skipped': True}
+        return {'ok': True, 'checked': 0, 'missing': [], 'unreadable': [],
+                'mismatch': [], 'skipped': True}
 
     try:
         # A corrupted or replaced manifest should not be able to stall a
@@ -142,7 +151,11 @@ def check_native(manifest_path: str | None = None,
             return _manifest_error()
         with open(path, encoding='utf-8') as fh:
             doc = json.load(fh)
-    except (OSError, ValueError):
+    except Exception:  # noqa: BLE001
+        # json.load raises RecursionError (~10k nested brackets) on input the
+        # attacker controls.  A bad manifest must stay a value here: if it
+        # escaped, tamper_message() would treat the check as broken and fail
+        # open, which is exactly the bypass this gate exists to stop.
         return _manifest_error()
 
     if (not isinstance(doc, dict)
@@ -166,23 +179,30 @@ def check_native(manifest_path: str | None = None,
     base = root or _install_root(path)
     checked = 0
     missing: list[str] = []
+    unreadable: list[str] = []
     mismatch: list[str] = []
     for name, rel in NATIVE_FILES:
         full = os.path.join(base, 'runtime', rel)
-        if not os.path.isfile(full):
+        if not os.path.exists(full):
             missing.append(name)
             continue
         try:
+            if os.path.getsize(full) > MAX_HASH_BYTES:
+                mismatch.append(name)
+                continue
             actual = _sha256(full)
         except OSError:
-            missing.append(name)
+            # Present but unreadable is not "missing": treating it as missing
+            # would let a replaced sidecar hide behind an ACL or a share lock.
+            unreadable.append(name)
             continue
         checked += 1
         if actual != expected[name]:
             mismatch.append(name)
 
-    return {'ok': not missing and not mismatch, 'checked': checked,
-            'missing': missing, 'mismatch': mismatch}
+    return {'ok': not missing and not mismatch and not unreadable,
+            'checked': checked, 'missing': missing, 'unreadable': unreadable,
+            'mismatch': mismatch}
 
 
 def tamper_message() -> str | None:
@@ -202,4 +222,6 @@ def tamper_message() -> str | None:
         return None
     if out.get('mismatch') or out.get('reason') in ('manifest', 'signature'):
         return REPAIR_MESSAGE
+    if out.get('unreadable'):
+        return READ_MESSAGE
     return None

@@ -67,6 +67,39 @@ def test_non_canonical_scalars_and_lengths_are_rejected():
     assert ed25519.verify(public, b'', b'\xff' * 64) is False
 
 
+def test_a_scalar_at_or_above_the_group_order_is_rejected():
+    # Adding L to a valid s leaves the same point but must be refused; the
+    # generic 0xff*sig test above dies in R decoding and never reaches this.
+    public = bytes.fromhex(VECTORS[0][1])
+    signature = bytes.fromhex(VECTORS[0][3])
+    s = int.from_bytes(signature[32:], 'little') + ed25519._Q
+    bad = signature[:32] + s.to_bytes(32, 'little')
+    assert ed25519.verify(public, b'', bad) is False
+
+
+def test_the_non_canonical_identity_encoding_is_rejected():
+    # x = 0 with the sign bit set (RFC 8032 5.1.3 must reject it).
+    raw = (1 | (1 << 255)).to_bytes(32, 'little')
+    assert ed25519._decode(raw) is None
+
+
+def test_a_small_order_public_key_cannot_verify_forgeries():
+    identity = (1).to_bytes(32, 'little')
+    forged = identity + bytes(32)
+    assert ed25519.verify(identity, b'x', forged) is False
+    # Order-2 point: y = -1.
+    order2 = (ed25519._P - 1).to_bytes(32, 'little')
+    assert ed25519.verify(order2, b'hello', forged) is False
+
+
+def test_wrong_types_return_false_instead_of_raising():
+    public = bytes.fromhex(VECTORS[0][1])
+    signature = bytes.fromhex(VECTORS[0][3])
+    assert ed25519.verify('a' * 32, b'', signature) is False
+    assert ed25519.verify(public, 'text', signature) is False
+    assert ed25519.verify(public, b'', ['x'] * 64) is False
+
+
 def test_bad_seed_lengths_raise():
     with pytest.raises(ValueError):
         ed25519.public_key(b'short')

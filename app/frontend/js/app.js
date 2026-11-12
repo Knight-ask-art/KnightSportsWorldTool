@@ -4493,6 +4493,12 @@ function renderSession(){
 
 async function liveInitSession(){
   const j = await liveApi('real_get_session');
+  if(!liveOk(j) && j.data && j.data.reason === 'integrity'){
+    LIVE.session = {};
+    renderEmptyData();
+    return {state: 'login',
+            message: j.message || '安装文件校验未通过，请重新安装软件后再试'};
+  }
   LIVE.session = liveOk(j) ? (j.data || {}) : {};
   focusCampusOnMap();
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
@@ -4528,6 +4534,10 @@ async function liveInitSession(){
     liveLog('token 检查失败', chk.message || '', 'err');
     renderEmptyData();
     refreshChecks();
+    if(chk.data && chk.data.reason === 'integrity'){
+      return {state: 'login',
+              message: chk.message || '安装文件校验未通过，请重新安装软件后再试'};
+    }
     const why = String(chk.message || '');
     const invalid = /HTTP\s*(401|403)|error=(401|403|10121)|token|登录|未配置 token/i.test(why);
     return {state: 'login',

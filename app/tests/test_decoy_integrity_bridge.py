@@ -52,7 +52,8 @@ def test_bridge_integrity_is_skipped_in_source_checkout(tmp_path, monkeypatch):
     out = _api(tmp_path).real_integrity_status()
     assert out['code'] == 200
     assert out['data'] == {'ok': True, 'checked': 0, 'missing': [],
-                           'mismatch': [], 'skipped': True}
+                           'unreadable': [], 'mismatch': [],
+                           'skipped': True}
 
 
 def test_bridge_integrity_reports_a_manifest_error_without_raising(
@@ -75,6 +76,34 @@ def test_bridge_integrity_adds_the_selfcheck_outside_a_source_checkout(
     out = _api(tmp_path).real_integrity_status()
     assert out['code'] == 200
     assert out['data']['selfcheck'] == {'ok': False, 'reason': 'image'}
+
+
+def _tampered(monkeypatch):
+    monkeypatch.setattr(I, 'check_native', lambda: {
+        'ok': False, 'checked': 0, 'missing': [], 'unreadable': [],
+        'mismatch': ['hxp-shield.exe']})
+
+
+def test_session_restore_is_blocked_by_a_changed_sidecar(tmp_path, monkeypatch):
+    _tampered(monkeypatch)
+    out = _api(tmp_path).real_get_session()
+    assert out == {'code': 403, 'message': I.REPAIR_MESSAGE,
+                   'data': {'reason': 'integrity'}}
+
+
+def test_token_check_is_blocked_by_a_changed_sidecar(tmp_path, monkeypatch):
+    _tampered(monkeypatch)
+    out = _api(tmp_path).real_check_session()
+    assert out == {'code': 403, 'message': I.REPAIR_MESSAGE,
+                   'data': {'reason': 'integrity'}}
+
+
+def test_submit_is_blocked_by_a_changed_sidecar(tmp_path, monkeypatch):
+    _tampered(monkeypatch)
+    out = _api(tmp_path).real_submit_run()
+    assert out['code'] == 500
+    assert out['message'] == I.REPAIR_MESSAGE
+    assert out['data'] == {'failure_kind': 'fail'}
 
 
 def test_decoy_and_integrity_calls_do_not_bypass_the_login_gate(

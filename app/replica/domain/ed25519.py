@@ -61,11 +61,22 @@ def _decode(raw: bytes):
     y = value & ((1 << 255) - 1)
     if y >= _P:
         return None
+    sign = (value >> 255) & 1
     x = _recover_x(y)
-    if x & 1 != (value >> 255) & 1:
+    # RFC 8032 5.1.3: x = 0 with the sign bit set is not a canonical encoding
+    # of the identity; accepting it would make (R=identity, s=0) verify for a
+    # small-order key.
+    if x == 0 and sign:
+        return None
+    if x & 1 != sign:
         x = _P - x
     point = (x, y, 1, x * y % _P)
     return point if _on_curve(point) else None
+
+
+def _is_identity(point) -> bool:
+    x, y, z, _t = point
+    return x % _P == 0 and (y - z) % _P == 0
 
 
 def _add(p, q):
@@ -126,11 +137,22 @@ def sign(seed: bytes, message: bytes) -> bytes:
 
 def verify(public: bytes, message: bytes, signature: bytes) -> bool:
     """True only for a canonical signature by ``public`` over ``message``."""
+    if not isinstance(public, (bytes, bytearray)):
+        return False
+    if not isinstance(message, (bytes, bytearray)):
+        return False
+    if not isinstance(signature, (bytes, bytearray)):
+        return False
     if len(public) != 32 or len(signature) != 64:
         return False
     a = _decode(public)
     r = _decode(signature[:32])
     if a is None or r is None:
+        return False
+    # A key outside the prime-order subgroup (identity, order 2/4/8) makes
+    # (R=identity, s=0) a valid signature for every message.  A valid key is
+    # non-identity and satisfies [L]A = identity; both are checked here.
+    if _is_identity(a) or not _is_identity(_mul(_Q, a)):
         return False
     s = int.from_bytes(signature[32:], 'little')
     if s >= _Q:

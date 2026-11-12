@@ -492,6 +492,9 @@ class RunBridgeMixin:
         A write-ahead receipt guards against double submission and against
         re-sending when a previous outcome is unknown.
         """
+        message = self._integrity_message()
+        if message:
+            return _fail_submit(message, kind='fail')
         if self._device_migration:
             return _fail_submit(
                 self._device_migration.get('message')

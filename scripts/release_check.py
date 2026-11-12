@@ -221,6 +221,8 @@ def main(argv=None) -> int:
             report, ROOT / 'app' / 'dist' / 'latest.json',
             version, 'dist/latest.json')
         if args.deep:
+            report.check(dist_manifest is not None, 'deep dist manifest',
+                         'app/dist/latest.json')
             deep_assets(report, dist_manifest)
             deep_integrity(report, version)
 

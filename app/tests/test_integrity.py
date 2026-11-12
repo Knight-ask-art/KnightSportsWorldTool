@@ -64,7 +64,8 @@ def _store(manifest, doc) -> None:
 def test_all_hashes_match(tmp_path):
     root, manifest = _install(tmp_path)
     out = I.check_native(manifest_path=str(manifest), root=str(root))
-    assert out == {'ok': True, 'checked': 3, 'missing': [], 'mismatch': []}
+    assert out == {'ok': True, 'checked': 3, 'missing': [],
+                   'unreadable': [], 'mismatch': []}
 
 
 def test_missing_sidecar_is_reported_not_raised(tmp_path):
@@ -94,7 +95,8 @@ def test_a_missing_signature_is_rejected(tmp_path):
     doc.pop('sig')
     _store(manifest, doc)
     out = I.check_native(manifest_path=str(manifest), root=str(root))
-    assert out == {'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
+    assert out == {'ok': False, 'checked': 0, 'missing': [],
+                   'unreadable': [], 'mismatch': [],
                    'reason': 'signature'}
 
 
@@ -136,7 +138,8 @@ def test_invalid_json_is_a_manifest_error(tmp_path):
     root, manifest = _install(tmp_path)
     manifest.write_text('{not json', encoding='utf-8')
     out = I.check_native(manifest_path=str(manifest), root=str(root))
-    assert out == {'ok': False, 'checked': 0, 'missing': [], 'mismatch': [],
+    assert out == {'ok': False, 'checked': 0, 'missing': [],
+                   'unreadable': [], 'mismatch': [],
                    'reason': 'manifest'}
 
 
@@ -223,11 +226,75 @@ def test_source_checkout_does_not_block(monkeypatch):
     assert I.tamper_message() is None
 
 
-def test_a_broken_check_fails_open(monkeypatch):
+def test_a_checker_bug_fails_open_but_input_does_not(monkeypatch):
+    # The outer catch only covers bugs in the checker itself.  Attacker input
+    # is handled inside check_native; see the nested-manifest test below.
     def boom():
-        raise OSError('disk went away')
+        raise RuntimeError('programming error')
     monkeypatch.setattr(I, 'check_native', boom)
     assert I.tamper_message() is None
+
+
+def test_a_deeply_nested_manifest_is_rejected_not_raised(tmp_path):
+    root, manifest = _install(tmp_path)
+    # ~9k nested arrays: json.load raises RecursionError, which is not a
+    # ValueError.  It must become a value here, or tamper_message() would
+    # treat the check as broken and fail open.
+    manifest.write_text('[' * 9000 + ']' * 9000, encoding='utf-8')
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['ok'] is False
+    assert out['reason'] == 'manifest'
+
+
+def test_a_v1_manifest_is_rejected(tmp_path):
+    root, manifest = _install(tmp_path, version=1)
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['reason'] == 'manifest'
+
+
+def test_a_non_hex_signature_is_rejected(tmp_path):
+    root, manifest = _install(tmp_path)
+    doc = _load(manifest)
+    doc['sig'] = 'z' * 128
+    _store(manifest, doc)
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['reason'] == 'signature'
+
+
+def test_an_empty_files_map_is_rejected(tmp_path):
+    root, manifest = _install(tmp_path)
+    doc = _load(manifest)
+    doc['files'] = {}
+    _store(manifest, doc)
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['reason'] == 'manifest'
+
+
+def test_an_unreadable_sidecar_blocks(tmp_path, monkeypatch):
+    root, manifest = _install(tmp_path)
+    real = I._sha256
+
+    def locked(path):
+        if path.endswith('hxp-guard.exe'):
+            raise OSError('sharing violation')
+        return real(path)
+
+    monkeypatch.setattr(I, '_sha256', locked)
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['unreadable'] == ['hxp-guard.exe']
+    assert out['missing'] == []
+    assert out['ok'] is False
+    monkeypatch.setattr(I, 'check_native', lambda: out)
+    assert I.tamper_message() == I.READ_MESSAGE
+
+
+def test_an_oversized_sidecar_is_a_mismatch(tmp_path, monkeypatch):
+    root, manifest = _install(tmp_path)
+    monkeypatch.setattr(I, 'MAX_HASH_BYTES', 4)
+    out = I.check_native(manifest_path=str(manifest), root=str(root))
+    assert out['mismatch'] == ['hxp-core.exe', 'hxp-guard.exe',
+                               'hxp-shield.exe']
+    assert out['checked'] == 0
 
 
 def test_repair_message_names_no_file_or_layer():

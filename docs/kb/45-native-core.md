@@ -179,9 +179,9 @@ Python 严格校验 magic/version/op/len；任何帧错、超时、token 过期�
 | 签名 | Ed25519 over `{"version","files"}` 的 canonical JSON（sorted keys、紧凑分隔符），不覆盖 `sig` 本身；私钥在 `JHP_MANIFEST_KEY` 或 `%USERPROFILE%\.hxp\manifest.key`，仓库里只有公钥常量 |
 | 读取 | `app/replica/application/integrity.py` 的 `check_native()`；frozen 下 manifest 路径为 `<app_root>/runtime/integrity.json` |
 | 校验对象 | `runtime/rust/hxp-core.exe`、`runtime/go/hxp-guard.exe`、`runtime/cpp/hxp-shield.exe` |
-| 返回 | `{'ok', 'checked', 'missing', 'mismatch'}`；manifest 缺失/格式错/版本不符为 `reason='manifest'`，签名错误为 `reason='signature'`；源码 checkout 为 `skipped` |
+| 返回 | `{'ok', 'checked', 'missing', 'unreadable', 'mismatch'}`；manifest 缺失/格式错/版本不符为 `reason='manifest'`，签名错误为 `reason='signature'`；源码 checkout 为 `skipped` |
 | 暴露方式 | bridge `real_integrity_status()`，以及诊断包里的 `integrity.json`；前端目前没有入口 |
-| 边界 | `mismatch`、`reason='manifest'`、`reason='signature'` 都拦登录（`shield.require` 在派生前调用 `integrity.tamper_message()`，文案「安装文件校验未通过，请重新安装软件后再试」）；`missing` 不拦。不删文件、不读 `data/`、不联网、不自动修复 |
+| 边界 | `mismatch`、`reason='manifest'`、`reason='signature'` 都拦登录、恢复会话与提交（`shield.require` 与 `bridge_api._integrity_message()`，文案「安装文件校验未通过，请重新安装软件后再试」）；`unreadable` 也拦，但提示先关杀软；`missing` 不拦。不删文件、不读 `data/`、不联网、不自动修复 |
 | 自检 | `hxp-shield.exe --selfcheck` 走独立进程，检查调试器与自身 PE（入口节可执行且不可写、section table 与 `SizeOfImage` 一致、入口页不是 RWX）；`shield.selfcheck()` 返回 `{'ok', 'skipped'}` 或 `{'ok': False, 'reason': 'debugger'|'image'|'unavailable'}`，只进诊断，不拦登录 |
 
 `runtime/cpp/` 与 `runtime/rust/`、`runtime/go/` 一样只放一个 exe：

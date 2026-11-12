@@ -140,12 +140,16 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
 - 私钥不进仓库：`JHP_MANIFEST_KEY`（64 hex）或
   `%USERPROFILE%\.hxp\manifest.key`。`keygen` 拒绝把私钥写进仓库目录；
   仓库里只有公钥常量。
-- **签名/manifest 错误与 mismatch 拦登录**：`shield.require()` 在任何一层
-  派生之前调用 `integrity.tamper_message()`。“文件存在但哈希不同”“manifest
-  缺失/格式错”“签名缺失/错误”都会返回 `REPAIR_MESSAGE`
-  （「安装文件校验未通过，请重新安装软件后再试」）并拒绝登录。`missing`
-  （文件不在）不拦：杀毒隔离和半拷贝是常态，缺层本身仍由 Phase 2 的 frozen
-  规则处理。源码 checkout 不拦。
+- **签名/manifest 错误与 mismatch 拦登录、恢复会话和提交**：
+  `shield.require()` 在任何一层派生之前调用 `integrity.tamper_message()`；
+  “文件存在但哈希不同”“manifest 缺失/格式错”“签名缺失/错误”都返回
+  `REPAIR_MESSAGE`（「安装文件校验未通过，请重新安装软件后再试」）。
+  `bridge_api._integrity_message()` 把同一道门补在 `real_get_session()`、
+  `real_check_session()` 和 `real_submit_run()` 上——否则改包后重启、用旧
+  会话进来就能绕过登录门；这三处只做三次 SHA-256，不跑四层派生。
+  `missing`（文件不在）不拦：杀毒隔离和半拷贝是常态，缺层本身仍由 Phase 2
+  的 frozen 规则处理；`unreadable`（文件在但读不了）拦住并提示先关杀软。
+  源码 checkout 不拦。
 - `cpp/hxp-shield --selfcheck`：两条保守检查——调试器
   （`IsDebuggerPresent` / `CheckRemoteDebuggerPresent`）和自身 PE（入口点
   所在节可执行且不可写、section table 与 `SizeOfImage` 一致、入口页不是
@@ -155,9 +159,9 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
   `integrity.json` 进入诊断包；**永不阻塞登录**——开发机常挂调试器，部分
   终端安全软件也会以调试方式探测进程。
 - 验收：正常安装与 `pytest` 都不触发蜜罐；只有显式调用 bridge 才会看到
-  “假成功 → 3 秒过期”；改一个哈希或删掉 `sig` 时登录被拒并给出重装提示，
-  删掉 native 文件时诊断标红、frozen 下由缺层规则拒绝。任何分支都不删除
-  文件、不动 `data/`。
+  “假成功 → 3 秒过期”；改一个哈希或删掉 `sig` 时登录、恢复会话、提交都被拒
+  并给出重装提示，删掉 native 文件时诊断标红、frozen 下由缺层规则拒绝。
+  任何分支都不删除文件、不动 `data/`。
 
 ### Phase 4 · 前端 A+B（已实现）
 

@@ -424,6 +424,23 @@ def test_a_frozen_build_ignores_the_path_override(tmp_path, monkeypatch):
     assert shield.find_shield() is None
 
 
+def test_a_frozen_build_ignores_the_guard_and_core_paths(tmp_path, monkeypatch):
+    import replica.build_info as BI
+    from replica.transport import rustcore as RC
+
+    guard = tmp_path / 'hxp-guard.exe'
+    core = tmp_path / 'hxp-core.exe'
+    guard.write_bytes(b'MZ')
+    core.write_bytes(b'MZ')
+    monkeypatch.setenv('JHP_ACCOUNT_GUARD_PATH', str(guard))
+    monkeypatch.setenv('JHP_RUST_CORE_PATH', str(core))
+    monkeypatch.setattr(BI, 'is_compiled', lambda: True)
+    monkeypatch.setattr(BI, 'app_root', lambda: str(tmp_path))
+
+    assert AG.find_guard() is None
+    assert RC.find_core() is None
+
+
 def test_selfcheck_is_skipped_when_the_binary_is_absent(monkeypatch):
     monkeypatch.setattr(shield, 'find_shield', lambda: None)
     assert shield.selfcheck() == {'ok': None, 'skipped': True}
