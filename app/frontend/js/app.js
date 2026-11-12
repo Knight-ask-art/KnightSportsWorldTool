@@ -534,6 +534,8 @@ function setCloseUI(on){
     state.textContent = on ? '开' : '关';
     state.classList.toggle('on', on);
   }
+  const rev = $('#reverseRouteBtn');
+  if(rev) rev.disabled = !(on && route.length >= 3);
 }
 setCloseUI(false);
 
@@ -745,6 +747,7 @@ function redraw(){
     $('#runSummary').textContent = '单圈 0.00 km · 等待画线';
     $('#mapNoteKm').textContent = '0.00 km';
     $('#mapNoteMeta').textContent = '等待画线';
+    if($('#reverseRouteBtn')) $('#reverseRouteBtn').disabled = true;
     refreshPointsDistanceState();
     if(typeof scheduleModelPreview === 'function') scheduleModelPreview();
     return;
@@ -760,6 +763,7 @@ function redraw(){
   $('#routeKm').innerHTML = km.toFixed(2) + '<small>km</small>';
   const target = (+$('#inKm').value || 0) * 1000;
   const closed = routeClosed && route.length >= 3;
+  if($('#reverseRouteBtn')) $('#reverseRouteBtn').disabled = !closed;
   // 0.5% tolerance: a target equal to one lap must stay one lap after the
   // route length was rounded to centimetres for the input field.
   const laps = closed && m > 5 && target > 0
@@ -817,6 +821,7 @@ $('#clearBtn').addEventListener('click', () => {
   if(route.length && !confirm('清空当前路线？已画的点会被删除，可用撤销恢复。')) return;
   if(route.length) pushRouteHistory('清空路线');
   clearTimeout(_routeFinalTimer);
+  if(typeof hideAutoCandidates === 'function') hideAutoCandidates();
   route = [];
   routeDirty = false;
   selRoutePoint = -1;
@@ -1303,19 +1308,172 @@ if($('#navThumb')){
 let currentMode = 'draw';
 const MODE_HELP = {
   draw: '手绘：点地图加点；第一个落点为起点；默认不闭合，需要绕圈时再打开「闭合」。',
-  auto: '自动：仍在开发中，不建议使用；请改用手绘，或导入 GPX / 使用田径场。',
+  auto: '自动：优先用你跑过的路线；没有学习结果时才用临时连线。',
   file: '导入：读取 GPX / GeoJSON / JSON / CSV（手表或别的 App 导出的轨迹）。',
   stadium: '田径场：生成 200/300/400m 标准跑道；提交时按目标距离刷圈。'
 };
 const ROUTE_HINT = {
-  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有登录凭证时不会生成假点位。',
-  auto: '<b>自动功能仍在开发中，不建议使用。</b>请切到「手绘」逐点画，或导入 GPX / 使用田径场。<br>当前自动模式只是按已加载点位连成一圈，路线质量不稳定。',
+  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有 token 时不会生成假点位。',
+  auto: '自动：优先用你跑过的路线；没有学习结果时才用临时连线。<br>可在「路线库」里先从本机跑步记录学习常跑路线，再回到这里一键选用。',
   file: '导入模式：读取 GPX / GeoJSON / JSON / CSV；手表或别的 App 导出的轨迹。文件只在本机解析。',
   stadium: '田径场模式：选 200/300/400m 生成标准跑道；提交时按目标距离刷圈。'
 };
-function autoGenerate(){
+let _autoSuggestSeq = 0;
+function hideAutoCandidates(){
+  const box = $('#autoCandidates');
+  if(box){
+    box.hidden = true;
+    box.innerHTML = '';
+  }
+}
+function candidateCoverageText(c){
+  const totalPts = livePoints.length;
+  if(totalPts && c && typeof c.coverage === 'number' && isFinite(c.coverage)){
+    const hit = Math.max(0, Math.min(totalPts, Math.round(c.coverage * totalPts)));
+    return hit + '/' + totalPts + ' 打卡点';
+  }
+  if(Array.isArray(c && c.missed) && totalPts){
+    const hit = Math.max(0, totalPts - c.missed.length);
+    return hit + '/' + totalPts + ' 打卡点';
+  }
+  const cov = routeCoverage(validRouteLine(c && c.line));
+  if(cov && cov.total) return cov.passed + '/' + cov.total + ' 打卡点';
+  return (c && c.fence_ok === false) ? '围栏外' : '未加载点位';
+}
+function renderAutoCandidates(candidates){
+  const box = $('#autoCandidates');
+  if(!box) return;
+  const list = Array.isArray(candidates) ? candidates : [];
+  if(!list.length){
+    hideAutoCandidates();
+    return;
+  }
+  box.hidden = false;
+  const head = `<div class="auto-cand-head">
+    <span class="mini">为你匹配到 ${list.length} 条跑过的路线</span>
+    <button type="button" class="btn small ghost" id="autoRotateCandidate">换一条</button>
+  </div>`;
+  const cards = list.map((c, idx) => {
+    const scorePct = Math.max(0, Math.min(100, Math.round((+c.score || 0) * 100)));
+    const lapKm = ((+c.lap_m || 0) / 1000).toFixed(2);
+    const samplesText = c.samples != null ? `${+c.samples || 0} 条样本` : '';
+    const covText = candidateCoverageText(c);
+    const reasons = (Array.isArray(c.reasons) ? c.reasons : [])
+      .filter(Boolean)
+      .map(r => `<span class="tag">${esc(String(r))}</span>`)
+      .join('');
+    return `<div class="auto-candidate ${idx === 0 ? 'is-top' : ''}">
+      <div class="auto-cand-top">
+        <b>${esc(c.name || ('学习路线 ' + (idx + 1)))}</b>
+        <span class="auto-cand-score">${scorePct} 分</span>
+      </div>
+      <div class="auto-cand-meta">
+        <span>${lapKm} km/圈</span>
+        ${samplesText ? `<span>${esc(samplesText)}</span>` : ''}
+        <span>${esc(covText)}</span>
+      </div>
+      ${reasons ? `<div class="auto-cand-reasons">${reasons}</div>` : ''}
+      <div class="auto-cand-actions">
+        <button type="button" class="btn small primary" data-cand-index="${idx}">用这条</button>
+      </div>
+    </div>`;
+  }).join('');
+  box.innerHTML = head + cards;
+}
+function lockLearnedTargetKm(targetM){
+  // Applying a learned route is an explicit distance request.  Without this,
+  // redraw() -> autoFillDistanceFromRoute() would replace 2.5 km with the
+  // single-lap length (e.g. 0.40 km) and re-fetch the wrong checkpoints.
+  const el = $('#inKm');
+  if(!el) return 0;
+  let km = +el.value || 0;
+  if(!(km > 0) && +targetM > 0) km = (+targetM) / 1000;
+  if(km > 0){
+    el.value = String(Math.round(km * 100) / 100);
+    distanceManual = true;
+    refreshParams();
+  }
+  return km;
+}
+function applyAutoCandidate(idx){
+  const cand = (LIVE.rmCandidates || [])[idx];
+  if(!cand) return;
+  const line = validRouteLine(cand.line);
+  if(line.length < 2){
+    toast('候选路线坐标无效');
+    return;
+  }
+  pushRouteHistory('载入学习路线：' + (cand.name || '候选'));
+  selRoutePoint = -1;
+  route = line;
+  setCloseUI(!!cand.closed);
+  lockLearnedTargetKm(+cand.target_m || 0);
+  redraw();
+  // The candidate was snapped to the checkpoints currently on the map.  Keep
+  // that same set through finalize instead of fetching a fresh random one.
+  const want = pointsTargetM();
+  if(want > 0 && livePoints.length && !pointsDistanceStale()){
+    LIVE.pointsDistance = want;
+  }
+  scheduleRouteFinalize(300, 'learned');
+  hideAutoCandidates();
+  toast('已载入学习路线：' + (cand.name || '候选'));
+}
+function rotateAutoCandidates(){
+  const list = LIVE.rmCandidates || [];
+  if(list.length <= 1){
+    toast('当前只有 1 条学习路线候选');
+    return;
+  }
+  list.push(list.shift());
+  LIVE.rmCandidateOffset = (LIVE.rmCandidateOffset + 1) % list.length;
+  renderAutoCandidates(list);
+}
+async function autoGenerate(){
+  const checkPts = livePoints.map(p => [p.lat, p.lng]);
+  if(checkPts.length < 2){
+    hideAutoCandidates();
+    toast('请先登录刷新点位，或改用手绘');
+    return;
+  }
+  const seq = ++_autoSuggestSeq;
+  const btn = $('#autoGenerate');
+  if(btn){ btn.disabled = true; btn.textContent = '匹配中…'; }
+  let fallbackReason = '';
+  let bridgeErr = false;
+  try{
+    const j = await liveApi('real_route_memory_suggest', {
+      km: +($('#inKm') && $('#inKm').value) || 2.5,
+      points: LIVE.points,
+      fence: LIVE.fences,
+      run_area_id: chosenRunAreaId(LIVE.session)
+    });
+    if(seq !== _autoSuggestSeq || currentMode !== 'auto') return;
+    const data = (j && j.data) || {};
+    if(liveOk(j) && Array.isArray(data.candidates) && data.candidates.length){
+      LIVE.rmCandidates = data.candidates.slice(0, 3);
+      LIVE.rmCandidateOffset = 0;
+      renderAutoCandidates(LIVE.rmCandidates);
+      toast('已匹配 ' + LIVE.rmCandidates.length + ' 条学习路线，请点「用这条」');
+      return;
+    }
+    if(data.message){
+      fallbackReason = String(data.message);
+    }else if(!liveOk(j)){
+      bridgeErr = true;
+      fallbackReason = bridgeMessage(j);
+    }
+  }catch(e){
+    if(seq !== _autoSuggestSeq || currentMode !== 'auto') return;
+    bridgeErr = true;
+    fallbackReason = (e && e.message) ? e.message : String(e || '未知错误');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '重新生成'; }
+  }
+  if(seq !== _autoSuggestSeq || currentMode !== 'auto') return;
+  hideAutoCandidates();
   const left = livePoints.map(p => [p.lat, p.lng]);
-  if(left.length < 2){ toast('自动仍在开发中；请先登录刷新点位，或改用手绘'); return; }
+  if(left.length < 2){ toast('请先登录刷新点位，或改用手绘'); return; }
   const out = [];
   let cur = left.shift();
   out.push(cur);
@@ -1335,8 +1493,12 @@ function autoGenerate(){
   setCloseUI(true);
   redraw();
   scheduleRouteFinalize(300, 'auto');
-  liveLog('自动路线仍在开发中', '仅作试验；建议改用手绘或导入 GPX', 'warn');
-  toast('自动仍在开发中，不建议使用；已按 ' + livePoints.length + ' 个点位生成试验路线');
+  if(fallbackReason){
+    liveLog('自动路线回退到临时连线', fallbackReason, 'warn');
+  }
+  toast(bridgeErr
+    ? '暂未读取到学习路线，已用临时自动路线；可以在路线库先学习'
+    : '还没有学到稳定路线，已用临时自动路线；可以在路线库先学习');
 }
 function stadiumGenerate(){
   const size = +($('#stadiumSize').value || 400);
@@ -1376,6 +1538,7 @@ function setMode(mode){
   $('#importFile').style.display = mode === 'file' ? 'inline-flex' : 'none';
   $('#stadiumSize').style.display = mode === 'stadium' ? 'inline-block' : 'none';
   $('#stadiumGenerate').style.display = mode === 'stadium' ? 'inline-flex' : 'none';
+  if(mode !== 'auto') hideAutoCandidates();
   if(mode === 'draw'){
     if(prev === 'draw'){ setPen(true); return; }
     // Do not wipe an auto/imported/stadium route just because the operator
@@ -2619,7 +2782,7 @@ function openRecordReplay(){
 }
 
 /* ---------- page routing ---------- */
-const PAGES = ['overview', 'accounts', 'run', 'routes', 'records', 'profile', 'settings'];
+const PAGES = ['overview', 'accounts', 'run', 'agent', 'routes', 'records', 'profile', 'settings'];
 let runMapFitted = false;
 function syncNavThumb(){
   const nav = document.querySelector('.nav');
@@ -2667,6 +2830,20 @@ function go(page){
   }
   if(page === 'routes'){
     setTimeout(() => { routeMap.invalidateSize(); selectRoute(LIVE.selectedRoute); }, 80);
+    if(typeof loadRouteMemory === 'function') loadRouteMemory();
+  }else{
+    if(typeof stopRouteMemoryPoll === 'function') stopRouteMemoryPoll();
+  }
+  if(page === 'agent'){
+    if(!LIVE.agentInit){
+      LIVE.agentInit = true;
+      if(typeof loadAgentStatus === 'function') loadAgentStatus();
+    }else if(typeof refreshAgentPageOnVisit === 'function'){
+      refreshAgentPageOnVisit();
+    }
+    setTimeout(() => { if($('#agentInput')) $('#agentInput').focus(); }, 60);
+  }else{
+    if(typeof stopAgentPoll === 'function') stopAgentPoll();
   }
   if(page === 'records'){
     if(!LIVE.receiptsLoaded) loadReceipts();
@@ -2684,6 +2861,9 @@ function go(page){
      !(LIVE.rules && (LIVE.rules.configured ||
         (LIVE.rules.rules && LIVE.rules.rules.auto_fetch === false)))){
     fetchSchoolRules({silent: true});
+  }
+  if(page === 'settings' && $('#llmSection') && !LIVE.llmLoaded && !LIVE.llmLoading){
+    loadLlmSettings();
   }
   if(page === 'settings' && !LIVE.realism && !LIVE.realismLoading){
     loadRealism();
@@ -2831,7 +3011,12 @@ const LIVE = {
   verify: null, verifyBusy: false,
   replay: null,
   logSel: -1,
-  deviceCatalog: null, deviceCatalogError: null, deviceCatalogLoading: false
+  deviceCatalog: null, deviceCatalogError: null, deviceCatalogLoading: false,
+  llmProtocols: [], llmSettings: null, llmProtocolPrev: '',
+  llmLoaded: false, llmLoading: false,
+  rmLoaded: false, rmLoading: false, rmStatus: null,
+  rmCandidates: [], rmCandidateOffset: 0,
+  agentStatus: null, agentInit: false
 };
 
 /* ---------------- appearance skins ---------------- */
@@ -4051,6 +4236,11 @@ function clearAccountActivity(){
   // as-is.  Bump the request sequences first: a reply that was already in
   // flight for the old account must not land after this point.
   invalidateLiveRequests();
+  if(typeof stopAgentPoll === 'function') stopAgentPoll();
+  _agentSeq += 1;
+  LIVE.agentInit = false;
+  LIVE.agentStatus = null;
+  if(typeof resetAgentUI === 'function') resetAgentUI();
   LIVE.log = [];
   LIVE.checked = null;
   LIVE.tokenUpdatedAt = null;
@@ -4338,6 +4528,7 @@ async function bootAuth(){
   setLoginButton('读取中…', true);
   try{ await loadRules(); }catch(e){ /* local rules are optional for login */ }
   try{ await loadNetworkConfig(); }catch(e){ /* settings are optional for login */ }
+  if($('#llmSection')) try{ await loadLlmSettings(); }catch(e){ /* settings are optional for login */ }
   let res;
   try{
     res = await liveInitSession();
@@ -4419,6 +4610,18 @@ function renderEmptyData(){
   LIVE.violations = null; LIVE.violationsError = null; LIVE.violationsAt = 0;
   LIVE.receipts = []; LIVE.receiptsLoaded = false; LIVE.receiptsError = null;
   LIVE.dailyCounts = {}; LIVE.dailyCountsAt = 0; LIVE.dailyCountsUid = null;
+  if(typeof stopRouteMemoryPoll === 'function') stopRouteMemoryPoll();
+  LIVE.rmLoaded = false;
+  LIVE.rmLoading = false;
+  LIVE.rmStatus = null;
+  LIVE.rmCandidates = [];
+  LIVE.rmCandidateOffset = 0;
+  if(typeof stopAgentPoll === 'function') stopAgentPoll();
+  LIVE.agentInit = false;
+  LIVE.agentStatus = null;
+  if(typeof resetAgentUI === 'function') resetAgentUI();
+  if(typeof hideAutoCandidates === 'function') hideAutoCandidates();
+  if(typeof renderRouteMemory === 'function') renderRouteMemory(null);
   updateFenceChip();
   LIVE.model = null;
   renderModel();
@@ -6521,7 +6724,8 @@ async function exportRecordsCsv(){
 /* ---------------- route library ---------------- */
 const ROUTE_KEY = 'jhp_routes_v1';
 function routeTypeLabel(type){
-  return type === 'stadium' ? '田径场' : type === 'file' ? '导入'
+  return type === 'learned' ? '学习'
+    : type === 'stadium' ? '田径场' : type === 'file' ? '导入'
     : type === 'record' ? '记录' : type === 'auto' ? '自动' : '手绘';
 }
 function validRouteLine(line){
@@ -6540,7 +6744,7 @@ function normaliseRoutes(parsed){
     .filter(r => r && typeof r === 'object')
     .map(r => ({
       name: String(r.name || '未命名路线'),
-      type: ['draw', 'auto', 'stadium', 'file', 'record'].includes(r.type) ? r.type : 'draw',
+      type: ['draw', 'auto', 'stadium', 'file', 'record', 'learned'].includes(r.type) ? r.type : 'draw',
       line: validRouteLine(r.line),
       closed: !!r.closed,
       saved_at: r.saved_at || ''
@@ -6705,6 +6909,1013 @@ async function saveDetailAsRoute(){
   LIVE.selectedRoute = LIVE.routes.length - 1;
   renderRouteList(); selectRoute(LIVE.selectedRoute);
   routeSaveToast(ok, '已存为路线');
+}
+
+/* ---------------- route memory (learned routes) ---------------- */
+let _rmPollTimer = 0;
+function stopRouteMemoryPoll(){
+  if(_rmPollTimer){
+    clearInterval(_rmPollTimer);
+    _rmPollTimer = 0;
+  }
+}
+function updateRmProgressUI(progress){
+  const wrap = $('#rmProgress'), bar = $('#rmBar'), txt = $('#rmProgressText');
+  if(!wrap) return;
+  if(!progress){
+    wrap.hidden = true;
+    return;
+  }
+  const phase = String(progress.phase || '');
+  const done = +progress.done || 0;
+  const total = +progress.total || 0;
+  let pct = 10;
+  let label = '正在读取…';
+  if(phase === 'listing'){
+    pct = 12;
+    label = '正在读取记录列表…';
+  }else if(phase === 'detail'){
+    pct = total > 0 ? Math.min(82, Math.max(15, Math.round(15 + (done / total) * 67))) : 35;
+    label = '已读取 ' + done + '/' + total + ' 条';
+  }else if(phase === 'learning'){
+    pct = 88;
+    label = '正在学习轨迹…';
+  }else if(phase === 'saving'){
+    pct = 95;
+    label = '正在保存…';
+  }else if(phase === 'done'){
+    pct = 100;
+    label = '完成';
+  }else if(phase === 'error'){
+    pct = 100;
+    label = '失败：' + String(progress.error || '未知错误');
+  }
+  wrap.hidden = false;
+  if(bar) bar.style.width = pct + '%';
+  if(txt) txt.textContent = label;
+}
+function renderRouteMemory(d){
+  const box = $('#routeMemoryBox');
+  const statusEl = $('#rmStatus');
+  const listEl = $('#rmTemplates');
+  const hintEl = $('#rmHint');
+  const progEl = $('#rmProgress');
+  if(!box) return;
+  if(!d){
+    if(statusEl){ statusEl.textContent = '未学习'; statusEl.className = 'mini'; }
+    if(progEl) progEl.hidden = true;
+    if(listEl) listEl.innerHTML = '';
+    if($('#rmLearn')){
+      $('#rmLearn').disabled = false;
+      $('#rmLearn').textContent = '从跑步记录学习路线';
+    }
+    if(hintEl) hintEl.textContent = '学习结果只保存在本机；原始轨迹不落盘。';
+    return;
+  }
+  const summary = (d.summary && typeof d.summary === 'object') ? d.summary : d;
+  const templates = Array.isArray(d.templates) ? d.templates : [];
+  const progress = (d.progress && typeof d.progress === 'object') ? d.progress : null;
+  const running = !!(progress && progress.running);
+  const seen = +(summary.seen != null ? summary.seen : summary.records_seen) || 0;
+  const readable = +(summary.usable != null ? summary.usable : summary.records_readable) || 0;
+  const skipped = +(summary.skipped != null ? summary.skipped : summary.records_skipped) || 0;
+  const statusFlag = String(summary.status || d.status || '');
+  const rmPage = $('#page-routes');
+  const rmPageActive = !!(rmPage && rmPage.classList.contains('active'));
+  const learnBtn = $('#rmLearn');
+  if(learnBtn){
+    if(running){ learnBtn.disabled = true; learnBtn.textContent = '学习中…'; }
+    else { learnBtn.disabled = false; learnBtn.textContent = '从跑步记录学习路线'; }
+  }
+  if(running && rmPageActive && !_rmPollTimer){
+    _rmPollTimer = setInterval(pollRouteMemoryStatus, 800);
+  }
+
+  if(statusEl){
+    if(running){
+      statusEl.textContent = '学习中';
+      statusEl.className = 'mini warn';
+    }else if(templates.length && statusFlag !== 'weak'){
+      statusEl.textContent = '已学习 ' + templates.length + ' 条';
+      statusEl.className = 'mini ok';
+    }else if(statusFlag === 'weak' || seen > 0){
+      statusEl.textContent = '记录不足';
+      statusEl.className = 'mini warn';
+    }else{
+      statusEl.textContent = '未学习';
+      statusEl.className = 'mini';
+    }
+  }
+  if(running || (progress && progress.phase === 'error')){
+    updateRmProgressUI(progress);
+  }else if(progEl){
+    progEl.hidden = true;
+  }
+  if(listEl){
+    if(statusFlag === 'weak'){
+      listEl.innerHTML = `<div class="rm-empty">记录还不够，暂不提供学习路线（已扫描 ${seen} 条，可用 ${readable} 条，跳过 ${skipped} 条）。可以先用自动或手绘。</div>`;
+    }else if(templates.length){
+      listEl.innerHTML = templates.map(t => {
+        const id = String(t.id || t.template_id || '');
+        const lapKm = ((+t.lap_m || 0) / 1000).toFixed(2);
+        const samples = +t.samples || 0;
+        const lastSeen = t.last_seen_ms ? shortDate(+t.last_seen_ms) : '';
+        const medoidText = (t.medoid_distance_m != null && isFinite(+t.medoid_distance_m))
+          ? (Math.round(+t.medoid_distance_m) + ' m') : '—';
+        return `<div class="rm-card">
+          <div class="rm-card-top">
+            <b class="rm-card-name">${esc(t.name || '学习路线')}</b>
+            <span class="tag">${t.closed ? '闭环' : '开放'}</span>
+          </div>
+          <div class="rm-card-meta">
+            <span>${lapKm} km/圈</span>
+            <span>${samples} 条样本</span>
+            ${lastSeen ? `<span>最近 ${esc(lastSeen)}</span>` : ''}
+            <span>簇内平均偏差 ${esc(medoidText)}</span>
+          </div>
+          <div class="rm-card-actions">
+            <button type="button" class="btn small" data-rm-apply="${esc(id)}">预览</button>
+            <button type="button" class="btn small ghost" data-rm-save="${esc(id)}">存为路线</button>
+          </div>
+        </div>`;
+      }).join('');
+    }else if(seen > 0 || statusFlag === 'weak'){
+      listEl.innerHTML = `<div class="rm-empty">暂无稳定路线（已扫描 ${seen} 条，可用 ${readable} 条，跳过 ${skipped} 条）。可能是记录太少、无轨迹或不在当前校区。</div>`;
+    }else{
+      listEl.innerHTML = '';
+    }
+  }
+  if(hintEl){
+    if(progress && progress.phase === 'error' && progress.error){
+      hintEl.textContent = '学习失败：' + String(progress.error);
+    }else if(statusFlag === 'weak'){
+      hintEl.textContent = `记录还不够，先不提供学习路线（已扫描 ${seen} 条，可用 ${readable} 条）；可先用自动或手绘。`;
+    }else if(templates.length === 1){
+      hintEl.textContent = `只学到 1 条路线（可用 ${readable} 条记录）；只保存在本机，原始轨迹不落盘。`;
+    }else if(templates.length > 1){
+      hintEl.textContent = `从你跑过的 ${readable} 条记录学到 ${templates.length} 条路线；学习结果只保存在本机，原始轨迹不落盘。`;
+    }else if(seen > 0){
+      hintEl.textContent = `记录还不够，先不提供学习路线（已扫描 ${seen} 条，可用 ${readable} 条）；可先用自动或手绘。`;
+    }else{
+      hintEl.textContent = '学习结果只保存在本机；原始轨迹不落盘。';
+    }
+  }
+}
+async function loadRouteMemory(){
+  const box = $('#routeMemoryBox');
+  if(!box || LIVE.rmLoading) return;
+  LIVE.rmLoading = true;
+  try{
+    const j = await liveApi('real_route_memory_status');
+    if(bridgeMissing(j)){
+      box.hidden = true;
+      stopRouteMemoryPoll();
+      return;
+    }
+    box.hidden = false;
+    if(!liveOk(j)){
+      if($('#rmStatus')){ $('#rmStatus').textContent = '未学习'; $('#rmStatus').className = 'mini'; }
+      if($('#rmProgress')) $('#rmProgress').hidden = true;
+      if($('#rmTemplates')) $('#rmTemplates').innerHTML = '';
+      if($('#rmHint')) $('#rmHint').textContent = bridgeMessage(j);
+      return;
+    }
+    const d = j.data || {};
+    LIVE.rmLoaded = true;
+    LIVE.rmStatus = d;
+    renderRouteMemory(d);
+  }catch(e){
+    if($('#rmHint')) $('#rmHint').textContent = '读取失败：' + (e && e.message ? e.message : String(e || '未知错误'));
+  }finally{
+    LIVE.rmLoading = false;
+  }
+}
+async function pollRouteMemoryStatus(){
+  const page = $('#page-routes');
+  if(!page || !page.classList.contains('active')){
+    stopRouteMemoryPoll();
+    return;
+  }
+  try{
+    const j = await liveApi('real_route_memory_status');
+    if(!page.classList.contains('active')){
+      stopRouteMemoryPoll();
+      return;
+    }
+    if(bridgeMissing(j)){
+      if($('#routeMemoryBox')) $('#routeMemoryBox').hidden = true;
+      stopRouteMemoryPoll();
+      return;
+    }
+    if(!liveOk(j)){
+      stopRouteMemoryPoll();
+      if($('#rmLearn')){ $('#rmLearn').disabled = false; $('#rmLearn').textContent = '从跑步记录学习路线'; }
+      toast('读取学习状态失败：' + bridgeMessage(j));
+      return;
+    }
+    const d = j.data || {};
+    const progress = (d.progress && typeof d.progress === 'object') ? d.progress : null;
+    updateRmProgressUI(progress);
+    const doneOrErr = !progress || !progress.running || progress.phase === 'done' || progress.phase === 'error';
+    if(doneOrErr){
+      stopRouteMemoryPoll();
+      if($('#rmLearn')){ $('#rmLearn').disabled = false; $('#rmLearn').textContent = '从跑步记录学习路线'; }
+      if(progress && progress.phase === 'error'){
+        toast('路线学习失败：' + (progress.error || '请稍后重试'));
+      }else if(progress && progress.phase === 'done'){
+        toast('路线学习完成');
+      }
+      await loadRouteMemory();
+    }
+  }catch(e){
+    stopRouteMemoryPoll();
+    if($('#rmLearn')){ $('#rmLearn').disabled = false; $('#rmLearn').textContent = '从跑步记录学习路线'; }
+    toast('读取学习状态失败：' + (e && e.message ? e.message : String(e || '未知错误')));
+  }
+}
+async function startRouteMemoryLearn(){
+  const btn = $('#rmLearn');
+  if(btn && btn.disabled) return;
+  if(btn){ btn.disabled = true; btn.textContent = '启动中…'; }
+  try{
+    const j = await liveApi('real_route_memory_learn', {limit: 50, force: true, wait: false}, 20000);
+    if(bridgeMissing(j)){
+      if($('#routeMemoryBox')) $('#routeMemoryBox').hidden = true;
+      toast(bridgeMessage(j));
+      return;
+    }
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      if($('#rmHint')) $('#rmHint').textContent = '学习失败：' + msg;
+      toast('学习失败：' + msg);
+      if(btn){ btn.disabled = false; btn.textContent = '从跑步记录学习路线'; }
+      return;
+    }
+    const d = j.data || {};
+    if(d.started){
+      if($('#rmStatus')){ $('#rmStatus').textContent = '学习中'; $('#rmStatus').className = 'mini warn'; }
+      updateRmProgressUI(d.progress || {phase: 'listing', done: 0, total: 0, running: true});
+      if(btn) btn.textContent = '学习中…';
+      stopRouteMemoryPoll();
+      _rmPollTimer = setInterval(pollRouteMemoryStatus, 800);
+      return;
+    }
+    if(d.progress && d.progress.running){
+      if($('#rmStatus')){ $('#rmStatus').textContent = '学习中'; $('#rmStatus').className = 'mini warn'; }
+      updateRmProgressUI(d.progress);
+      if(btn) btn.textContent = '学习中…';
+      stopRouteMemoryPoll();
+      _rmPollTimer = setInterval(pollRouteMemoryStatus, 800);
+      return;
+    }
+    if(btn){ btn.disabled = false; btn.textContent = '从跑步记录学习路线'; }
+    await loadRouteMemory();
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    if($('#rmHint')) $('#rmHint').textContent = '学习失败：' + msg;
+    toast('学习失败：' + msg);
+    if(btn){ btn.disabled = false; btn.textContent = '从跑步记录学习路线'; }
+  }
+}
+async function applyRouteMemoryTemplate(templateId, btn){
+  if(!templateId) return;
+  if(btn){ btn.disabled = true; }
+  try{
+    const km = +($('#inKm') && $('#inKm').value) || 2.5;
+    const j = await liveApi('real_route_memory_apply', {template_id: templateId, km, points: LIVE.points});
+    const data = (j && j.data) || {};
+    if(!liveOk(j) || data.ok === false){
+      toast('载入学习路线失败：' + (data.error || bridgeMessage(j)));
+      return;
+    }
+    const line = validRouteLine(data.waypoints);
+    if(line.length < 2){
+      toast('学习路线坐标无效');
+      return;
+    }
+    pushRouteHistory('载入学习路线');
+    selRoutePoint = -1;
+    route = line;
+    setCloseUI(!!data.closed);
+    lockLearnedTargetKm(+data.target_m || 0);
+    redraw();
+    const want = pointsTargetM();
+    if(want > 0 && livePoints.length && !pointsDistanceStale()){
+      LIVE.pointsDistance = want;
+    }
+    scheduleRouteFinalize(300, 'learned');
+    hideAutoCandidates();
+    go('run');
+    switchRunTab('route');
+    toast('已载入学习路线');
+  }finally{
+    if(btn){ btn.disabled = false; }
+  }
+}
+async function saveRouteMemoryTemplate(templateId, btn){
+  if(!templateId) return;
+  if(btn){ btn.disabled = true; }
+  try{
+    const j = await liveApi('real_route_memory_save', {template_id: templateId});
+    if(!liveOk(j)){
+      toast('存为路线失败：' + bridgeMessage(j));
+      return;
+    }
+    const data = j.data || {};
+    if(Array.isArray(data.routes)){
+      LIVE.routes = normaliseRoutes(data.routes);
+      if(LIVE.selectedRoute >= LIVE.routes.length) LIVE.selectedRoute = -1;
+      try{ localStorage.setItem(ROUTE_KEY, JSON.stringify(LIVE.routes)); }catch(e){}
+      renderRouteList();
+    }
+    toast('已存为路线，可在下方路线库查看');
+  }finally{
+    if(btn){ btn.disabled = false; }
+  }
+}
+function reverseCurrentRoute(){
+  if(!routeClosed || route.length < 3){
+    toast('只有闭合路线支持反向跑');
+    return;
+  }
+  const ring = route.map(p => [+p[0], +p[1]]);
+  if(ring.length > 1 &&
+     Math.abs(ring[0][0] - ring[ring.length - 1][0]) < 1e-9 &&
+     Math.abs(ring[0][1] - ring[ring.length - 1][1]) < 1e-9){
+    ring.pop();
+  }
+  if(ring.length < 3){
+    toast('闭合路线至少需要 3 个点');
+    return;
+  }
+  pushRouteHistory('反向跑');
+  route = [ring[0], ...ring.slice(1).reverse()];
+  selRoutePoint = -1;
+  redraw();
+  scheduleRouteFinalize(300, 'reverse');
+  toast('已反转闭环方向');
+}
+
+/* agent page */
+const AGENT_STATE_LABELS = {
+  idle: '待命',
+  collect: '收集中',
+  learn: '学习中',
+  suggest: '推荐中',
+  adapt: '适配中',
+  preview: '预览中',
+  audit: '检查中',
+  wait_confirm: '待确认',
+  confirmed: '已完成',
+  cancelled: '已取消',
+  error: '出错'
+};
+const AGENT_TRANSIENT_STATES = new Set([
+  'collect', 'learn', 'suggest', 'adapt', 'preview', 'audit'
+]);
+const AGENT_TOOL_LABELS = {
+  collect: '正在整理目标…',
+  route_memory_status: '正在读取跑步记录…',
+  route_memory_learn: '正在学习路线…',
+  route_memory_suggest: '正在推荐…',
+  route_memory_apply: '正在适配路线…',
+  reverse: '正在适配路线…',
+  preview_route: '正在生成预览…',
+  audit_run: '正在检查…'
+};
+const AGENT_TOOL_DONE = {
+  collect: '已整理目标',
+  route_memory_status: '已读取跑步记录',
+  route_memory_learn: '已学习路线',
+  route_memory_suggest: '已推荐路线',
+  route_memory_apply: '已适配路线',
+  reverse: '已反向',
+  preview_route: '已生成预览',
+  audit_run: '已完成检查'
+};
+const AGENT_STATE_TOOL_TEXT = {
+  collect: '正在读取跑步记录…',
+  learn: '正在学习路线…',
+  suggest: '正在推荐…',
+  adapt: '正在适配路线…',
+  preview: '正在生成预览…',
+  audit: '正在检查…'
+};
+let _agentPollTimer = 0;
+let _agentPolling = false;
+let _agentSending = false;
+let _agentSeq = 0;
+let _agentSessionId = '';
+let _agentLogCount = 0;
+let _agentGreetingShown = false;
+
+function stopAgentPoll(){
+  if(_agentPollTimer){
+    clearInterval(_agentPollTimer);
+    _agentPollTimer = 0;
+  }
+}
+function startAgentPoll(){
+  stopAgentPoll();
+  _agentPollTimer = setInterval(pollAgentStatus, 600);
+}
+function resetAgentUI(){
+  _agentSeq += 1;
+  _agentSessionId = '';
+  _agentLogCount = 0;
+  _agentGreetingShown = false;
+  const chip = $('#agentStateChip');
+  if(chip){
+    chip.textContent = '待命';
+    chip.className = 'chip agent-state';
+  }
+  const box = $('#agentTranscript');
+  if(box) box.innerHTML = '';
+  renderAgentCandidates([]);
+  renderAgentPreview(null, null);
+  renderAgentGoalBar(null);
+  if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+  if($('#agentHint')){
+    $('#agentHint').textContent = 'Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。';
+  }
+}
+function refreshAgentPageOnVisit(){
+  const st = LIVE.agentStatus;
+  renderAgentGoalBar(st);
+  if(st && AGENT_TRANSIENT_STATES.has(st.state)){
+    startAgentPoll();
+  }
+}
+function renderAgentGoalBar(st){
+  const kmEl = $('#agentGoalKm');
+  const ptsEl = $('#agentGoalPoints');
+  const campusEl = $('#agentGoalCampus');
+  const llmEl = $('#agentLlmChip');
+  const goal = (st && st.goal && typeof st.goal === 'object') ? st.goal : {};
+  if(kmEl){
+    const km = goal.km != null && isFinite(+goal.km) ? +goal.km : null;
+    kmEl.textContent = '目标：' + (km != null ? (km + ' km') : '未设定');
+  }
+  if(ptsEl){
+    const pts = (st && st.session_id && goal.points != null)
+      ? (+goal.points || 0)
+      : (Array.isArray(LIVE.points) ? LIVE.points.length : 0);
+    ptsEl.textContent = '点位：' + pts + ' 个';
+  }
+  if(campusEl){
+    const s = LIVE.session || {};
+    const campus = s.schoolName || s.campusName || '未连接';
+    campusEl.textContent = '校区：' + campus;
+  }
+  if(llmEl){
+    const llm = (st && st.llm && typeof st.llm === 'object') ? st.llm : {};
+    if(llm.used){
+      llmEl.textContent = '模型：' + (llm.model || '已启用');
+    }else if(llm.error){
+      llmEl.innerHTML = '本地规则（模型已回退） · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+    }else if(LIVE.llmSettings && LIVE.llmSettings.enabled &&
+             (LIVE.llmSettings.has_key || LIVE.llmSettings.protocol === 'ollama' || LIVE.llmSettings.protocol === 'custom')){
+      llmEl.textContent = '本地规则 · 已配置 ' + (LIVE.llmSettings.model || '模型');
+    }else{
+      llmEl.innerHTML = '本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+    }
+  }
+}
+function appendAgentBubble(kind, text){
+  const box = $('#agentTranscript');
+  if(!box) return;
+  const msg = String(text || '').trim();
+  if(!msg) return;
+  const liveNode = box.querySelector('.agent-tool.is-live');
+  if(liveNode) liveNode.remove();
+  const div = document.createElement('div');
+  if(kind === 'user'){
+    div.className = 'agent-bubble user';
+  }else if(kind === 'warn'){
+    div.className = 'agent-bubble bot is-warn';
+  }else if(kind === 'err' || kind === 'error'){
+    div.className = 'agent-bubble bot is-err';
+  }else{
+    div.className = 'agent-bubble bot';
+  }
+  div.textContent = msg;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function appendAgentToolCard(title, detail, isLive){
+  const box = $('#agentTranscript');
+  if(!box) return;
+  const liveNode = box.querySelector('.agent-tool.is-live');
+  if(liveNode) liveNode.remove();
+  const card = document.createElement('div');
+  card.className = 'agent-tool' + (isLive ? ' is-live' : '');
+  const t = document.createElement('div');
+  t.className = 'agent-tool-title';
+  t.textContent = String(title || '');
+  card.appendChild(t);
+  if(detail){
+    const d = document.createElement('div');
+    d.className = 'agent-tool-detail';
+    d.textContent = String(detail);
+    card.appendChild(d);
+  }
+  box.appendChild(card);
+  box.scrollTop = box.scrollHeight;
+}
+function showAgentIdleGreeting(extraText){
+  const box = $('#agentTranscript');
+  if(!box || _agentGreetingShown) return;
+  _agentGreetingShown = true;
+  appendAgentBubble('bot', extraText || '你好，我是跑步规划 Agent。点击下方快捷入口或输入目标公里数即可开始；我只负责规划、预览和检查，不会替你提交。');
+}
+function renderAgentCandidates(candidates){
+  const box = $('#agentCandidates');
+  if(!box) return;
+  const list = (Array.isArray(candidates) ? candidates : []).slice(0, 3);
+  if(!list.length){
+    box.innerHTML = '<div class="agent-empty">暂无候选路线；发送目标后会匹配你常跑的路线模板。</div>';
+    return;
+  }
+  const selectedId = (LIVE.agentStatus && LIVE.agentStatus.selected) ? String(LIVE.agentStatus.selected) : '';
+  box.innerHTML = list.map((c, idx) => {
+    const tid = String((c && c.template_id) || '');
+    const selected = !!selectedId && tid === selectedId;
+    const scorePct = Math.max(0, Math.min(100, Math.round((+(c && c.score) || 0) * 100)));
+    const lapKm = ((+(c && c.lap_m) || 0) / 1000).toFixed(2);
+    const lapsText = c && c.laps ? (c.laps + ' 圈') : '';
+    const samplesText = (c && c.samples != null) ? ((+c.samples || 0) + ' 条样本') : '';
+    const missedLen = Array.isArray(c && c.missed) ? c.missed.length : 0;
+    const covNum = (c && typeof c.coverage === 'number' && isFinite(c.coverage))
+      ? c.coverage : null;
+    const totalPts = Array.isArray(livePoints) ? livePoints.length : 0;
+    let covText;
+    if(c && c.fence_ok === false){
+      covText = '围栏外';
+    }else if(covNum != null && totalPts){
+      covText = Math.round(covNum * totalPts) + '/' + totalPts + ' 点位';
+    }else if(missedLen > 0){
+      covText = '缺 ' + missedLen + ' 个点位';
+    }else{
+      covText = '点位全覆盖';
+    }
+    const reasons = (Array.isArray(c && c.reasons) ? c.reasons : [])
+      .filter(Boolean)
+      .slice(0, 4)
+      .map(r => `<span class="tag">${esc(String(r))}</span>`)
+      .join('');
+    return `<div class="agent-card ${selected ? 'is-selected' : ''}">
+      <div class="agent-card-top">
+        <b>${esc((c && c.name) || ('候选路线 ' + (idx + 1)))}${selected ? '（已选）' : ''}</b>
+        <span class="agent-card-score">${scorePct} 分</span>
+      </div>
+      <div class="agent-card-meta">
+        <span>${lapKm} km/圈</span>
+        ${lapsText ? `<span>${esc(lapsText)}</span>` : ''}
+        ${samplesText ? `<span>${esc(samplesText)}</span>` : ''}
+        <span>${esc(covText)}</span>
+      </div>
+      ${reasons ? `<div class="agent-card-reasons">${reasons}</div>` : ''}
+      <div class="agent-card-actions">
+        ${list.length > 1 ? '<button type="button" class="btn small ghost" data-agent-next="1">换一条</button>' : ''}
+        <button type="button" class="btn small primary" data-agent-pick="${idx + 1}">用这条</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function fmtAgentDuration(sec){
+  const s = Math.max(0, Math.round(+sec || 0));
+  if(!s) return '—';
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return m + ' 分 ' + String(rem).padStart(2, '0') + ' 秒';
+}
+function renderAgentPreview(preview, audit){
+  const box = $('#agentPreview');
+  if(!box) return;
+  if(!preview && !audit){
+    box.innerHTML = '<div class="agent-empty">待选定路线后自动生成本地预览与合规检查结果。</div>';
+    return;
+  }
+  const st = LIVE.agentStatus || {};
+  const run = (preview && preview.run && typeof preview.run === 'object') ? preview.run : {};
+  const model = (preview && preview.model && typeof preview.model === 'object') ? preview.model : {};
+  const goalKm = (st.goal && st.goal.km != null) ? +st.goal.km : null;
+  const kmText = run.km != null && isFinite(+run.km)
+    ? (Number(run.km).toFixed(2) + ' km')
+    : (goalKm != null && isFinite(goalKm) ? (goalKm.toFixed(2) + ' km') : '—');
+  const selectedCand = (Array.isArray(st.candidates) ? st.candidates : [])
+    .find(c => c && c.template_id === st.selected);
+  const lapsText = selectedCand && selectedCand.laps
+    ? (selectedCand.laps + ' 圈（' + ((+selectedCand.lap_m || 0) / 1000).toFixed(2) + ' km/圈）')
+    : '—';
+  const paceText = '6.00 /km';
+  const timeText = run.sportTime != null ? fmtAgentDuration(run.sportTime) : '—';
+  const ptsText = run.points != null ? (run.points + ' 个轨迹点') : '—';
+  const verdictMap = {pass: '达标', warn: '需注意', fail: '不达标'};
+  const verdictText = verdictMap[model.verdict] || (model.configured === false ? '未配校规' : '待定');
+
+  let auditHtml = '<div class="agent-audit-box"><span>等待本地检查…</span></div>';
+  if(audit && typeof audit === 'object'){
+    const s = (audit.summary && typeof audit.summary === 'object') ? audit.summary : {};
+    const ok = s.ok === true;
+    const passed = +s.passed || 0;
+    const warned = +s.warned || 0;
+    const failed = +s.failed || 0;
+    const bad = (Array.isArray(audit.checks) ? audit.checks : []).filter(c => c && !c.ok);
+    const badList = (!ok && bad.length)
+      ? `<ul class="agent-audit-list">${bad.slice(0, 4).map(c =>
+          `<li>${esc((c.name || c.label || c.id || '检查项') + (c.detail ? ('：' + c.detail) : ''))}</li>`
+        ).join('')}</ul>`
+      : '';
+    auditHtml = `<div class="agent-audit-box">
+      <span class="${ok ? 'agent-audit-ok' : 'agent-audit-fail'}">${ok ? '本地检查通过' : '本地检查未通过'}</span>
+      <span>（通过 ${passed} · 警告 ${warned} · 失败 ${failed}）</span>
+      ${badList}
+    </div>`;
+  }
+  box.innerHTML = `<div class="agent-card">
+    <div class="agent-preview-grid">
+      <div class="agent-preview-kv"><span>目标距离</span><b>${esc(kmText)}</b></div>
+      <div class="agent-preview-kv"><span>配速 / 用时</span><b>${esc(paceText + ' · ' + timeText)}</b></div>
+      <div class="agent-preview-kv"><span>圈数与圈长</span><b>${esc(lapsText)}</b></div>
+      <div class="agent-preview-kv"><span>轨迹点数 / 校规</span><b>${esc(ptsText + ' · ' + verdictText)}</b></div>
+    </div>
+    ${auditHtml}
+  </div>`;
+}
+function applyAgentRouteResult(data){
+  if(!data || typeof data !== 'object') return false;
+  const args = (data.preview_args && typeof data.preview_args === 'object') ? data.preview_args : {};
+  const rawLine = (Array.isArray(args.waypoints) && args.waypoints.length) ? args.waypoints : data.route;
+  const line = validRouteLine(rawLine);
+  if(line.length < 2){
+    toast('返回路线坐标无效');
+    return false;
+  }
+  pushRouteHistory('Agent 规划路线');
+  selRoutePoint = -1;
+  route = line;
+  setCloseUI(args.closed !== undefined ? !!args.closed : true);
+  const kmVal = +(args.km != null ? args.km : data.km);
+  if(isFinite(kmVal) && kmVal > 0 && $('#inKm')){
+    $('#inKm').value = String(Math.round(kmVal * 100) / 100);
+    distanceManual = true;
+  }
+  if(args.pace != null && isFinite(+args.pace) && $('#inPace')){
+    $('#inPace').value = Number(args.pace).toFixed(2);
+  }
+  if(args.cadence != null && isFinite(+args.cadence) && $('#inCad')){
+    $('#inCad').value = String(Math.round(+args.cadence));
+  }
+  refreshParams();
+  redraw();
+  const want = pointsTargetM();
+  if(want > 0 && Array.isArray(args.checkpoints) && args.checkpoints.length && livePoints.length){
+    LIVE.pointsDistance = want;
+    // go('run') refreshes points when the last fetch is older than 5 s; keep
+    // the audited checkpoint set instead.
+    LIVE.pointsAutoAt = Date.now();
+    _pointsAutoAt = Date.now();
+  }
+  scheduleRouteFinalize(300, 'agent');
+  go('run');
+  switchRunTab('route');
+  toast('已载入 Agent 规划路线，请在跑步页确认预览');
+  return true;
+}
+function renderAgentStatus(st){
+  st = (st && typeof st === 'object') ? st : {};
+  LIVE.agentStatus = st;
+  const state = String(st.state || 'idle');
+  const sid = String(st.session_id || '');
+  const chip = $('#agentStateChip');
+  if(chip){
+    chip.textContent = AGENT_STATE_LABELS[state] || state;
+    let cls = 'chip agent-state';
+    if(state === 'wait_confirm' || state === 'confirmed') cls += ' ok';
+    else if(state === 'error') cls += ' err';
+    else if(AGENT_TRANSIENT_STATES.has(state) || state === 'cancelled') cls += ' warn';
+    chip.className = cls;
+  }
+  renderAgentGoalBar(st);
+
+  if(sid !== _agentSessionId){
+    if(_agentSessionId && $('#agentTranscript')){
+      $('#agentTranscript').innerHTML = '';
+    }
+    _agentSessionId = sid;
+    _agentLogCount = 0;
+  }
+  const logs = Array.isArray(st.log) ? st.log : [];
+  if(logs.length < _agentLogCount){
+    _agentLogCount = 0;
+  }
+  if(state === 'idle' && !logs.length){
+    showAgentIdleGreeting();
+  }else{
+    if(_agentGreetingShown && logs.length){
+      _agentGreetingShown = false;
+    }
+    for(let i = _agentLogCount; i < logs.length; i++){
+      const entry = logs[i];
+      if(!entry || typeof entry !== 'object') continue;
+      const text = String(entry.text || '').trim();
+      const tool = String(entry.tool || '');
+      if(!text) continue;
+      if(AGENT_TOOL_LABELS[tool] && entry.level !== 'error'){
+        appendAgentToolCard(AGENT_TOOL_DONE[tool] || AGENT_TOOL_LABELS[tool], text, false);
+      }else{
+        const kind = entry.level === 'error' ? 'err' : (entry.level === 'warn' ? 'warn' : 'bot');
+        appendAgentBubble(kind, text);
+      }
+    }
+    _agentLogCount = logs.length;
+  }
+
+  const box = $('#agentTranscript');
+  const liveExisting = box ? box.querySelector('.agent-tool.is-live') : null;
+  if(liveExisting) liveExisting.remove();
+  if(AGENT_TRANSIENT_STATES.has(state)){
+    appendAgentToolCard(AGENT_STATE_TOOL_TEXT[state] || '正在规划…', '请稍候，正在执行本地步骤…', true);
+  }
+
+  renderAgentCandidates(st.candidates || []);
+  renderAgentPreview(st.preview || null, st.audit || null);
+
+  const auditOk = !!(st.audit && st.audit.summary && st.audit.summary.ok === true);
+  const canConfirm = state === 'wait_confirm' && auditOk;
+  if($('#agentConfirm')) $('#agentConfirm').disabled = !canConfirm;
+
+  const hintEl = $('#agentHint');
+  if(hintEl){
+    if(state === 'error'){
+      const errMsg = String(st.error || '规划未能完成');
+      if(st.fallback === 'auto'){
+        hintEl.innerHTML = esc(errMsg) + ' · <a href="#run" class="agent-llm-link" data-goto="run" data-mode-target="auto">去跑步页用自动/手绘路线</a>';
+      }else if(/token|登录/i.test(errMsg)){
+        hintEl.innerHTML = esc(errMsg) + ' · <a href="#accounts" class="agent-llm-link" data-goto="accounts">前往账号页登录</a>';
+      }else{
+        hintEl.textContent = errMsg;
+      }
+    }else if(state === 'wait_confirm' && !auditOk){
+      hintEl.textContent = '本地检查未通过，暂不可确认；请点「换一条」或调整目标距离。';
+    }else if(canConfirm){
+      hintEl.textContent = '路线与本地检查已就绪；点击「确认，去跑步页预览」前往跑步页确认。';
+    }else if(state === 'cancelled'){
+      hintEl.textContent = '已取消本次规划；可输入新目标或点击快捷入口重新开始。';
+    }else if(state === 'confirmed'){
+      hintEl.textContent = '已确认并载入跑步页；如需重新规划，可发送新的目标。';
+    }else if(AGENT_TRANSIENT_STATES.has(state)){
+      hintEl.textContent = 'Agent 正在执行本地规划与检查…';
+    }else{
+      hintEl.textContent = 'Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。';
+    }
+  }
+}
+async function loadAgentStatus(){
+  const seq = _agentSeq;
+  renderAgentGoalBar(LIVE.agentStatus);
+  try{
+    const j = await liveApi('real_agent_status');
+    if(seq !== _agentSeq) return;
+    if(bridgeMissing(j)){
+      showAgentIdleGreeting('当前离线桥接未提供 Agent 接口，请先更新或重启桌面端。');
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+      return;
+    }
+    if(!liveOk(j)){
+      showAgentIdleGreeting();
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      return;
+    }
+    const st = (j && j.data) || {};
+    renderAgentStatus(st);
+    if(AGENT_TRANSIENT_STATES.has(st.state)){
+      startAgentPoll();
+    }
+  }catch(e){
+    if(seq !== _agentSeq) return;
+    showAgentIdleGreeting();
+    if($('#agentHint')){
+      $('#agentHint').textContent = '读取 Agent 状态失败：' + (e && e.message ? e.message : String(e || '未知错误'));
+    }
+  }
+}
+async function startAgent(text, km, opts){
+  const msg = String(text || '').trim();
+  const skipUserBubble = !!(opts && opts.skipUserBubble);
+  _agentSeq += 1;
+  const seq = _agentSeq;
+  stopAgentPoll();
+  const box = $('#agentTranscript');
+  const prevState = (LIVE.agentStatus && LIVE.agentStatus.state) || 'idle';
+  if(box && (prevState === 'cancelled' || prevState === 'confirmed' || prevState === 'error')){
+    box.innerHTML = '';
+    _agentSessionId = '';
+    _agentLogCount = 0;
+    _agentGreetingShown = false;
+  }else if(prevState === 'wait_confirm'){
+    _agentSessionId = '';
+    _agentLogCount = 0;
+  }
+  if(msg && !skipUserBubble) appendAgentBubble('user', msg);
+  if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+  renderAgentCandidates([]);
+  renderAgentPreview(null, null);
+  try{
+    const j = await liveApi('real_agent_start', {
+      text: msg,
+      km: km == null ? null : km,
+      points: Array.isArray(LIVE.points) ? LIVE.points : [],
+      fence: (LIVE.fences && LIVE.fences.length) ? LIVE.fences : (LIVE.fence || null),
+      run_area_id: chosenRunAreaId(LIVE.session)
+    }, 20000);
+    if(seq !== _agentSeq) return;
+    if(bridgeMissing(j)){
+      appendAgentBubble('err', bridgeMessage(j));
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      return;
+    }
+    if(!liveOk(j)){
+      const err = bridgeMessage(j);
+      appendAgentBubble('err', err);
+      if($('#agentHint')) $('#agentHint').textContent = err;
+      return;
+    }
+    const st = (j && j.data) || {};
+    renderAgentStatus(st);
+    if(AGENT_TRANSIENT_STATES.has(st.state)){
+      startAgentPoll();
+    }
+  }catch(e){
+    const err = e && e.message ? e.message : String(e || '未知错误');
+    appendAgentBubble('err', '启动 Agent 失败：' + err);
+    if($('#agentHint')) $('#agentHint').textContent = '启动 Agent 失败：' + err;
+  }
+}
+async function sendAgentMessage(text){
+  const input = $('#agentInput');
+  const msg = String(text != null ? text : (input ? input.value : '')).trim();
+  if(!msg || _agentSending) return;
+  if(text == null && input) input.value = '';
+  _agentSending = true;
+  if($('#agentSend')) $('#agentSend').disabled = true;
+  const seq = _agentSeq;
+  try{
+  let sendText = msg;
+  if(msg.includes('先学习')) sendText = '重新学习';
+  const st = LIVE.agentStatus || {};
+  const state = String(st.state || 'idle');
+  if(!st.session_id || state === 'idle' || state === 'cancelled' || state === 'confirmed' || state === 'error'){
+    if(msg === '取消'){
+      await cancelAgent();
+      return;
+    }
+    if(msg === '换一条' || msg.includes('反向')){
+      appendAgentBubble('warn', '还没有候选路线，先告诉我目标距离（如“帮我跑 2.5 公里”）。');
+      return;
+    }
+    await startAgent(msg, null);
+    return;
+  }
+  if(msg.includes('用我跑过')){
+    appendAgentBubble('bot', '当前规划就是基于你跑过的路线；可以输入目标距离，或点“换一条”。');
+    return;
+  }
+  appendAgentBubble('user', msg);
+  try{
+    const j = await liveApi('real_agent_message', {text: sendText}, 20000);
+    if(seq !== _agentSeq) return;
+    if(bridgeMissing(j)){
+      appendAgentBubble('err', bridgeMessage(j));
+      return;
+    }
+    if(!liveOk(j)){
+      const err = bridgeMessage(j);
+      if(err.includes('还没有开始')){
+        await startAgent(msg, null, {skipUserBubble: true});
+        return;
+      }
+      appendAgentBubble('err', err);
+      if($('#agentHint')) $('#agentHint').textContent = err;
+      return;
+    }
+    const next = (j && j.data) || {};
+    renderAgentStatus(next);
+    if(AGENT_TRANSIENT_STATES.has(next.state)){
+      startAgentPoll();
+    }else if(next.state === 'confirmed' && next.preview_args){
+      applyAgentRouteResult(next);
+    }
+  }catch(e){
+    if(seq !== _agentSeq) return;
+    const err = e && e.message ? e.message : String(e || '未知错误');
+    appendAgentBubble('err', '发送消息失败：' + err);
+  }
+  }finally{
+    _agentSending = false;
+    if($('#agentSend')) $('#agentSend').disabled = false;
+  }
+}
+async function pollAgentStatus(){
+  const page = $('#page-agent');
+  if(!page || !page.classList.contains('active')){
+    stopAgentPoll();
+    return;
+  }
+  if(_agentPolling) return;
+  _agentPolling = true;
+  const seq = _agentSeq;
+  try{
+    const j = await liveApi('real_agent_status');
+    if(seq !== _agentSeq) return;
+    if(!page.classList.contains('active')){
+      stopAgentPoll();
+      return;
+    }
+    if(bridgeMissing(j) || !liveOk(j)){
+      stopAgentPoll();
+      if($('#agentHint')) $('#agentHint').textContent = bridgeMessage(j);
+      return;
+    }
+    const st = (j && j.data) || {};
+    renderAgentStatus(st);
+    if(!AGENT_TRANSIENT_STATES.has(st.state)){
+      stopAgentPoll();
+    }
+  }catch(e){
+    stopAgentPoll();
+    if(seq !== _agentSeq) return;
+    if($('#agentHint')){
+      $('#agentHint').textContent = '轮询 Agent 状态失败：' + (e && e.message ? e.message : String(e || '未知错误'));
+    }
+  }finally{
+    _agentPolling = false;
+  }
+}
+async function confirmAgent(){
+  const btn = $('#agentConfirm');
+  if(!btn || btn.disabled) return;
+  btn.disabled = true;
+  try{
+    const j = await liveApi('real_agent_confirm', {}, 20000);
+    if(!liveOk(j)){
+      const err = bridgeMessage(j);
+      toast('确认失败：' + err);
+      if($('#agentHint')) $('#agentHint').textContent = err;
+      const st = LIVE.agentStatus || {};
+      const auditOk = !!(st.audit && st.audit.summary && st.audit.summary.ok === true);
+      btn.disabled = !(st.state === 'wait_confirm' && auditOk);
+      return;
+    }
+    const data = (j && j.data) || {};
+    stopAgentPoll();
+    if(LIVE.agentStatus) LIVE.agentStatus.state = 'confirmed';
+    if($('#agentStateChip')){
+      $('#agentStateChip').textContent = AGENT_STATE_LABELS.confirmed;
+      $('#agentStateChip').className = 'chip agent-state ok';
+    }
+    applyAgentRouteResult(data);
+  }catch(e){
+    const err = e && e.message ? e.message : String(e || '未知错误');
+    toast('确认失败：' + err);
+    const st = LIVE.agentStatus || {};
+    const auditOk = !!(st.audit && st.audit.summary && st.audit.summary.ok === true);
+    btn.disabled = !(st.state === 'wait_confirm' && auditOk);
+  }
+}
+async function cancelAgent(){
+  _agentSeq += 1;
+  stopAgentPoll();
+  if($('#agentConfirm')) $('#agentConfirm').disabled = true;
+  try{
+    const j = await liveApi('real_agent_cancel');
+    renderAgentCandidates([]);
+    renderAgentPreview(null, null);
+    _agentSessionId = '';
+    _agentLogCount = 0;
+    _agentGreetingShown = false;
+    const box = $('#agentTranscript');
+    if(box) box.innerHTML = '';
+    if(liveOk(j) && j.data){
+      const st = Object.assign({}, j.data, {state: 'idle', candidates: [], preview: null, audit: null});
+      LIVE.agentStatus = st;
+      renderAgentGoalBar(st);
+      if($('#agentStateChip')){
+        $('#agentStateChip').textContent = AGENT_STATE_LABELS.cancelled;
+        $('#agentStateChip').className = 'chip agent-state warn';
+      }
+      showAgentIdleGreeting('已取消本次规划。随时可以输入新目标或点击下方快捷入口重新开始。');
+    }else{
+      showAgentIdleGreeting('已重置规划会话。');
+    }
+    if($('#agentHint')) $('#agentHint').textContent = '已取消本次规划；可重新输入目标或点击快捷入口。';
+  }catch(e){
+    renderAgentCandidates([]);
+    renderAgentPreview(null, null);
+    showAgentIdleGreeting('已取消本次规划。');
+  }
 }
 
 function openRecordDataPreview(){
@@ -6902,6 +8113,290 @@ async function clearNetworkConfig(){
   if(!liveOk(j)){ toast('清除失败：' + (j.message || '')); return; }
   await loadNetworkConfig();
   toast('已清除本次运行中的网络配置');
+}
+const LLM_MODEL_HINTS = {
+  openai: 'gpt-4o-mini',
+  deepseek: 'deepseek-chat',
+  openrouter: 'openai/gpt-4o-mini',
+  anthropic: 'claude-sonnet-4-5',
+  gemini: 'gemini-2.0-flash',
+  ollama: 'qwen2.5:7b'
+};
+function setLlmStatus(text, kind){
+  const el = $('#llmStatus');
+  if(!el) return;
+  el.className = 'chip' + (kind ? (' ' + kind) : '');
+  const dot = document.createElement('i');
+  el.replaceChildren(dot, document.createTextNode(String(text || '未配置')));
+}
+function llmPresetById(id){
+  return (LIVE.llmProtocols || []).find(p => p && p.id === id) || null;
+}
+function llmPresetDefaults(p){
+  const id = (p && p.id) || '';
+  return {
+    base_url: String((p && p.base_url) || ''),
+    model: String((p && (p.default_model || p.model)) || LLM_MODEL_HINTS[id] || '')
+  };
+}
+function onLlmProtocolChange(){
+  const sel = $('#llmProtocol');
+  if(!sel) return;
+  const nextId = sel.value;
+  const prevPreset = llmPresetById(LIVE.llmProtocolPrev);
+  const nextPreset = llmPresetById(nextId);
+  const prevDef = llmPresetDefaults(prevPreset);
+  const nextDef = llmPresetDefaults(nextPreset);
+  const baseEl = $('#llmBase');
+  const modelEl = $('#llmModel');
+  const keyEl = $('#llmKey');
+  if(baseEl){
+    const curBase = baseEl.value.trim();
+    if(!curBase || (prevPreset && curBase === prevDef.base_url)){
+      baseEl.value = nextDef.base_url;
+    }
+    baseEl.placeholder = nextDef.base_url || '支持 http(s):// 地址';
+  }
+  if(modelEl){
+    const curModel = modelEl.value.trim();
+    if(!curModel || (prevPreset && curModel === prevDef.model)){
+      modelEl.value = nextDef.model;
+    }
+    modelEl.placeholder = nextDef.model || '输入模型名称';
+  }
+  if(keyEl && !(LIVE.llmSettings && LIVE.llmSettings.has_key)){
+    keyEl.placeholder = (nextPreset && nextPreset.needs_key === false)
+      ? '本地模型通常无需填写 Key'
+      : '粘贴 API Key；留空=不修改';
+  }
+  LIVE.llmProtocolPrev = nextId;
+}
+async function loadLlmSettings(){
+  if(!$('#llmSection')) return;
+  LIVE.llmLoading = true;
+  try{
+    const j = await liveApi('real_llm_settings');
+    const d = (j && j.data) || {};
+    const protocols = Array.isArray(d.protocols) ? d.protocols : [];
+    if(!liveOk(j) || !protocols.length){
+      const msg = liveOk(j) ? '' : bridgeMessage(j);
+      LIVE.llmProtocols = [];
+      LIVE.llmProtocolPrev = '';
+      LIVE.llmLoaded = false;
+      const sel = $('#llmProtocol');
+      if(sel){
+        sel.disabled = true;
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '协议列表读取失败';
+        sel.replaceChildren(opt);
+      }
+      setLlmStatus('读取失败', 'warn');
+      if($('#llmHint')) $('#llmHint').textContent = '协议列表读取失败' + (msg ? ('：' + msg) : '');
+      toast('协议列表读取失败' + (msg ? ('：' + msg) : ''));
+      return;
+    }
+    LIVE.llmProtocols = protocols;
+    LIVE.llmLoaded = true;
+    const s = d.settings || {};
+    LIVE.llmSettings = s;
+    const sel = $('#llmProtocol');
+    if(sel){
+      const opts = protocols.map(p => {
+        const opt = document.createElement('option');
+        opt.value = String((p && p.id) || '');
+        opt.textContent = String((p && (p.label || p.id)) || '');
+        return opt;
+      });
+      sel.replaceChildren(...opts);
+      const targetId = protocols.some(p => p && p.id === s.protocol)
+        ? s.protocol
+        : String(protocols[0].id || '');
+      sel.value = targetId;
+      sel.disabled = false;
+      LIVE.llmProtocolPrev = targetId;
+    }
+    const activePreset = llmPresetById(LIVE.llmProtocolPrev);
+    const defs = llmPresetDefaults(activePreset);
+    if($('#llmEnabled')) $('#llmEnabled').checked = !!s.enabled;
+    if($('#llmBase')){
+      $('#llmBase').value = (s.base_url != null) ? String(s.base_url) : defs.base_url;
+      $('#llmBase').placeholder = defs.base_url || '支持 http(s):// 地址';
+    }
+    if($('#llmModel')){
+      $('#llmModel').value = (s.model != null) ? String(s.model) : defs.model;
+      $('#llmModel').placeholder = defs.model || '输入模型名称';
+    }
+    if($('#llmKey')){
+      $('#llmKey').value = '';
+      $('#llmKey').placeholder = s.has_key
+        ? '已保存；留空=不修改'
+        : ((activePreset && activePreset.needs_key === false)
+            ? '本地模型通常无需填写 Key'
+            : '粘贴 API Key；留空=不修改');
+    }
+    if($('#llmTemp')){
+      $('#llmTemp').value = (s.temperature != null && s.temperature !== '')
+        ? String(s.temperature) : '0.2';
+    }
+    if($('#llmTimeout')){
+      $('#llmTimeout').value = (s.timeout_s != null && s.timeout_s !== '')
+        ? String(s.timeout_s) : '30';
+    }
+    const lt = s.last_test && typeof s.last_test === 'object' ? s.last_test : null;
+    if(lt && lt.ok === true){
+      const ms = lt.latency_ms != null ? (' · ' + lt.latency_ms + ' ms') : '';
+      const mod = s.model ? (' · ' + s.model) : '';
+      setLlmStatus('连接正常' + ms + mod, 'ok');
+    }else if(lt && lt.ok === false && lt.error){
+      setLlmStatus('连接失败：' + lt.error, 'red');
+    }else if(s.has_key || (activePreset && activePreset.needs_key === false && s.enabled && s.model)){
+      setLlmStatus(s.enabled ? '已配置 · 已启用' : '已配置', s.enabled ? 'ok' : '');
+    }else{
+      setLlmStatus('未配置', '');
+    }
+    if($('#llmHint')){
+      if(s.has_key){
+        $('#llmHint').textContent = s.enabled
+          ? 'API Key 已通过 DPAPI 封存；模型辅助已启用。'
+          : 'API Key 已通过 DPAPI 封存；当前开关为关闭状态。';
+      }else if(activePreset && activePreset.needs_key === false){
+        $('#llmHint').textContent = '当前协议无需 API Key；保存后可点击「测试连接」。';
+      }else{
+        $('#llmHint').textContent = '未保存 API Key；不配置也可正常使用全部功能。';
+      }
+    }
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    const sel = $('#llmProtocol');
+    if(sel){
+      sel.disabled = true;
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '协议列表读取失败';
+      sel.replaceChildren(opt);
+    }
+    setLlmStatus('读取失败', 'warn');
+    if($('#llmHint')) $('#llmHint').textContent = '协议列表读取失败：' + msg;
+    toast('协议列表读取失败：' + msg);
+  }finally{
+    LIVE.llmLoading = false;
+  }
+}
+async function saveLlmSettings(){
+  const btn = $('#llmSave');
+  if(btn && btn.disabled) return;
+  const sel = $('#llmProtocol');
+  const protocol = (sel ? sel.value : '').trim();
+  if(!protocol || (sel && sel.disabled)){
+    toast('协议列表读取失败，无法保存');
+    return;
+  }
+  const rawTemp = ($('#llmTemp') ? $('#llmTemp').value : '').trim();
+  const temp = rawTemp === '' ? 0.2 : Number(rawTemp);
+  if(!Number.isFinite(temp) || temp < 0 || temp > 1){
+    toast('温度须在 0 到 1 之间');
+    return;
+  }
+  const rawTimeout = ($('#llmTimeout') ? $('#llmTimeout').value : '').trim();
+  const timeoutS = rawTimeout === '' ? 30 : Math.round(Number(rawTimeout));
+  if(!Number.isFinite(timeoutS) || timeoutS < 5 || timeoutS > 120){
+    toast('超时须在 5 到 120 秒之间');
+    return;
+  }
+  const payload = {
+    enabled: !!($('#llmEnabled') && $('#llmEnabled').checked),
+    protocol,
+    base_url: ($('#llmBase') ? $('#llmBase').value : '').trim(),
+    model: ($('#llmModel') ? $('#llmModel').value : '').trim(),
+    temperature: temp,
+    timeout_s: timeoutS,
+    last_test: null
+  };
+  const key = ($('#llmKey') ? $('#llmKey').value : '').trim();
+  if(key) payload.api_key = key;
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    const j = await liveApi('real_llm_settings_save', payload, 20000);
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      if($('#llmHint')) $('#llmHint').textContent = '保存失败：' + msg;
+      toast('保存失败：' + msg);
+      return;
+    }
+    if($('#llmKey')) $('#llmKey').value = '';
+    await loadLlmSettings();
+    toast('LLM 设置已保存');
+    liveLog('LLM 设置已保存', protocol + (payload.model ? (' · ' + payload.model) : ''), 'ok');
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    if($('#llmHint')) $('#llmHint').textContent = '保存失败：' + msg;
+    toast('保存失败：' + msg);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '保存'; }
+  }
+}
+async function testLlmConnection(){
+  const btn = $('#llmTest');
+  if(btn && btn.disabled) return;
+  if(btn){ btn.disabled = true; btn.textContent = '测试中…'; }
+  setLlmStatus('测试中…', 'warn');
+  try{
+    const j = await liveApi('real_llm_test', {}, 40000);
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      setLlmStatus('连接失败：' + msg, 'red');
+      if($('#llmHint')) $('#llmHint').textContent = '连接失败：' + msg;
+      toast('连接失败：' + msg);
+      return;
+    }
+    const d = (j && j.data) || {};
+    if(d.ok === false){
+      const msg = String(d.error || j.message || '未知错误');
+      setLlmStatus('连接失败：' + msg, 'red');
+      if($('#llmHint')) $('#llmHint').textContent = '连接失败：' + msg;
+      toast('连接失败：' + msg);
+      return;
+    }
+    const ms = d.latency_ms != null ? String(d.latency_ms) : '—';
+    const model = String(d.model || ($('#llmModel') ? $('#llmModel').value.trim() : '') || '—');
+    const statusText = '连接正常 · ' + ms + ' ms · ' + model;
+    setLlmStatus(statusText, 'ok');
+    if($('#llmHint')) $('#llmHint').textContent = '测试成功：' + statusText;
+    toast('连接正常 · ' + ms + ' ms');
+    liveLog('LLM 连接测试通过', statusText, 'ok');
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    setLlmStatus('连接失败：' + msg, 'red');
+    if($('#llmHint')) $('#llmHint').textContent = '连接失败：' + msg;
+    toast('连接失败：' + msg);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '测试连接'; }
+  }
+}
+async function clearLlmKey(){
+  if(!confirm('清除已保存的 API Key？清除后模型辅助将无法调用外部接口。')) return;
+  const btn = $('#llmClearKey');
+  if(btn){ btn.disabled = true; btn.textContent = '清除中…'; }
+  try{
+    const j = await liveApi('real_llm_settings_save', {clear_key: true});
+    if(!liveOk(j)){
+      const msg = bridgeMessage(j);
+      if($('#llmHint')) $('#llmHint').textContent = '清除失败：' + msg;
+      toast('清除失败：' + msg);
+      return;
+    }
+    if($('#llmKey')) $('#llmKey').value = '';
+    await loadLlmSettings();
+    toast('已清除 API Key');
+    liveLog('已清除 LLM API Key', '', 'ok');
+  }catch(e){
+    const msg = e && e.message ? e.message : String(e || '未知错误');
+    if($('#llmHint')) $('#llmHint').textContent = '清除失败：' + msg;
+    toast('清除失败：' + msg);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '清除 Key'; }
+  }
 }
 const RULE_LABELS = {
   min_km: '最低距离', max_km: '最高距离',
@@ -8699,12 +10194,12 @@ const ONBOARD_STEPS = [
     tip: '第一次登录要在本地解极验，会慢一点；之后一般几秒内完成。'
   },
   {
-    title: '路线：手绘最稳，自动还在开发中',
-    body: '<p>跑步页有四种路线：<b>手绘</b>、<b>导入</b>（GPX/GeoJSON/CSV）、<b>田径场</b>，以及仍在开发中的<b>自动</b>。</p>' +
-      '<ul><li><b>优先手绘</b>：点地图加点，右键删点，最可控。</li>' +
-      '<li><b>不建议自动</b>：目前只是按点位连一圈，路线质量不稳定。</li>' +
+    title: '路线：优先学习跑过的路线，也支持手绘',
+    body: '<p>跑步页支持四种路线：<b>手绘</b>、<b>导入</b>（GPX/GeoJSON/CSV）、<b>田径场</b>和<b>自动</b>。</p>' +
+      '<ul><li><b>路线学习</b>：在「路线库」先学习你跑过的路线，点击「自动」就会优先推荐这些真实路线。</li>' +
+      '<li><b>手绘最可控</b>：点地图加点，右键删点；没有学习结果时也可用手绘或临时自动连线。</li>' +
       '<li>围栏校验会检查整段路线；提交前看到「越界 0 点 / 0 段」才稳。</li></ul>',
-    tip: '从「手绘」开始；需要绕圈时再打开「闭合」。',
+    tip: '先去「路线库」学习跑过的路线，或从「手绘」开始；需要绕圈时打开「闭合」。',
     actions: [{label:'去手绘', goto:'run', tab:'route', mode:'draw'}]
   },
   {
@@ -9591,6 +11086,10 @@ function liveWire(){
   });
   $('#netSave').addEventListener('click', saveNetworkConfig);
   $('#netClear').addEventListener('click', clearNetworkConfig);
+  if($('#llmProtocol')) $('#llmProtocol').addEventListener('change', onLlmProtocolChange);
+  if($('#llmSave')) $('#llmSave').addEventListener('click', saveLlmSettings);
+  if($('#llmTest')) $('#llmTest').addEventListener('click', testLlmConnection);
+  if($('#llmClearKey')) $('#llmClearKey').addEventListener('click', clearLlmKey);
   ['inKm', 'inPace', 'inCad', 'inAlt'].forEach(id => $('#' + id).addEventListener('input', () => {
     // A new distance or average pace invalidates the split table; the next
     // preview regenerates it from the new target.
@@ -9880,6 +11379,62 @@ function featureWire(){
       ev.preventDefault(); replayToggle();
     }
   });
+  if($('#rmLearn')) $('#rmLearn').addEventListener('click', startRouteMemoryLearn);
+  if($('#rmRefresh')) $('#rmRefresh').addEventListener('click', () => loadRouteMemory());
+  if($('#rmTemplates')){
+    $('#rmTemplates').addEventListener('click', ev => {
+      const applyBtn = ev.target.closest('[data-rm-apply]');
+      if(applyBtn){
+        applyRouteMemoryTemplate(applyBtn.dataset.rmApply, applyBtn);
+        return;
+      }
+      const saveBtn = ev.target.closest('[data-rm-save]');
+      if(saveBtn){
+        saveRouteMemoryTemplate(saveBtn.dataset.rmSave, saveBtn);
+      }
+    });
+  }
+  if($('#autoCandidates')){
+    $('#autoCandidates').addEventListener('click', ev => {
+      const useBtn = ev.target.closest('[data-cand-index]');
+      if(useBtn){
+        applyAutoCandidate(+useBtn.dataset.candIndex);
+        return;
+      }
+      if(ev.target.closest('#autoRotateCandidate')){
+        rotateAutoCandidates();
+      }
+    });
+  }
+  if($('#reverseRouteBtn')) $('#reverseRouteBtn').addEventListener('click', reverseCurrentRoute);
+
+  if($('#agentSend')) $('#agentSend').addEventListener('click', () => sendAgentMessage());
+  if($('#agentInput')){
+    $('#agentInput').addEventListener('keydown', ev => {
+      if(ev.key === 'Enter' && !ev.isComposing){
+        ev.preventDefault();
+        sendAgentMessage();
+      }
+    });
+  }
+  document.querySelectorAll('[data-agent-say]').forEach(btn => {
+    btn.addEventListener('click', () => sendAgentMessage(btn.dataset.agentSay || ''));
+  });
+  if($('#agentCandidates')){
+    $('#agentCandidates').addEventListener('click', ev => {
+      const pickBtn = ev.target.closest('[data-agent-pick]');
+      if(pickBtn){
+        sendAgentMessage('用第 ' + pickBtn.dataset.agentPick + ' 条');
+        return;
+      }
+      if(ev.target.closest('[data-agent-next]')){
+        sendAgentMessage('换一条');
+      }
+    });
+  }
+  if($('#agentConfirm')) $('#agentConfirm').addEventListener('click', confirmAgent);
+  if($('#agentCancel')) $('#agentCancel').addEventListener('click', cancelAgent);
+
   renderAudit();
   renderPresets();
 }

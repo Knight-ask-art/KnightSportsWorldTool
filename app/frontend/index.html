@@ -227,6 +227,10 @@
         <svg class="bi" aria-hidden="true"><use href="#bi-activity"></use></svg>
         <span class="label">跑步</span><span class="nav-dot" id="runNavDot" title="今天还没跑" hidden></span>
       </button>
+      <button class="nav-item" data-page="agent">
+        <svg class="bi" aria-hidden="true"><use href="#bi-activity"></use></svg>
+        <span class="label">Agent</span>
+      </button>
       <button class="nav-item" data-page="routes">
         <svg class="bi" aria-hidden="true"><use href="#bi-map"></use></svg>
         <span class="label">路线库</span>
@@ -523,7 +527,7 @@
           <div class="run-body">
             <section class="rsec active" id="rsec-route">
               <div class="mode-tabs" role="tablist" aria-label="路线来源">
-                <button class="mode-tab" data-mode="auto">自动<span class="dev-tag">开发中</span></button>
+                <button class="mode-tab" data-mode="auto">自动</button>
                 <button class="mode-tab active" data-mode="draw">手绘</button>
                 <button class="mode-tab" data-mode="file">导入</button>
                 <button class="mode-tab" data-mode="stadium">田径场</button>
@@ -542,6 +546,8 @@
                 <button class="btn small ghost" id="stadiumGenerate" style="display:none">生成跑道</button>
               </div>
 
+              <div class="auto-candidates" id="autoCandidates" hidden></div>
+
               <div class="route-metrics">
                 <div class="route-km" id="routeKm">0.00<small>km</small></div>
                 <div class="route-note" id="routeNote"><b>·</b> 点击地图开始</div>
@@ -556,6 +562,7 @@
               <div class="toggle-row">
                 <span class="toggle-label">平滑</span><button class="switch on" id="smoothToggle" aria-label="平滑曲线" aria-pressed="true"></button>
                 <span class="toggle-label">闭合</span><button class="switch" id="closeToggle" aria-label="闭合路线（当前：关）" aria-pressed="false" title="闭合关：保留起点到终点的开放折线"></button><span class="toggle-state" id="closeState">关</span>
+                <button class="btn small ghost" id="reverseRouteBtn" type="button" disabled title="反转当前闭环路线方向">反向跑</button>
                 <span class="mini" id="ptCount">0 个控制点</span>
               </div>
 
@@ -578,7 +585,7 @@
                 <span id="goalLine2">预计 —</span>
               </div>
 
-              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>自动功能仍在开发中，不建议使用。点位与围栏来自登录后的服务器接口；没有登录凭证时不会生成假点位。</div>
+              <div class="hint" id="routeHint">点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位与围栏来自登录后的服务器接口；没有 token 时不会生成假点位。</div>
             </section>
 
             <section class="rsec" id="rsec-params">
@@ -888,6 +895,77 @@
       </div>
     </section>
 
+    <!-- ========== Agent 跑步规划 ========== -->
+    <section class="page" id="page-agent">
+      <div class="sheet wide">
+        <header class="page-head">
+          <div class="crumb">工作台 <span style="color:var(--faint)">/</span> <b>Agent</b></div>
+          <div class="head-row">
+            <h1>Agent 跑步规划</h1>
+            <div class="head-actions">
+              <span class="chip agent-state" id="agentStateChip">待命</span>
+            </div>
+          </div>
+          <div class="status-row agent-goal-bar" id="agentGoalBar">
+            <span class="chip" id="agentGoalKm">目标：未设定</span>
+            <span class="chip" id="agentGoalPoints">点位：0 个</span>
+            <span class="chip" id="agentGoalCampus">校区：未连接</span>
+            <span class="chip" id="agentLlmChip">本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a></span>
+          </div>
+        </header>
+
+        <div class="agent-shell">
+          <div class="agent-chat-col">
+            <div class="agent-transcript" id="agentTranscript" aria-live="polite"></div>
+
+            <div class="agent-composer" id="agentComposer">
+              <div class="agent-chips" aria-label="快捷指令">
+                <button type="button" class="agent-chip" data-agent-say="帮我跑 2.5 公里">帮我跑 2.5 公里</button>
+                <button type="button" class="agent-chip" data-agent-say="用我跑过的路线">用我跑过的路线</button>
+                <button type="button" class="agent-chip" data-agent-say="先学习我的路线">先学习我的路线</button>
+                <button type="button" class="agent-chip" data-agent-say="换一条">换一条</button>
+                <button type="button" class="agent-chip" data-agent-say="反向跑">反向跑</button>
+              </div>
+              <div class="agent-input-row">
+                <input id="agentInput" type="text" placeholder="说说想跑几公里，如：帮我跑 2.5 公里、换一条、反向跑">
+                <button type="button" class="btn primary" id="agentSend">发送</button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="agent-side-col">
+            <div class="agent-panel">
+              <div class="agent-panel-head">
+                <h2>候选路线</h2>
+                <span class="mini">最多展示 3 条</span>
+              </div>
+              <div class="agent-candidates" id="agentCandidates">
+                <div class="agent-empty">发送目标后，这里会列出匹配你常跑习惯的候选路线。</div>
+              </div>
+            </div>
+
+            <div class="agent-panel">
+              <div class="agent-panel-head">
+                <h2>预览与本地检查</h2>
+                <span class="mini">不会自动提交</span>
+              </div>
+              <div class="agent-preview" id="agentPreview">
+                <div class="agent-empty">待选定路线后自动生成本地预览与合规检查结果。</div>
+              </div>
+            </div>
+
+            <div class="agent-actions-box">
+              <div class="agent-footer-actions">
+                <button type="button" class="btn primary" id="agentConfirm" disabled>确认，去跑步页预览</button>
+                <button type="button" class="btn ghost" id="agentCancel">取消</button>
+              </div>
+              <p class="hint" id="agentHint">Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。</p>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
     <!-- ========== 路线库 ========== -->
     <section class="page" id="page-routes">
       <div class="sheet wide">
@@ -909,6 +987,26 @@
           </div>
         </header>
 
+        <section class="rm-box" id="routeMemoryBox">
+          <div class="rm-head">
+            <div>
+              <h2>学习路线</h2>
+              <p class="hint">只读你本机的跑步记录，按起点、围栏和轨迹形状学习常跑路线；不上传轨迹。</p>
+            </div>
+            <span class="mini" id="rmStatus">未学习</span>
+          </div>
+          <div class="rm-actions">
+            <button class="btn small primary" id="rmLearn">从跑步记录学习路线</button>
+            <button class="btn small ghost" id="rmRefresh">刷新</button>
+          </div>
+          <div class="rm-progress" id="rmProgress" hidden>
+            <div class="rm-bar"><i id="rmBar"></i></div>
+            <span class="hint" id="rmProgressText">正在读取…</span>
+          </div>
+          <div class="rm-list" id="rmTemplates"></div>
+          <p class="hint" id="rmHint">学习结果只保存在本机；原始轨迹不落盘。</p>
+        </section>
+
         <div class="filter-row">
           <button class="filter active" data-route-filter="all">全部</button>
           <button class="filter" data-route-filter="draw">手绘</button>
@@ -916,6 +1014,7 @@
           <button class="filter" data-route-filter="stadium">田径场</button>
           <button class="filter" data-route-filter="file">导入</button>
           <button class="filter" data-route-filter="record">记录</button>
+          <button class="filter" data-route-filter="learned">学习</button>
         </div>
 
         <div class="route-layout">
@@ -1378,6 +1477,55 @@
             <button class="btn small primary" id="netSave">应用本次运行</button>
             <button class="btn small ghost" id="netClear">清除</button>
             <span class="hint" id="netHint"></span>
+          </div>
+        </section>
+
+        <section class="sec" id="llmSection">
+          <div class="sec-head">
+            <h2>模型辅助（可选）</h2>
+            <div class="sec-actions">
+              <span class="chip" id="llmStatus"><i></i>未配置</span>
+            </div>
+          </div>
+          <p class="hint" style="margin:-4px 0 9px">仅用于在已有候选路线中择优并补充中文理由。API Key 用 Windows DPAPI 封存，只保存在本机；<b>路线坐标不会发给模型，只发候选统计</b>。默认关闭，不配置也不影响使用。</p>
+          <label class="llm-switch-row" for="llmEnabled">
+            <input type="checkbox" id="llmEnabled" class="llm-switch">
+            <span class="llm-switch-label">启用模型辅助选路</span>
+            <span class="field-note">关闭或未配置时，路线推荐、预览与审计均按本地规则照常运行。</span>
+          </label>
+          <div class="form-grid llm-grid">
+            <div class="field-line">
+              <label for="llmProtocol">协议</label>
+              <select id="llmProtocol" disabled>
+                <option value="">读取中…</option>
+              </select>
+            </div>
+            <div class="field-line">
+              <label for="llmBase">Base URL</label>
+              <input id="llmBase" type="url" placeholder="支持 http(s):// 地址" spellcheck="false" autocomplete="off">
+            </div>
+            <div class="field-line">
+              <label for="llmModel">模型</label>
+              <input id="llmModel" type="text" placeholder="输入模型名称" spellcheck="false" autocomplete="off">
+            </div>
+            <div class="field-line">
+              <label for="llmKey">API Key</label>
+              <input id="llmKey" type="password" placeholder="粘贴 API Key；留空=不修改" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field-line">
+              <label for="llmTemp">温度（0–1）</label>
+              <input id="llmTemp" type="number" min="0" max="1" step="0.1" value="0.2" inputmode="decimal">
+            </div>
+            <div class="field-line">
+              <label for="llmTimeout">超时（秒，5–120）</label>
+              <input id="llmTimeout" type="number" min="5" max="120" step="1" value="30" inputmode="numeric">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn small primary" id="llmSave">保存</button>
+            <button type="button" class="btn small ghost" id="llmTest">测试连接</button>
+            <button type="button" class="btn small ghost danger" id="llmClearKey">清除 Key</button>
+            <span class="hint" id="llmHint" style="margin:0"></span>
           </div>
         </section>
 
