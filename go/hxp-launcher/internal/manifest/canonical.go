@@ -145,8 +145,16 @@ func writeCanonicalFloat(buf *bytes.Buffer, f float64) error {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return errors.New("NaN and Infinity are not allowed in canonical JSON")
 	}
-	s := strconv.FormatFloat(f, 'g', -1, 64)
-	if !strings.ContainsAny(s, ".eE") {
+	// Python's json.dumps uses repr(float): decimal notation in
+	// [1e-4, 1e16) and scientific notation outside that range.  Go's 'g'
+	// switches to scientific at 1e6, so pick the format explicitly.
+	abs := math.Abs(f)
+	if abs != 0 && (abs < 1e-4 || abs >= 1e16) {
+		buf.WriteString(strconv.FormatFloat(f, 'e', -1, 64))
+		return nil
+	}
+	s := strconv.FormatFloat(f, 'f', -1, 64)
+	if !strings.Contains(s, ".") {
 		s += ".0"
 	}
 	buf.WriteString(s)

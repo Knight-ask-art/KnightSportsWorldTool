@@ -52,15 +52,16 @@ func VerifyManifest(raw []byte, keys map[string]ed25519.PublicKey) (SignatureInf
 	}
 
 	keyID, _ := sigObj["key_id"].(string)
-	if strings.TrimSpace(keyID) == "" {
+	if strings.TrimSpace(keyID) == "" || strings.ContainsRune(keyID, 0) {
 		return SignatureInfo{}, ErrMissingSignature
 	}
 
 	valueB64, _ := sigObj["value"].(string)
-	if valueB64 == "" {
-		return SignatureInfo{}, ErrMissingSignature
+	if valueB64 == "" || strings.TrimSpace(valueB64) != valueB64 ||
+		strings.ContainsAny(valueB64, " \t\r\n\v\f") {
+		return SignatureInfo{}, ErrInvalidSignature
 	}
-	sigBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(valueB64))
+	sigBytes, err := base64.StdEncoding.DecodeString(valueB64)
 	if err != nil || len(sigBytes) != ed25519.SignatureSize {
 		return SignatureInfo{}, ErrInvalidSignature
 	}

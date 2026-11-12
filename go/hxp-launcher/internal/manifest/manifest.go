@@ -81,9 +81,21 @@ func IsAllowedURL(u *url.URL, allowLocal bool) bool {
 
 func ParseAndValidate(raw []byte) (Manifest, error) {
 	var m Manifest
-	m.Schema = 1
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
+	}
+	if schemaRaw, ok := envelope["schema"]; ok {
+		var schema int
+		if err := json.Unmarshal(schemaRaw, &schema); err != nil {
+			return Manifest{}, errors.New("invalid manifest schema")
+		}
+		m.Schema = schema
+	} else {
+		m.Schema = 1
 	}
 	if m.Schema != 1 {
 		return Manifest{}, fmt.Errorf("unsupported manifest schema: %d", m.Schema)
@@ -152,7 +164,7 @@ func Fetch(ctx context.Context, rawURL string, allowLocal bool, timeout time.Dur
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, sanitizeFetchError(err, rawURL)
 	}
 	defer resp.Body.Close()
 
@@ -211,6 +223,14 @@ func FetchAndVerify(
 		return VerifiedResult{}, errors.New("no manifest URLs configured")
 	}
 	return VerifiedResult{}, errors.New(strings.Join(errs, "; "))
+}
+
+func sanitizeFetchError(err error, rawURL string) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("request %s: %w", logx.SanitizeURL(urlErr.URL), urlErr.Err)
+	}
+	return fmt.Errorf("request %s: %w", logx.SanitizeURL(rawURL), err)
 }
 
 func isPlainLocalPath(raw string) bool {

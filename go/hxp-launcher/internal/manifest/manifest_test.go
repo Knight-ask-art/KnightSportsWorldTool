@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -77,6 +78,38 @@ func TestCanonicalEdgeCases(t *testing.T) {
 	}
 }
 
+func TestCanonicalFloatMatchesPython(t *testing.T) {
+	sum := 0.1
+	sum += 0.2
+	cases := []struct {
+		value float64
+		want  string
+	}{
+		{0, "0.0"},
+		{math.Copysign(0, -1), "-0.0"},
+		{1, "1.0"},
+		{1000000, "1000000.0"},
+		{9999999999999998, "9999999999999998.0"},
+		{1e16, "1e+16"},
+		{1e-4, "0.0001"},
+		{1e-5, "1e-05"},
+		{1e-7, "1e-07"},
+		{1.2345678901234567e20, "1.2345678901234567e+20"},
+		{sum, "0.30000000000000004"},
+		{1.5e6, "1500000.0"},
+	}
+	for _, tc := range cases {
+		got, err := CanonicalJSON(map[string]any{"x": tc.value})
+		if err != nil {
+			t.Fatalf("CanonicalJSON(%v) error: %v", tc.value, err)
+		}
+		want := `{"x":` + tc.want + `}`
+		if string(got) != want {
+			t.Fatalf("float %v: got %s, want %s", tc.value, got, want)
+		}
+	}
+}
+
 func TestVerifyTestVector(t *testing.T) {
 	manifestBytes, _, pub := loadTestVector(t)
 	keys := map[string]ed25519.PublicKey{"test": pub}
@@ -142,6 +175,45 @@ func TestVerifyFailures(t *testing.T) {
 	badSigBytes, _ := json.Marshal(rawObj)
 	if _, err := VerifyManifest(badSigBytes, keys); !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("expected ErrInvalidSignature for mutated sig bytes, got %v", err)
+	}
+}
+
+func TestParseAndValidateRejectsNullSchema(t *testing.T) {
+	manifestBytes, _, _ := loadTestVector(t)
+	raw := bytes.Replace(manifestBytes, []byte(`"schema": 1`), []byte(`"schema": null`), 1)
+	if _, err := ParseAndValidate(raw); err == nil {
+		t.Fatal("expected schema null to be rejected")
+	}
+}
+
+func TestFetchErrorRedactsQueryAndFragment(t *testing.T) {
+	const secret = "SECRET_TOKEN_12345"
+	rawURL := "http://127.0.0.1:1/latest.json?token=" + secret + "#frag"
+	_, err := Fetch(context.Background(), rawURL, true, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected connection error")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("query token leaked into error: %v", err)
+	}
+	if strings.Contains(err.Error(), "frag") {
+		t.Fatalf("fragment leaked into error: %v", err)
+	}
+}
+
+func TestVerifyRejectsWhitespaceInSignature(t *testing.T) {
+	manifestBytes, _, pub := loadTestVector(t)
+	keys := map[string]ed25519.PublicKey{"test": pub}
+	var rawObj map[string]any
+	if err := json.Unmarshal(manifestBytes, &rawObj); err != nil {
+		t.Fatal(err)
+	}
+	sigObj := rawObj["signature"].(map[string]any)
+	value := sigObj["value"].(string)
+	sigObj["value"] = value[:8] + "\n" + value[8:]
+	badBytes, _ := json.Marshal(rawObj)
+	if _, err := VerifyManifest(badBytes, keys); !errors.Is(err, ErrInvalidSignature) {
+		t.Fatalf("expected ErrInvalidSignature for whitespace in signature, got %v", err)
 	}
 }
 

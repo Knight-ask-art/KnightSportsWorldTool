@@ -16,6 +16,19 @@ func TestLaunchDryRunDoesNotStartProcess(t *testing.T) {
 	}
 }
 
+func TestResolveAppPathMakesBareNameAbsolute(t *testing.T) {
+	got, err := resolveAppPath("mytestapp.exe")
+	if err != nil {
+		t.Fatalf("resolveAppPath: %v", err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("expected absolute path, got %q", got)
+	}
+	if filepath.Base(got) != "mytestapp.exe" {
+		t.Fatalf("unexpected basename %q", got)
+	}
+}
+
 func TestLaunchMissingBinaryFails(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist.exe")
 	if _, err := Launch(LaunchOptions{AppPath: missing, DryRun: false}); err == nil {
