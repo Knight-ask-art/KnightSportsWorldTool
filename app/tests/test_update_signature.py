@@ -103,6 +103,11 @@ def test_canonical_payload_rejects_lone_surrogate():
         sig.canonical_payload({'bad': '\ud800'})
 
 
+def test_sign_rejects_lone_surrogate_key_id():
+    with pytest.raises(sig.ManifestSignatureError):
+        sig.sign_manifest({'schema': 1}, Ed25519PrivateKey.generate(), '\ud800')
+
+
 def test_sign_and_verify_round_trip_with_key_coercion():
     priv, pub = _gen_keypair()
     manifest = _sample_manifest()
