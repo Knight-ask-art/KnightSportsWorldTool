@@ -46,7 +46,12 @@ def canonical_payload(manifest: dict) -> bytes:
         )
     except (TypeError, ValueError) as exc:
         raise ManifestSignatureError(f'manifest cannot be canonicalized: {exc}') from exc
-    return encoded.encode('utf-8')
+    try:
+        return encoded.encode('utf-8')
+    except UnicodeEncodeError as exc:
+        raise ManifestSignatureError(
+            f'manifest cannot be encoded as UTF-8: {exc}'
+        ) from exc
 
 
 def _validate_key_id(key_id: object) -> str:

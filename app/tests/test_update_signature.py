@@ -98,6 +98,11 @@ def test_canonical_payload_is_stable_across_insertion_order_and_excludes_signatu
     assert '好想跑'.encode() in p1
 
 
+def test_canonical_payload_rejects_lone_surrogate():
+    with pytest.raises(sig.ManifestSignatureError):
+        sig.canonical_payload({'bad': '\ud800'})
+
+
 def test_sign_and_verify_round_trip_with_key_coercion():
     priv, pub = _gen_keypair()
     manifest = _sample_manifest()
