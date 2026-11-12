@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from replica.adapters.bridge_api import ReplicaApi  # noqa: E402
-from replica.adapters import bridge_api as BAPI  # noqa: E402
+from replica.adapters import bridge_run as BRUN  # noqa: E402
 from replica.application import points as P  # noqa: E402
 from replica.application import policy as POL  # noqa: E402
 from replica.transport.realclient import Account  # noqa: E402
@@ -592,7 +592,7 @@ def _submit_api(tmp_path, monkeypatch, policy):
         reached.append(True)
         raise RuntimeError('REACHED_GENERATE')
 
-    monkeypatch.setattr(BAPI, 'generate_run_data', boom)
+    monkeypatch.setattr(BRUN, 'generate_run_data', boom)
     return api, reached
 
 
@@ -674,7 +674,7 @@ def test_generic_fence_failure_stops_without_a_saved_centre(tmp_path, monkeypatc
     saved, reached = [], []
     monkeypatch.setattr(api, '_save_center',
                         lambda *a, **k: saved.append((a, k)))
-    monkeypatch.setattr(BAPI, 'generate_run_data',
+    monkeypatch.setattr(BRUN, 'generate_run_data',
                         lambda *a, **k: reached.append(1))
     res = api.real_submit_run(
         km=1.0, pace=6.0,
@@ -708,7 +708,7 @@ def test_generic_fence_failure_stops_submit_even_with_a_saved_centre(
         reached.append(1)
         raise RuntimeError('REACHED_GENERATE')
 
-    monkeypatch.setattr(BAPI, 'generate_run_data', boom)
+    monkeypatch.setattr(BRUN, 'generate_run_data', boom)
     res = api.real_submit_run(
         km=1.0, pace=6.0,
         waypoints=[(22.41, 112.94), (22.42, 112.95)],
@@ -763,7 +763,7 @@ def test_submit_uses_the_points_shown_on_the_map(tmp_path, monkeypatch):
         captured.update(k)
         raise RuntimeError('REACHED_GENERATE')
 
-    monkeypatch.setattr(BAPI, 'generate_run_data', boom)
+    monkeypatch.setattr(BRUN, 'generate_run_data', boom)
     ui_points = [
         {'lat': 22.4108, 'lon': 112.9408, 'name': '点位2',
          'isMustPoint': True, 'seq': 2},
@@ -806,7 +806,7 @@ def test_submit_sequential_orders_points_by_number(tmp_path, monkeypatch):
         captured.update(k)
         raise RuntimeError('REACHED_GENERATE')
 
-    monkeypatch.setattr(BAPI, 'generate_run_data', boom)
+    monkeypatch.setattr(BRUN, 'generate_run_data', boom)
     api.real_submit_run(km=1.0, pace=6.0, days_ago=1)
     assert captured.get('sequential') is True
     assert captured.get('waypoints')[0] == (pts[1]['lat'], pts[1]['lon'])

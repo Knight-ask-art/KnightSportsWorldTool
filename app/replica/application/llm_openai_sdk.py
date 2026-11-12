@@ -15,12 +15,11 @@ returned in an error message.
 from __future__ import annotations
 
 import contextlib
-import math
 import time
 
 from . import llm_settings
 
-MAX_RESPONSE_BYTES = 256 * 1024
+MAX_RESPONSE_BYTES = llm_settings.MAX_RESPONSE_BYTES
 
 
 def available() -> bool:
@@ -51,18 +50,6 @@ def _fail(error: str, error_kind: str, *, latency_ms: int = 0,
     }
 
 
-def _status_kind(status: int) -> str:
-    if status in (401, 403):
-        return 'auth'
-    if status == 404:
-        return 'not_found'
-    if status == 429:
-        return 'rate_limit'
-    if 500 <= status < 600:
-        return 'server'
-    return 'bad_response'
-
-
 def _classify_exception(exc: Exception) -> tuple[str, int]:
     """Map SDK exceptions without importing SDK classes.
 
@@ -76,7 +63,7 @@ def _classify_exception(exc: Exception) -> tuple[str, int]:
         status = 0
     name = type(exc).__name__.lower()
     if status:
-        return _status_kind(status), status
+        return llm_settings.classify_status(status), status
     if 'timeout' in name:
         return 'timeout', 0
     if 'connection' in name or 'connecterror' in name:
@@ -166,30 +153,9 @@ def chat(settings: dict, messages: list[dict],
     if info.get('needs_key') and not api_key:
         return _fail('未配置 API Key', 'config', api_key=api_key)
 
-    try:
-        timeout_s = int(
-            settings.get('timeout_s')
-            if settings.get('timeout_s') is not None
-            else llm_settings.DEFAULT_TIMEOUT_S
-        )
-    except (TypeError, ValueError):
-        timeout_s = llm_settings.DEFAULT_TIMEOUT_S
-    timeout_s = max(
-        llm_settings.MIN_TIMEOUT_S,
-        min(llm_settings.MAX_TIMEOUT_S, timeout_s),
-    )
+    timeout_s = llm_settings.clamp_timeout(settings.get('timeout_s'))
 
-    try:
-        temperature = float(
-            settings.get('temperature')
-            if settings.get('temperature') is not None
-            else llm_settings.DEFAULT_TEMPERATURE
-        )
-    except (TypeError, ValueError):
-        temperature = llm_settings.DEFAULT_TEMPERATURE
-    if not math.isfinite(temperature):
-        temperature = llm_settings.DEFAULT_TEMPERATURE
-    temperature = max(0.0, min(1.0, temperature))
+    temperature = llm_settings.clamp_temperature(settings.get('temperature'))
 
     start = time.monotonic()
     client = None

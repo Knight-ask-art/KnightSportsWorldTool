@@ -1,7 +1,7 @@
 # 架构与目录说明
 
-> 2026-10-24 结构重构后的现状。目标不是套模板，而是把「协议/计算/用例/入口/兼容」
-> 分开，让改动落在单一层里。
+> 2026-11-12 架构守卫更新后的现状。目标不是套模板，而是把「协议/计算/用例/入口/兼容」
+> 分开，让改动落在单一层里；四语言 native 边界保持进程隔离。
 >
 > 同日工作区目录更名：`jhp_phase1/` → `app/`，`apk_work/` → `reverse-engineering/`，
 > `platform-tools/` → `third_party/platform-tools/`。
@@ -26,9 +26,12 @@ adapters  ──▶ application ──▶ domain
 | compat | `replica/compat/` | 旧 71 API 的 mock 学校/后端 | 被 domain/application 反向依赖 |
 | diagnostics | `replica/diagnostics/` | 脱敏诊断包、模块自测 | 参与提交链路 |
 
-已知例外：`domain/rundata.py` 的校验函数在运行时惰性导入
-`transport/obs.build_laps()` 做圈段交叉校验；这是单向的、仅校验用途。
-若要彻底消除，可把 `build_laps` 下沉到 domain，当前不做。
+已知例外：`domain/rundata.py` 与 `domain/crypto.py` 在运行时惰性导入
+`transport.rustcore` / `transport.obs`（native 加速与圈段校验）；`transport/obs.py`
+仅在 `self_test` 内反向导入 `domain.rundata`。这些边由
+`tests/test_architecture_imports.py` 锁定为 allowlist，新增反向依赖会失败。
+若要彻底消除，可把 `build_laps` 下沉到 `domain/laps.py`，并把 native 加速
+收口到 `domain` 端口；当前不做，避免动协议热路径。
 
 ---
 
@@ -36,10 +39,10 @@ adapters  ──▶ application ──▶ domain
 
 | 目录 | 模块 |
 |---|---|
-| `transport/` | `netsec` `nskpure` `nskcodec` `crypto`* `realclient` `sidecar` `amap` `gt4` `obs` |
-| `domain/` | `clock` `coords` `crypto`* `health` `safety` `rundata` `routes` `stadium` |
-| `application/` | `login_flow` `tokenkeeper` `points` `policy` `riskcheck` `qualification` `identity` `variation` `limits` `guard` `readonly` `audit` `errors` `verification` `presets` `stats` `export_fit` `diagnostics_bundle` `inspection` `preferences` |
-| `adapters/` | `bridge_api` `http_server` `cli` |
+| `transport/` | `netsec` `nskpure` `nskcodec` `crypto`* `realclient` `sidecar` `amap` `gt4` `obs` `rustcore` |
+| `domain/` | `clock` `coords` `crypto`* `health` `safety` `rundata` `routes` `stadium` `trajectory` |
+| `application/` | `login_flow` `tokenkeeper` `points` `policy` `riskcheck` `qualification` `identity` `variation` `limits` `guard` `readonly` `audit` `errors` `verification` `presets` `stats` `export_fit` `diagnostics_bundle` `inspection` `preferences` `agent` `agent_cache` `route_memory` `llm_client` `llm_openai_sdk` `llm_settings` `account_guard` `session_store` `shield` `license_decoy` `integrity` |
+| `adapters/` | `bridge_api` `bridge_run` `bridge_agent` `bridge_common` `http_server` `cli` |
 | `compat/mocks/` | `mock_iydsj` `mock_65530` |
 | `diagnostics/` | `collector` `selfcheck` |
 
@@ -61,6 +64,26 @@ adapters  ──▶ application ──▶ domain
 `replica` 是唯一 canonical 导入名（工作目录为 `app/`）。从仓库根目录执行
 `python -m app.replica.*` 也能运行，但那是命名空间路径，不应在代码里使用；
 测试、工具和应用统一从 `replica` 导入，避免同一模块被加载两次。
+
+---
+
+## 3.1 架构守卫（2026-11-12）
+
+`bridge_api.py` 保持 facade（bridge 方法签名不变），run-flow 在
+`adapters/bridge_run.py` 的 `RunBridgeMixin`，route-memory / Agent 在
+`adapters/bridge_agent.py` 的 `AgentBridgeMixin`，响应/点位 helper 在
+`adapters/bridge_common.py`。
+
+两条守卫测试把约束变成可执行检查：
+
+- `tests/test_architecture_imports.py`：`domain`/`transport` 不得反向依赖
+  `application`/`adapters`；`application` 不得依赖 `adapters`；只允许已登记的
+  惰性例外；新增文件级 import 环直接失败。
+- `tests/test_native_boundaries.py`：native 源码不得出现 `extern "C"`、
+  `__declspec(dllexport)`、`#[no_mangle]`、cgo/`c-shared` 等清晰 FFI 面；
+  Rust 只构建二进制，Go 保持 5 个采集 goroutine，C++ 保持 VEH 状态机与
+  3000 ms token；`license_decoy` 只能被 bridge 懒加载，且不得导入真实登录/
+  提交模块。
 
 ---
 
@@ -105,7 +128,8 @@ adapters  ──▶ application ──▶ domain
 
 ```powershell
 cd 好想跑/app
-python -m pytest tests -q                 # 665 passed (v0.1.9)
+python -m pytest tests -q                 # 985 passed（2026-11-12 架构守卫）
+python -m pytest tests/test_architecture_imports.py tests/test_native_boundaries.py -q
 python -m replica.selfcheck               # 28/28 modules
 python tests\legacy\legacy_bridge_suite.py  # 38 checks
 python tests\legacy\legacy_http_suite.py    # 23 checks

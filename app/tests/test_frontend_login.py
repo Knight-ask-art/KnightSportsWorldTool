@@ -627,7 +627,7 @@ def test_stale_points_distance_is_visible_and_actionable():
     assert "action: 'refresh-points'" in JS
     assert "checkAction === 'refresh-points'" in JS
     assert '点位按 %d m 加载，本次目标 %d m' in (
-        ROOT / 'replica' / 'adapters' / 'bridge_api.py'
+        ROOT / 'replica' / 'adapters' / 'bridge_run.py'
     ).read_text(encoding='utf-8')
 
 

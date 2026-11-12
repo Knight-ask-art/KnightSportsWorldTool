@@ -17,7 +17,7 @@ from requests import api as _requests_api
 
 from . import llm_settings
 
-MAX_RESPONSE_BYTES = 256 * 1024
+MAX_RESPONSE_BYTES = llm_settings.MAX_RESPONSE_BYTES
 
 
 def _sdk_allowed() -> bool:
@@ -75,11 +75,7 @@ def _build_request(settings: dict, messages: list[dict]) -> tuple[str, dict, dic
     base_url = str(settings.get('base_url') or '').strip().rstrip('/')
     model = str(settings.get('model') or '').strip()
     api_key = str(settings.get('api_key') or '').strip()
-    temperature = float(
-        settings.get('temperature')
-        if settings.get('temperature') is not None
-        else llm_settings.DEFAULT_TEMPERATURE
-    )
+    temperature = llm_settings.clamp_temperature(settings.get('temperature'))
 
     if kind == 'openai':
         url = f'{base_url}/chat/completions'
@@ -146,18 +142,6 @@ def _build_request(settings: dict, messages: list[dict]) -> tuple[str, dict, dic
         },
     }
     return url, headers, body, kind
-
-
-def _classify_http_error(status: int) -> str:
-    if status in (401, 403):
-        return 'auth'
-    if status == 404:
-        return 'not_found'
-    if status == 429:
-        return 'rate_limit'
-    if 500 <= status < 600:
-        return 'server'
-    return 'bad_response'
 
 
 def _extract_http_error_message(resp) -> str:
@@ -251,15 +235,7 @@ def chat(settings: dict, messages: list[dict], proxies: dict | None = None) -> d
     if llm_settings.PROTOCOLS[protocol]['needs_key'] and not api_key:
         return _fail_result('未配置 API Key', 'config', api_key=api_key)
 
-    try:
-        timeout_s = int(
-            settings.get('timeout_s')
-            if settings.get('timeout_s') is not None
-            else llm_settings.DEFAULT_TIMEOUT_S
-        )
-    except (TypeError, ValueError):
-        timeout_s = llm_settings.DEFAULT_TIMEOUT_S
-    timeout_s = max(llm_settings.MIN_TIMEOUT_S, min(llm_settings.MAX_TIMEOUT_S, timeout_s))
+    timeout_s = llm_settings.clamp_timeout(settings.get('timeout_s'))
 
     kind = llm_settings.PROTOCOLS[protocol]['kind']
     if kind == 'openai' and _sdk_allowed():
@@ -314,7 +290,7 @@ def chat(settings: dict, messages: list[dict], proxies: dict | None = None) -> d
         err_msg = f'HTTP {status}: {detail}' if detail else f'HTTP {status}'
         return _fail_result(
             err_msg,
-            _classify_http_error(status),
+            llm_settings.classify_status(status),
             latency_ms=latency_ms,
             status=status,
             api_key=api_key,

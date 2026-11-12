@@ -16,7 +16,7 @@ import requests
 from replica.adapters.bridge_api import ReplicaApi, _fail_submit
 from replica.adapters.http_server import serve
 
-BRIDGE = Path(__file__).resolve().parents[1] / 'replica' / 'adapters' / 'bridge_api.py'
+BRIDGE = Path(__file__).resolve().parents[1] / 'replica' / 'adapters' / 'bridge_run.py'
 
 
 def test_fail_submit_adds_kind_without_mutating_the_payload():
