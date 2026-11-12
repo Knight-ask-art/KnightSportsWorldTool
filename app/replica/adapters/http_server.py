@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .. import build_info
-from ..build_info import app_root, is_compiled
+from ..build_info import app_root
 from ..compat.mocks.mock_65530 import MockBackendState, serve as serve_be
 from ..compat.mocks.mock_iydsj import MockIydsjState, serve as serve_iydsj
 from ..domain import crypto as C

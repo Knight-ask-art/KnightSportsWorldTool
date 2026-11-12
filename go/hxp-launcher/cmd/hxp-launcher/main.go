@@ -20,6 +20,7 @@ import (
 	"haoxiangpao/hxp-launcher/internal/apply"
 	"haoxiangpao/hxp-launcher/internal/logx"
 	"haoxiangpao/hxp-launcher/internal/manifest"
+	"haoxiangpao/hxp-launcher/internal/runlock"
 	"haoxiangpao/hxp-launcher/internal/version"
 	"haoxiangpao/hxp-launcher/internal/worker"
 )
@@ -224,13 +225,36 @@ func runWithDeps(args []string, stdout, stderr io.Writer, launcherDir string, de
 	}
 
 	if applyHelper {
+		lock, ok, err := runlock.Acquire(runlock.LauncherName, 30*time.Second)
+		if err != nil {
+			fmt.Fprintf(stderr, "fatal: acquire launcher lock: %v\n", err)
+			return 1
+		}
+		if !ok {
+			fmt.Fprintln(stderr, "fatal: another launcher instance is still running")
+			return 1
+		}
+		defer lock.Release()
 		return runApplyHelper(stderr, appDir, dataDir, logPath, applyPackage, applyVersion, applyWaitPID, applyBootTimeoutSec, deps.runApply)
 	}
 
 	logger := logx.Open(logPath)
 	defer logger.Close()
 
-	if !updateWorker {
+	if !updateWorker && !checkMode && !dryRun {
+		lock, ok, err := runlock.TryAcquire(runlock.LauncherName)
+		if err != nil {
+			logger.Warn("launcher lock unavailable (continuing): %s", worker.SanitizeErrorString(err.Error()))
+		} else if !ok {
+			logger.Info("another launcher instance is running; exiting")
+			return 0
+		} else {
+			defer lock.Release()
+		}
+	}
+
+	// --check/--dry-run are read-only: never move app directories or state.
+	if !updateWorker && !checkMode && !dryRun {
 		if err := apply.Recover(appDir, dataDir, logger); err != nil {
 			logger.Warn("apply recovery failed: %s", worker.SanitizeErrorString(err.Error()))
 		}
@@ -619,6 +643,10 @@ func maybeApply(
 		return false
 	}
 	if st.Phase != worker.PhaseReady {
+		return false
+	}
+	if strings.TrimSpace(st.Version) == "" || st.Size <= 0 || len(strings.TrimSpace(st.SHA256)) != 64 {
+		logger.Warn("download state is missing version/sha256/size; skipping apply")
 		return false
 	}
 	pkgPath := strings.TrimSpace(st.Package)

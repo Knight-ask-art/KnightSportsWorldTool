@@ -13,6 +13,7 @@ import (
 
 	"haoxiangpao/hxp-launcher/internal/logx"
 	"haoxiangpao/hxp-launcher/internal/manifest"
+	"haoxiangpao/hxp-launcher/internal/version"
 )
 
 var backoffSchedule = []time.Duration{
@@ -26,7 +27,10 @@ var backoffSchedule = []time.Duration{
 	1 * time.Hour,
 }
 
-var errParentExited = errors.New("parent process exited")
+var (
+	errParentExited = errors.New("parent process exited")
+	errQuarantined  = errors.New("update is quarantined after an apply attempt")
+)
 
 type Config struct {
 	DataDir             string
@@ -82,6 +86,9 @@ func Run(ctx context.Context, cfg Config) error {
 		if ok {
 			return nil
 		}
+		if errors.Is(err, errQuarantined) {
+			return nil
+		}
 		if cfg.Once {
 			return err
 		}
@@ -113,6 +120,18 @@ func runPass(ctx context.Context, cfg Config, updatesDir, statePath string) (tim
 	}
 
 	state = reconcileState(state, hadState, target, updatesDir)
+
+	// A previous apply attempt already failed for this exact artifact.  Do not
+	// turn its retained zip back into "ready" on every launch: that creates an
+	// apply -> boot-ok failure -> re-download/apply loop.  A new version or a
+	// changed sha256 resets the state in reconcileState, so a real fix ships.
+	switch state.Phase {
+	case PhaseApplying, PhaseApplied, PhaseRolledBack:
+		if version.Same(state.Version, target.Version) {
+			cfg.Logger.Warn("update %s is in phase %q; not re-promoting the same artifact", target.Version, state.Phase)
+			return time.Time{}, false, errQuarantined
+		}
+	}
 
 	packagePath := filepath.Join(updatesDir, target.File)
 	partPath := packagePath + ".part"

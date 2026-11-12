@@ -126,7 +126,7 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
 | `layout` | `onedir`（解压即用）或 `installer`（NSIS） |
 | `size` / `sha256` | 下载后必须校验；**zip 和安装包缺少 sha256 都会被拒绝**（两者都会被自动执行/覆盖） |
 | `url` | 主下载地址，老客户端只认这一个 |
-| `urls` | 同一文件的全部渠道（镜像在前、官方直链在最后）；客户端探测后按实测速度排序，失败依次重试。老客户端忽略该字段 |
+| `urls` | 同一文件的全部渠道（官方直链在前、镜像按优先级在后）；客户端从上次成功节点开始轮换，失败依次重试。老客户端忽略该字段 |
 | `rollback` | 上一稳定版，用于手动或自动回滚 |
 | `signature` | 可选的 Ed25519 清单签名（`alg`/`key_id`/`value`）；老客户端忽略该字段。规范载荷为移除顶层 `signature` 后按 `sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False` 序列化的 UTF-8 JSON，并以 `key_id + "\0" + payload` 参与签名；源码中 `PUBLIC_KEYS` 默认为空，客户端验签接入留待后续步骤 |
 
@@ -145,7 +145,8 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
 ### 多镜像
 
 `--base-url` 写主地址（清单里的 `url`），`--mirror-base-url` 可重复，写进 `urls`。
-顺序是「镜像在前、官方直链在最后」。
+顺序是「官方直链在前、镜像按优先级在后」；客户端从 `last_good_index` 开始轮换，
+不会因为官方直链排在第一位就每次都先打它。
 
 客户端 0.1.4 起，在用户点「下载更新」时对每个 `urls` 发一个
 `GET` + `Range: bytes=0-65535`，收到第一块就断开，用
@@ -184,6 +185,25 @@ https://github.com/<owner>/<repo>/releases/latest/download/haoxiangpao_v0.1.3_wi
 
 国内网络走 `https://gh-proxy.com/https://github.com/...`，备选 `https://ghfast.top/`；
 `gh.llkk.cc` 时好时坏，排最后。清单本身保留 jsDelivr 作为 raw 的回退。
+
+## Go launcher 静默更新
+
+- 启动顺序：launcher 先读 `data/updates/download.state.json`；只有 `phase=ready`、
+  状态带有效 `sha256`/`size` 且包版本高于 `build_info.json` 时，才把自身复制到
+  `%TEMP%\hxp-apply-<pid>.exe`，由 helper 等待 launcher 退出后替换。
+- helper 解压到 `data/updates/staging-<version>`，保留 `data/`，按
+  `app.new` → `app.old` → `app` 的顺序交换；启动新程序并等待
+  `JHP_BOOT_OK_PATH` 写入匹配版本。成功删除 `.old`，失败时把新目录移回
+  `.new`、恢复 `.old` 并重新启动旧程序。交换期间不会先删除任何一份程序或用户数据。
+- 下载 worker 在 app 启动后派生：多镜像轮换、Range 断点续传、指数退避；
+  父进程退出即停，状态与 `.part` 保留。状态文件只保存 `urls_hash` 与索引，
+  不保存完整 URL 或 query token。
+- 同一版本 boot-ok 失败后保持 `rolled_back`，worker 不会把保留的包重新提升为
+  `ready`；只有清单版本或 `sha256` 变化才重置，避免“应用→失败→再应用”死循环。
+- `--check` / `--dry-run` 只读：不恢复目录、不替换、不派生 worker。launcher 与
+  apply helper 共用 `Local\Haoxiangpao.Launcher.v1` 互斥量，双击两次不会并发恢复/交换。
+- 未经过签名清单写入的 `sha256`/`size` 的状态一律拒绝替换；本地状态损坏时
+  helper 会先启动旧程序，绝不把安装目录留在“无程序可启动”的状态。
 
 ## 发布顺序
 

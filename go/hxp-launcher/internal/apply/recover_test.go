@@ -81,6 +81,75 @@ func TestRecoverRollsBackApplyingSwap(t *testing.T) {
 	}
 }
 
+func TestRecoverRescuesDataFromNewWhenAppMissing(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	oldDir := appDir + ".old"
+	newDir := appDir + ".new"
+	writeFile(t, filepath.Join(oldDir, "好想跑.exe"), "old")
+	writeFile(t, filepath.Join(newDir, "data", "user.txt"), "latest-user-data")
+
+	if err := Recover(appDir, filepath.Join(appDir, "data"), nil); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "好想跑.exe")); err != nil {
+		t.Fatalf("old app not restored: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(appDir, "data", "user.txt"))
+	if err != nil || string(got) != "latest-user-data" {
+		t.Fatalf("user data not rescued: err=%v got=%q", err, string(got))
+	}
+	if _, err := os.Stat(newDir); !os.IsNotExist(err) {
+		t.Fatalf("data-free .new should be removed, err=%v", err)
+	}
+
+	// A second startup must not delete the rescued data.
+	if err := Recover(appDir, filepath.Join(appDir, "data"), nil); err != nil {
+		t.Fatalf("second Recover: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "data", "user.txt")); err != nil {
+		t.Fatalf("second Recover lost data: %v", err)
+	}
+}
+
+func TestRecoverRescuesDataWhenAppExists(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	newDir := appDir + ".new"
+	writeFile(t, filepath.Join(appDir, "好想跑.exe"), "old")
+	writeFile(t, filepath.Join(newDir, "data", "user.txt"), "moved-data")
+
+	if err := Recover(appDir, filepath.Join(appDir, "data"), nil); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(appDir, "data", "user.txt"))
+	if err != nil || string(got) != "moved-data" {
+		t.Fatalf("user data not rescued: err=%v got=%q", err, string(got))
+	}
+	if _, err := os.Stat(newDir); !os.IsNotExist(err) {
+		t.Fatalf("data-free .new should be removed, err=%v", err)
+	}
+}
+
+func TestRecoverKeepsNewDirWhenDataCannotBeMerged(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	newDir := appDir + ".new"
+	writeFile(t, filepath.Join(appDir, "好想跑.exe"), "old")
+	writeFile(t, filepath.Join(appDir, "data", "existing.txt"), "existing")
+	writeFile(t, filepath.Join(newDir, "data", "user.txt"), "moved-data")
+
+	if err := Recover(appDir, filepath.Join(appDir, "data"), nil); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(newDir, "data", "user.txt")); err != nil {
+		t.Fatalf("Recover deleted unrescued data: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "data", "existing.txt")); err != nil {
+		t.Fatalf("Recover disturbed existing data: %v", err)
+	}
+}
+
 func TestRecoverCleansAppliedOld(t *testing.T) {
 	root := t.TempDir()
 	appDir := filepath.Join(root, "app")

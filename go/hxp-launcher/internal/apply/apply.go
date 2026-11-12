@@ -147,37 +147,86 @@ func Apply(opts Options, deps Deps) error {
 	newDataDir := filepath.Join(newDir, "data")
 	oldDataDir := filepath.Join(oldDir, "data")
 
+	startAppAt := func(dir string) {
+		exe := filepath.Join(dir, AppExeName)
+		if _, err := os.Stat(exe); err != nil {
+			logger.Error("cannot start app from %s: %s", dir, worker.SanitizeErrorString(err.Error()))
+			return
+		}
+		pid, err := deps.StartApp(StartAppOptions{ExePath: exe, AppDir: dir})
+		if err != nil {
+			logger.Warn("failed to start app from %s after apply failure: %s", dir, worker.SanitizeErrorString(err.Error()))
+			return
+		}
+		logger.Info("started app from %s (pid=%d)", dir, pid)
+	}
+
 	state, hadState, loadErr := worker.LoadState(statePath)
 	if loadErr != nil {
-		logger.Warn("failed to load state before apply (%s); starting fresh state", worker.SanitizeErrorString(loadErr.Error()))
-		state = worker.DefaultState()
-		hadState = false
+		startAppAt(appDir)
+		return fmt.Errorf("load download state: %w", loadErr)
 	}
-	if !hadState || state.Version == "" {
-		state.Version = ver
+	if !hadState {
+		startAppAt(appDir)
+		return errors.New("download state missing; refusing to apply")
+	}
+
+	invalidState := func(reason string, err error) error {
+		state.Phase = worker.PhaseDownloading
+		state.Package = ""
+		state.LastError = worker.SanitizeErrorString(reason)
+		state.UpdatedAt = deps.Now().Unix()
+		if saveErr := worker.SaveState(statePath, state); saveErr != nil {
+			logger.Warn("failed to save invalid state: %s", worker.SanitizeErrorString(saveErr.Error()))
+		}
+		startAppAt(appDir)
+		return err
+	}
+
+	if state.Phase != worker.PhaseReady {
+		startAppAt(appDir)
+		return fmt.Errorf("download state phase %q is not ready", state.Phase)
+	}
+	if !version.Same(state.Version, ver) {
+		return invalidState(
+			fmt.Sprintf("download state version %q does not match %q", state.Version, ver),
+			fmt.Errorf("download state version %q does not match requested %q", state.Version, ver),
+		)
+	}
+	if state.Size <= 0 || len(state.SHA256) != 64 {
+		return invalidState(
+			"download state is missing sha256/size",
+			errors.New("download state is missing sha256/size; refusing to apply an unverified package"),
+		)
+	}
+	if state.File != "" && filepath.Base(opts.PackagePath) != state.File {
+		return invalidState(
+			fmt.Sprintf("package file %q does not match state file %q", filepath.Base(opts.PackagePath), state.File),
+			fmt.Errorf("package file %q does not match download state file %q", filepath.Base(opts.PackagePath), state.File),
+		)
+	}
+	if state.Package != "" && filepath.Clean(state.Package) != filepath.Clean(opts.PackagePath) {
+		return invalidState(
+			fmt.Sprintf("package path %q does not match state path %q", opts.PackagePath, state.Package),
+			fmt.Errorf("package path %q does not match download state path %q", opts.PackagePath, state.Package),
+		)
 	}
 	if state.Package == "" {
 		state.Package = opts.PackagePath
 	}
-
-	if state.SHA256 != "" {
-		if err := worker.VerifyPackageFile(opts.PackagePath, state.Size, state.SHA256); err != nil {
-			state.Phase = worker.PhaseDownloading
-			state.Package = ""
-			state.LastError = worker.SanitizeErrorString(fmt.Sprintf("package verification: %v", err))
-			state.UpdatedAt = deps.Now().Unix()
-			if saveErr := worker.SaveState(statePath, state); saveErr != nil {
-				logger.Warn("failed to save verification failure state: %s", worker.SanitizeErrorString(saveErr.Error()))
-			}
-			return fmt.Errorf("package verification: %w", err)
-		}
+	if err := worker.VerifyPackageFile(opts.PackagePath, state.Size, state.SHA256); err != nil {
+		return invalidState(
+			fmt.Sprintf("package verification: %v", err),
+			fmt.Errorf("package verification: %w", err),
+		)
 	}
 
 	state.Phase = worker.PhaseApplying
 	state.LastError = ""
 	state.UpdatedAt = deps.Now().Unix()
 	if err := worker.SaveState(statePath, state); err != nil {
-		logger.Warn("failed to save applying state: %s", worker.SanitizeErrorString(err.Error()))
+		startAppAt(appDir)
+		return fmt.Errorf("save applying state: %w", err)
 	}
 
 	var (
@@ -187,6 +236,29 @@ func Apply(opts Options, deps Deps) error {
 		startedPID int
 	)
 
+	// restoreData moves src to dst, falling back to a copy when a handle still
+	// holds a file open.  It never deletes src; callers decide cleanup only
+	// after this returns true.
+	restoreData := func(src, dst string) bool {
+		if !dirExists(src) {
+			return true
+		}
+		if dirExists(dst) {
+			logger.Warn("both %s and %s exist; keeping both", src, dst)
+			return false
+		}
+		if err := deps.Rename(src, dst); err == nil {
+			return true
+		} else {
+			logger.Warn("rename data %s -> %s failed: %s", src, dst, worker.SanitizeErrorString(err.Error()))
+		}
+		if err := deps.CopyDir(src, dst, nil); err != nil {
+			logger.Error("copy data %s -> %s failed: %s", src, dst, worker.SanitizeErrorString(err.Error()))
+			return false
+		}
+		return true
+	}
+
 	rollback := func(cause error) error {
 		logger.Error("apply failed, rolling back: %s", worker.SanitizeErrorString(cause.Error()))
 		if startedPID > 0 {
@@ -195,52 +267,66 @@ func Apply(opts Options, deps Deps) error {
 			}
 		}
 
+		oldAppRestored := false
 		switch {
 		case swappedNew:
-			dataMovedBack := !movedData
-			if movedData {
-				if err := deps.Rename(filepath.Join(appDir, "data"), oldDataDir); err != nil {
-					logger.Warn("restore data from new appDir failed: %s", worker.SanitizeErrorString(err.Error()))
-				} else {
-					dataMovedBack = true
-				}
+			// Reverse the swap without deleting either app directory.  The new
+			// app (and any user data) moves back to .new first; if that rename
+			// fails we leave it in place and start it rather than destroying it.
+			if err := deps.Rename(appDir, newDir); err != nil {
+				logger.Error("cannot move failed new app aside: %s", worker.SanitizeErrorString(err.Error()))
+				break
 			}
-			if dataMovedBack {
-				if err := deps.RemoveAll(appDir); err != nil {
-					logger.Warn("remove failed new appDir: %s", worker.SanitizeErrorString(err.Error()))
+			if err := deps.Rename(oldDir, appDir); err != nil {
+				logger.Error("restore .old -> appDir failed: %s", worker.SanitizeErrorString(err.Error()))
+				if backErr := deps.Rename(newDir, appDir); backErr != nil {
+					logger.Error("cannot put failed new app back: %s", worker.SanitizeErrorString(backErr.Error()))
+				}
+				break
+			}
+			oldAppRestored = true
+			if movedData || dirExists(newDataDir) {
+				if restoreData(newDataDir, appDataDir) {
+					_ = deps.RemoveAll(newDir)
 				}
 			} else {
-				_ = removeDirExcept(appDir, "data", deps.RemoveAll)
-			}
-			if err := deps.Rename(oldDir, appDir); err != nil {
-				logger.Error("restore .old -> appDir failed: %s", worker.SanitizeErrorString(err.Error()))
+				_ = deps.RemoveAll(newDir)
 			}
 		case swappedOld:
-			if movedData {
-				if err := deps.Rename(newDataDir, oldDataDir); err != nil {
-					logger.Warn("restore data from .new -> .old failed: %s", worker.SanitizeErrorString(err.Error()))
-				}
-			}
-			_ = deps.RemoveAll(newDir)
 			if err := deps.Rename(oldDir, appDir); err != nil {
 				logger.Error("restore .old -> appDir failed: %s", worker.SanitizeErrorString(err.Error()))
+				break
+			}
+			oldAppRestored = true
+			if movedData || dirExists(newDataDir) {
+				if restoreData(newDataDir, appDataDir) {
+					_ = deps.RemoveAll(newDir)
+				}
+			} else {
+				_ = deps.RemoveAll(newDir)
 			}
 		default:
-			if movedData {
-				if err := deps.Rename(newDataDir, appDataDir); err != nil {
-					logger.Warn("restore data from .new -> appDir failed: %s", worker.SanitizeErrorString(err.Error()))
+			if movedData || dirExists(newDataDir) {
+				if restoreData(newDataDir, appDataDir) {
+					_ = deps.RemoveAll(newDir)
 				}
+			} else {
+				_ = deps.RemoveAll(newDir)
 			}
-			_ = deps.RemoveAll(newDir)
+			oldAppRestored = dirExists(appDir)
 		}
 
-		if oldPID, startErr := deps.StartApp(StartAppOptions{
-			ExePath: exePath,
-			AppDir:  appDir,
-		}); startErr != nil {
-			logger.Warn("failed to restart old app after rollback: %s", worker.SanitizeErrorString(startErr.Error()))
-		} else {
-			logger.Info("restarted old app after rollback (pid=%d)", oldPID)
+		switch {
+		case oldAppRestored:
+			startAppAt(appDir)
+		case dirExists(filepath.Join(appDir, AppExeName)):
+			// Rollback could not complete; keep the new app usable and leave
+			// the failed directory for the next startup to recover.
+			logger.Warn("rollback incomplete; starting current app so the install is not left dead")
+			startAppAt(appDir)
+		case dirExists(filepath.Join(oldDir, AppExeName)):
+			logger.Warn("restoring old app from %s", oldDir)
+			startAppAt(oldDir)
 		}
 
 		state.Phase = worker.PhaseRolledBack
@@ -264,8 +350,37 @@ func Apply(opts Options, deps Deps) error {
 			return rollback(fmt.Errorf("recover pre-existing .old: %w", err))
 		}
 	}
-	_ = deps.RemoveAll(newDir)
-	_ = deps.RemoveAll(oldDir)
+	// Clean stale staging directories without ever deleting the last copy of
+	// user data.  A crash can leave data inside .new while appDir is missing.
+	if dirExists(newDir) {
+		if dirExists(newDataDir) {
+			if dirExists(appDataDir) || !restoreData(newDataDir, appDataDir) {
+				return rollback(errors.New("stale .new contains data that cannot be merged safely"))
+			}
+		}
+		if dirExists(newDataDir) {
+			return rollback(errors.New("stale .new still contains data"))
+		}
+		if err := deps.RemoveAll(newDir); err != nil {
+			return rollback(fmt.Errorf("remove stale .new: %w", err))
+		}
+	}
+	if dirExists(oldDir) {
+		if !dirExists(appDataDir) && dirExists(oldDataDir) {
+			if !restoreData(oldDataDir, appDataDir) {
+				return rollback(errors.New("stale .old data cannot be restored safely"))
+			}
+		}
+		if dirExists(oldDataDir) {
+			return rollback(errors.New("stale .old still contains data"))
+		}
+		if err := deps.RemoveAll(oldDir); err != nil {
+			return rollback(fmt.Errorf("remove stale .old: %w", err))
+		}
+	}
+	if !dirExists(appDir) {
+		return fmt.Errorf("app directory %s is missing", appDir)
+	}
 
 	if err := deps.CopyDir(stagingDir, newDir, []string{"data"}); err != nil {
 		return rollback(fmt.Errorf("copy staging to .new: %w", err))
@@ -324,23 +439,6 @@ func Apply(opts Options, deps Deps) error {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-func removeDirExcept(dir, keepName string, removeAll func(string) error) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	var firstErr error
-	for _, e := range entries {
-		if strings.EqualFold(e.Name(), keepName) {
-			continue
-		}
-		if err := removeAll(filepath.Join(dir, e.Name())); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
 }
 
 func defaultCopyDir(src, dst string, excludeTopLevel []string) error {

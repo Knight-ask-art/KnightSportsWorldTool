@@ -547,9 +547,14 @@ func TestMaybeApplySpawnsHelperOnlyForReadyAndNewer(t *testing.T) {
 	}
 
 	writeReadyState := func(phase, ver, pkg string) {
+		raw, _ := os.ReadFile(pkg)
+		sum := sha256.Sum256(raw)
 		if err := worker.SaveState(worker.StatePath(dataDir), worker.State{
 			Schema:  worker.StateSchema,
 			Version: ver,
+			File:    filepath.Base(pkg),
+			SHA256:  hex.EncodeToString(sum[:]),
+			Size:    int64(len(raw)),
 			Phase:   phase,
 			Package: pkg,
 		}); err != nil {

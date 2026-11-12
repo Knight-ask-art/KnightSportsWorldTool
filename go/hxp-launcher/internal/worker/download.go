@@ -126,6 +126,19 @@ func mirrorOrder(n, lastGood, nextIdx int) []int {
 	return order
 }
 
+func hasZipMagic(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var magic [4]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil {
+		return false
+	}
+	return bytes.Equal(magic[:], zipMagic)
+}
+
 func VerifyPackageFile(path string, expectedSize int64, expectedSHA string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -196,6 +209,10 @@ func downloadFromMirror(
 			// A full-length .part that failed verification must be overwritten from byte 0.
 			sendRange = false
 		case sz > 0:
+			if !hasZipMagic(partPath) {
+				_ = os.Remove(partPath)
+				break
+			}
 			partSize = sz
 			sendRange = true
 		}
@@ -249,7 +266,11 @@ func downloadFromMirror(
 		if !sendRange {
 			return errors.New("unexpected HTTP 206 without Range request")
 		}
-		if err := validateContentRange(resp.Header.Get("Content-Range"), partSize, target.Size); err != nil {
+		contentRange := resp.Header.Get("Content-Range")
+		if strings.TrimSpace(contentRange) == "" {
+			return errors.New("HTTP 206 response is missing Content-Range")
+		}
+		if err := validateContentRange(contentRange, partSize, target.Size); err != nil {
 			return err
 		}
 		if resp.ContentLength > 0 && partSize+resp.ContentLength > target.Size {

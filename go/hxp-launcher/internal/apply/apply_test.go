@@ -3,7 +3,9 @@ package apply
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,18 @@ import (
 	"haoxiangpao/hxp-launcher/internal/logx"
 	"haoxiangpao/hxp-launcher/internal/worker"
 )
+
+func setVerifiedState(t *testing.T, state *worker.State, zipPath string) {
+	t.Helper()
+	raw, err := os.ReadFile(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	state.SHA256 = hex.EncodeToString(sum[:])
+	state.Size = int64(len(raw))
+	state.File = filepath.Base(zipPath)
+}
 
 func createTestZip(t *testing.T, entries map[string]string) string {
 	t.Helper()
@@ -230,12 +244,14 @@ func TestApplySuccessWithFakeDeps(t *testing.T) {
 		"frontend/app.js": "console.log(2);",
 	})
 	statePath := worker.StatePath(dataDir)
-	if err := worker.SaveState(statePath, worker.State{
+	state := worker.State{
 		Schema:  worker.StateSchema,
 		Version: "0.3.0",
 		Phase:   worker.PhaseReady,
 		Package: pkgPath,
-	}); err != nil {
+	}
+	setVerifiedState(t, &state, pkgPath)
+	if err := worker.SaveState(statePath, state); err != nil {
 		t.Fatal(err)
 	}
 
@@ -371,6 +387,132 @@ func TestApplyRejectsTamperedPackage(t *testing.T) {
 	}
 }
 
+func TestApplyMissingVerificationStartsOldApp(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	dataDir := filepath.Join(appDir, "data")
+	writeFile(t, filepath.Join(appDir, "好想跑.exe"), "old")
+	writeFile(t, filepath.Join(dataDir, "user.txt"), "keep")
+	zipPath := createTestZip(t, map[string]string{AppExeName: "new"})
+
+	state := worker.DefaultState()
+	state.Version = "0.3.0"
+	state.Phase = worker.PhaseReady
+	state.Package = zipPath
+	// sha256 and size deliberately empty: Apply must refuse the package.
+	if err := worker.SaveState(worker.StatePath(dataDir), state); err != nil {
+		t.Fatal(err)
+	}
+
+	var starts []StartAppOptions
+	deps := Deps{
+		CopyDir: DefaultDeps().CopyDir,
+		Rename:  os.Rename,
+		StartApp: func(opts StartAppOptions) (int, error) {
+			starts = append(starts, opts)
+			return 2001, nil
+		},
+		WaitBoot:  func(string, string, time.Duration) error { return nil },
+		KillApp:   func(int) error { return nil },
+		RemoveAll: os.RemoveAll,
+		Now:       func() time.Time { return time.Unix(1700000300, 0) },
+	}
+
+	err := Apply(Options{
+		AppDir:      appDir,
+		DataDir:     dataDir,
+		PackagePath: zipPath,
+		Version:     "0.3.0",
+		BootTimeout: time.Second,
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("expected sha256 refusal, got %v", err)
+	}
+	if len(starts) != 1 || starts[0].ExePath != filepath.Join(appDir, AppExeName) {
+		t.Fatalf("old app was not started: %+v", starts)
+	}
+	got, err := os.ReadFile(filepath.Join(appDir, AppExeName))
+	if err != nil || string(got) != "old" {
+		t.Fatalf("old app disturbed: err=%v got=%q", err, string(got))
+	}
+	st, _, err := worker.LoadState(worker.StatePath(dataDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Phase != worker.PhaseDownloading || st.Package != "" {
+		t.Fatalf("state not reset for redownload: %+v", st)
+	}
+}
+
+func TestApplyRollbackKeepsAppWhenDataRestoreFails(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	dataDir := filepath.Join(appDir, "data")
+	newDataDir := appDir + ".new" + string(filepath.Separator) + "data"
+	writeFile(t, filepath.Join(appDir, AppExeName), "old-exe")
+	writeFile(t, filepath.Join(dataDir, "user.txt"), "keep-me")
+	zipPath := createTestZip(t, map[string]string{AppExeName: "new-exe"})
+
+	state := worker.State{
+		Schema:  worker.StateSchema,
+		Version: "0.3.0",
+		Phase:   worker.PhaseReady,
+		Package: zipPath,
+	}
+	setVerifiedState(t, &state, zipPath)
+	if err := worker.SaveState(worker.StatePath(dataDir), state); err != nil {
+		t.Fatal(err)
+	}
+
+	var starts []StartAppOptions
+	deps := Deps{
+		CopyDir: func(src, dst string, exclude []string) error {
+			if src == newDataDir {
+				return errors.New("data is locked")
+			}
+			return DefaultDeps().CopyDir(src, dst, exclude)
+		},
+		Rename: func(oldPath, newPath string) error {
+			if oldPath == newDataDir {
+				return errors.New("data is locked")
+			}
+			return os.Rename(oldPath, newPath)
+		},
+		StartApp: func(opts StartAppOptions) (int, error) {
+			starts = append(starts, opts)
+			return 3000 + len(starts), nil
+		},
+		WaitBoot:  func(string, string, time.Duration) error { return errors.New("boot failed") },
+		KillApp:   func(int) error { return nil },
+		RemoveAll: os.RemoveAll,
+		Now:       func() time.Time { return time.Unix(1700000400, 0) },
+	}
+
+	err := Apply(Options{
+		AppDir:      appDir,
+		DataDir:     dataDir,
+		PackagePath: zipPath,
+		Version:     "0.3.0",
+		BootTimeout: time.Second,
+	}, deps)
+	if err == nil {
+		t.Fatal("expected boot-ok failure")
+	}
+	// The old app must be in place again even though user data could not be
+	// moved back; the data stays in .new rather than being deleted.
+	got, readErr := os.ReadFile(filepath.Join(appDir, AppExeName))
+	if readErr != nil || string(got) != "old-exe" {
+		t.Fatalf("app directory left unusable: err=%v got=%q", readErr, string(got))
+	}
+	if len(starts) != 2 || starts[1].ExePath != filepath.Join(appDir, AppExeName) {
+		t.Fatalf("old app was not started after incomplete rollback: %+v", starts)
+	}
+	kept, readErr := os.ReadFile(filepath.Join(newDataDir, "user.txt"))
+	if readErr != nil || string(kept) != "keep-me" {
+		t.Fatalf("user data was deleted: err=%v got=%q", readErr, string(kept))
+	}
+}
+
 func TestApplyBootOKFailureRollsBackAndPreservesData(t *testing.T) {
 	root := t.TempDir()
 	appDir := filepath.Join(root, "app")
@@ -393,12 +535,14 @@ func TestApplyBootOKFailureRollsBackAndPreservesData(t *testing.T) {
 		"new_marker.txt": "v2",
 	})
 	statePath := worker.StatePath(dataDir)
-	if err := worker.SaveState(statePath, worker.State{
+	state := worker.State{
 		Schema:  worker.StateSchema,
 		Version: "0.3.0",
 		Phase:   worker.PhaseReady,
 		Package: pkgPath,
-	}); err != nil {
+	}
+	setVerifiedState(t, &state, pkgPath)
+	if err := worker.SaveState(statePath, state); err != nil {
 		t.Fatal(err)
 	}
 

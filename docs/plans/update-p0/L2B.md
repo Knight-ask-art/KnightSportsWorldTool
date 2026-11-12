@@ -1,6 +1,6 @@
 # Update P0 / L2B — Atomic apply + boot-ok + rollback
 
-Status: implement L2B
+Status: implemented and reviewed (round-3 blocking fixes included)
 Branch: `task/update-p0-l2b`
 Base: `task/update-p0-integration` @ `ba82594`
 

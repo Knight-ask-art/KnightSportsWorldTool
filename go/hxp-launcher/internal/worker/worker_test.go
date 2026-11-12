@@ -340,7 +340,7 @@ func TestServer200RestartsFromZeroOnRangeRequest(t *testing.T) {
 	}
 	urls := []string{srv.URL + "/pkg.zip"}
 	fileName := "haoxiangpao_v0.3.0_win64.zip"
-	if err := os.WriteFile(filepath.Join(updatesDir, fileName+".part"), []byte("stale-prefix"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(updatesDir, fileName+".part"), makeTestZipBytes(12), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveState(StatePath(dataDir), State{
@@ -702,7 +702,7 @@ func TestParentDisappearsStopsWorkerAndKeepsStateAndPart(t *testing.T) {
 	if err := os.MkdirAll(UpdatesDir(dataDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(partPath, []byte("partial"), 0o644); err != nil {
+	if err := os.WriteFile(partPath, makeTestZipBytes(16), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveState(StatePath(dataDir), State{
@@ -740,6 +740,62 @@ func TestParentDisappearsStopsWorkerAndKeepsStateAndPart(t *testing.T) {
 	}
 	if _, err := os.Stat(StatePath(dataDir)); err != nil {
 		t.Fatalf("expected state to persist on parent exit: %v", err)
+	}
+}
+
+func TestRolledBackArtifactIsNotRePromotedToReady(t *testing.T) {
+	keyID, pub, priv := testKeyPair(t)
+	zipData := makeTestZipBytes(512)
+	zipSHA := sha256Hex(zipData)
+	fileName := "haoxiangpao_v0.3.0_win64.zip"
+
+	dataDir := t.TempDir()
+	updatesDir := UpdatesDir(dataDir)
+	if err := os.MkdirAll(updatesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	packagePath := filepath.Join(updatesDir, fileName)
+	if err := os.WriteFile(packagePath, zipData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := DefaultState()
+	state.Version = "0.3.0"
+	state.File = fileName
+	state.SHA256 = zipSHA
+	state.Size = int64(len(zipData))
+	state.Phase = PhaseRolledBack
+	state.Package = packagePath
+	if err := SaveState(StatePath(dataDir), state); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(zipData)
+	}))
+	defer pkgSrv.Close()
+	manifestBytes := signTestManifest(t, keyID, priv, "0.3.0", fileName, int64(len(zipData)), zipSHA, []string{
+		pkgSrv.URL + "/" + fileName,
+	})
+	manifestSrv := serveManifest(t, manifestBytes)
+
+	err := Run(context.Background(), Config{
+		DataDir:      dataDir,
+		ManifestURLs: []string{manifestSrv.URL},
+		Keys:         map[string]ed25519.PublicKey{keyID: pub},
+		AllowLocal:   true,
+		Timeout:      2 * time.Second,
+		Once:         true,
+		Logger:       logx.NewWriter(nil),
+	})
+	if err != nil {
+		t.Fatalf("Run should treat a quarantined artifact as no-op: %v", err)
+	}
+	st, ok, loadErr := LoadState(StatePath(dataDir))
+	if loadErr != nil || !ok {
+		t.Fatalf("LoadState: ok=%v err=%v", ok, loadErr)
+	}
+	if st.Phase != PhaseRolledBack {
+		t.Fatalf("rolled_back artifact was re-promoted: phase=%q", st.Phase)
 	}
 }
 
