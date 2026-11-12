@@ -156,25 +156,32 @@ cd app
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
   -RollbackVersion 0.1.9 -NoDataMigration `
   -DownloadBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
+  -RegistryBaseUrl "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
   -MirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2",
                    "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2",
                    "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2") `
   -RollbackBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
+  -RollbackRegistryBaseUrl "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
   -RollbackMirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
                            "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
-                           "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9")
+                           "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9") `
+  -SignKey "$env:USERPROFILE\.hxp\update-signing.pem" `
+  -RequireSignature -MinHealthyMirrors 5
 ```
 
 打包后必须核对：
 
 1. `dist/好想跑_v<version>/好想跑.exe --check` 退出码 0；
 2. `--no-window --port <port>` 登录页 200；
-3. zip 221 项左右，不含 `data/`、`*.py`、`*.pyc`；
-4. `installer.nsi` 前三字节是 `EF BB BF`；
-5. `latest.json` 的 zip / setup / rollback 各 4 个 URL；
+3. zip 221 项左右，不含 `data/`、`*.py`、`*.pyc`；必须含
+   `hxp-launcher.exe` 和 `build_info.json`；
+4. `installer.nsi` 前三字节是 `EF BB BF`，快捷方式指向 `hxp-launcher.exe`；
+5. `latest.json` 的 zip / setup / rollback 至少 4 个 URL；主 `url` 是代理时，
+   `urls[]` 里不能出现把代理再套一层的地址；
 6. `dist/好想跑_v<version>/runtime/integrity.json` 有 `sig` 且能被
    `MANIFEST_PUBKEY` 验过（`release_check --deep` 已包含这一项）；
-   对不上就说明用错了密钥或包是 `-Unsigned` 打的。
+   对不上就说明用错了密钥或包是 `-Unsigned` 打的；
+7. `dist/latest.json` 有 `signature`，`key_id` 与 launcher 注入的公钥一致。
 
 ### 2.6 发布
 
