@@ -901,7 +901,7 @@
         <header class="page-head">
           <div class="crumb">工作台 <span style="color:var(--faint)">/</span> <b>Agent</b></div>
           <div class="head-row">
-            <h1>Agent 跑步规划</h1>
+            <h1>Agent 跑步规划<span class="dev-tag">开发中 · 敬请期待</span></h1>
             <div class="head-actions">
               <span class="chip agent-state" id="agentStateChip">待命</span>
             </div>
@@ -913,6 +913,11 @@
             <span class="chip" id="agentLlmChip">本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a></span>
           </div>
         </header>
+
+        <div class="agent-dev-note" id="agentDevNote" role="status">
+          <b>Agent 还在开发，敬请期待</b>
+          <span>当前版本可以先试用规划、预览和本地检查；功能仍会调整，最终提交仍由你在跑步页手动确认。</span>
+        </div>
 
         <div class="agent-shell">
           <div class="agent-chat-col">
@@ -959,7 +964,7 @@
                 <button type="button" class="btn primary" id="agentConfirm" disabled>确认，去跑步页预览</button>
                 <button type="button" class="btn ghost" id="agentCancel">取消</button>
               </div>
-              <p class="hint" id="agentHint">Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。</p>
+              <p class="hint" id="agentHint">Agent 还在开发，敬请期待；当前只做路线规划、本地预览与检查，最终提交仍由你在跑步页手动决定。</p>
             </div>
           </aside>
         </div>

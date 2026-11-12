@@ -7336,7 +7336,7 @@ function resetAgentUI(){
   renderAgentGoalBar(null);
   if($('#agentConfirm')) $('#agentConfirm').disabled = true;
   if($('#agentHint')){
-    $('#agentHint').textContent = 'Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。';
+    $('#agentHint').textContent = 'Agent 还在开发，敬请期待；当前只做路线规划、本地预览与检查，最终提交仍由你在跑步页手动决定。';
   }
 }
 function refreshAgentPageOnVisit(){
@@ -7668,7 +7668,7 @@ function renderAgentStatus(st){
     }else if(AGENT_TRANSIENT_STATES.has(state)){
       hintEl.textContent = 'Agent 正在执行本地规划与检查…';
     }else{
-      hintEl.textContent = 'Agent 只做路线规划、本地预览与检查；最终提交由你在跑步页手动决定。';
+      hintEl.textContent = 'Agent 还在开发，敬请期待；当前只做路线规划、本地预览与检查，最终提交仍由你在跑步页手动决定。';
     }
   }
 }

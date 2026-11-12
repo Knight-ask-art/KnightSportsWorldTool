@@ -2551,6 +2551,19 @@ body.disclaimer-open{overflow:hidden!important}
 .agent-state.warn{color:var(--amber);border-color:rgba(166,100,26,.38);background:rgba(166,100,26,.08)}
 .agent-state.err{color:var(--stamp);border-color:rgba(162,56,42,.4);background:rgba(162,56,42,.08)}
 .agent-goal-bar{gap:6px 8px}
+.agent-dev-note{
+  display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  margin:0 0 14px;padding:9px 12px;
+  border:1px dashed rgba(166,100,26,.45);border-radius:var(--sketch-sm);
+  background:rgba(242,210,92,.12);
+  color:var(--amber);font:12px/1.55 var(--sans);
+}
+.agent-dev-note b{font:600 12.5px/1.4 var(--sans)}
+.agent-dev-note span{color:var(--faint)}
+#page-agent h1 .dev-tag{
+  margin-left:7px;padding:1px 7px;vertical-align:4px;
+  font-size:10px;line-height:1.5;
+}
 .agent-llm-link{
   color:var(--ink-blue);text-decoration:underline;text-underline-offset:2px;
   font-weight:500;cursor:pointer;

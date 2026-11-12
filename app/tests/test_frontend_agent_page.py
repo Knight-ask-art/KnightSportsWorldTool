@@ -201,3 +201,11 @@ def test_agent_keeps_audited_points_and_resets_on_account_switch():
     send_fn = _js_function('sendAgentMessage')
     assert "sendText = '重新学习'" in send_fn
     assert "msg.includes('用我跑过')" in send_fn
+
+
+def test_agent_page_marks_work_in_progress():
+    page = HTML.split('id="page-agent"', 1)[1].split('id="page-routes"', 1)[0]
+    assert '还在开发，敬请期待' in page
+    assert 'id="agentDevNote"' in page
+    assert 'Agent 还在开发' in page
+    assert '.agent-dev-note' in CSS
