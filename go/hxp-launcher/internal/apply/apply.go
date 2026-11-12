@@ -42,6 +42,7 @@ type BootOK struct {
 
 type Deps struct {
 	CopyDir   func(src, dst string, excludeTopLevel []string) error
+	CopyFile  func(src, dst string) error
 	Rename    func(oldPath, newPath string) error
 	StartApp  func(opts StartAppOptions) (int, error)
 	WaitBoot  func(bootOKPath, expectedVersion string, timeout time.Duration) error
@@ -53,6 +54,7 @@ type Deps struct {
 func DefaultDeps() Deps {
 	return Deps{
 		CopyDir:   defaultCopyDir,
+		CopyFile:  defaultCopyFile,
 		Rename:    defaultRename,
 		StartApp:  defaultStartApp,
 		WaitBoot:  defaultWaitBoot,
@@ -66,6 +68,9 @@ func (d Deps) withDefaults() Deps {
 	def := DefaultDeps()
 	if d.CopyDir == nil {
 		d.CopyDir = def.CopyDir
+	}
+	if d.CopyFile == nil {
+		d.CopyFile = def.CopyFile
 	}
 	if d.Rename == nil {
 		d.Rename = def.Rename
@@ -386,6 +391,18 @@ func Apply(opts Options, deps Deps) error {
 		return rollback(fmt.Errorf("copy staging to .new: %w", err))
 	}
 
+	// NSIS installs keep Uninstall.exe outside the update zip.  Preserve it so
+	// a silent zip update cannot break "Apps & features".
+	uninstallSrc := filepath.Join(appDir, "Uninstall.exe")
+	uninstallDst := filepath.Join(newDir, "Uninstall.exe")
+	if _, err := os.Stat(uninstallSrc); err == nil {
+		if _, err := os.Stat(uninstallDst); os.IsNotExist(err) {
+			if err := deps.CopyFile(uninstallSrc, uninstallDst); err != nil {
+				return rollback(fmt.Errorf("preserve Uninstall.exe: %w", err))
+			}
+		}
+	}
+
 	if dirExists(appDataDir) {
 		if err := deps.Rename(appDataDir, newDataDir); err != nil {
 			return rollback(fmt.Errorf("preserve data dir: %w", err))
@@ -484,6 +501,14 @@ func defaultCopyDir(src, dst string, excludeTopLevel []string) error {
 		}
 		return copyRegularFile(path, target, info.Mode().Perm())
 	})
+}
+
+func defaultCopyFile(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return copyRegularFile(src, dst, info.Mode().Perm())
 }
 
 func copyRegularFile(src, dst string, mode fs.FileMode) error {

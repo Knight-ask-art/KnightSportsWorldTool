@@ -235,6 +235,9 @@ func TestApplySuccessWithFakeDeps(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(appDir, "old_only.txt"), []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(appDir, "Uninstall.exe"), []byte("uninstaller"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dataDir, "user.txt"), []byte("user-secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -323,6 +326,10 @@ func TestApplySuccessWithFakeDeps(t *testing.T) {
 	gotUser, err := os.ReadFile(filepath.Join(appDir, "data", "user.txt"))
 	if err != nil || string(gotUser) != "user-secret" {
 		t.Fatalf("expected preserved data/user.txt, err=%v got=%q", err, string(gotUser))
+	}
+	gotUninstall, err := os.ReadFile(filepath.Join(appDir, "Uninstall.exe"))
+	if err != nil || string(gotUninstall) != "uninstaller" {
+		t.Fatalf("expected preserved Uninstall.exe, err=%v got=%q", err, string(gotUninstall))
 	}
 	if _, err := os.Stat(appDir + ".old"); !os.IsNotExist(err) {
 		t.Fatalf("expected .old dir to be deleted, err=%v", err)
