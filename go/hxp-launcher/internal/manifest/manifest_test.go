@@ -201,6 +201,19 @@ func TestFetchErrorRedactsQueryAndFragment(t *testing.T) {
 	}
 }
 
+func TestFetchMalformedURLErrorRedactsSecrets(t *testing.T) {
+	rawURL := "https://user:SECRET_USER@example.com/%zz?token=SECRET_TOKEN#SECRET_FRAG"
+	_, err := Fetch(context.Background(), rawURL, true, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected malformed URL error")
+	}
+	for _, secret := range []string{"SECRET_USER", "SECRET_TOKEN", "SECRET_FRAG"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("%s leaked into error: %v", secret, err)
+		}
+	}
+}
+
 func TestVerifyRejectsWhitespaceInSignature(t *testing.T) {
 	manifestBytes, _, pub := loadTestVector(t)
 	keys := map[string]ed25519.PublicKey{"test": pub}
