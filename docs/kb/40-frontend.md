@@ -24,7 +24,9 @@ app/frontend/
 └─ fonts/              本地字体文件
 ```
 
-- **无构建步骤**：没有 npm、没有打包器、没有框架。
+- **开发无构建步骤**：没有 npm install、没有打包器、没有框架，源码直接加载。
+  打包时 `scripts/minify_frontend.py` 会对 staged 副本的 `js/*.js` 做一次
+  terser 压缩（见 `docs/hardening.md` Phase 4），源码树不变。
 - **运行时不联网**：字体、地图库、图片全部本地；只有 bridge 调本机 Python。
 - **地图水印**：`#map` / `#routeMap` / `#rdMap` 上叠加 `.map-watermark`，
   文本取 `LIVE.session.username`（登录手机号），无会话时隐藏；z-index 250
@@ -49,6 +51,9 @@ app/frontend/
 - 统一走 `POST /bridge/<method>`，实现在
   `app/replica/adapters/bridge_api.py`。
 - 前端 `api(method, params)` 封装超时和错误；返回统一 `{code, msg, data}`。
+- 提交失败的“是否可能已写入”由后端决定：`real_submit_run` 失败时在
+  `data.failure_kind` 返回 `fail` / `unknown`，前端只负责渲染；只有旧版
+  sidecar 缺少该字段时，才回退到消息前缀判断。
 - 敏感数据不落 localStorage；只有皮肤偏好 `hxp_skin` 存在 localStorage，
   其它状态（公告已读、引导、免责声明）都在 `data/ui_state.json`。
 

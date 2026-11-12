@@ -323,6 +323,19 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host '   no plaintext protocol constants in 好想跑.exe'
 
+# Ship minified JavaScript, not the readable source.  This runs on the staged
+# copy only; app/frontend stays editable for development.  Terser keeps
+# top-level names (charts.js / announcements.js globals), strips comments and
+# local variable names, and writes no source map.  The next smoke test loads
+# the minified login page, so a broken bundle fails the build here.
+Write-Host '== 1b/5 Minify frontend =='
+$minifier = Join-Path $REPO 'scripts\minify_frontend.py'
+if (-not (Test-Path $minifier)) { throw "frontend minifier missing: $minifier" }
+python $minifier (Join-Path $BUILT 'frontend')
+if ($LASTEXITCODE -ne 0) {
+    throw ('frontend minify failed (exit {0})' -f $LASTEXITCODE)
+}
+
 Write-Host '== 2/5 Frozen import check =='
 $check = Start-Process -FilePath $EXE -ArgumentList '--check' -Wait -PassThru
 if ($check.ExitCode -ne 0) {

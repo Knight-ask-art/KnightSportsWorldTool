@@ -800,37 +800,60 @@ def test_submit_explain_waits_only_when_a_code_exists():
     worker = _js_function('explainSubmitResult')
     assert "if(code == null){ renderSubmitExplain(r); return; }" in worker
     submit = _js_function('doSubmitRun')
-    # The HTTP code is not used to decide: every bridge failure is a 500, so
-    # only the message prefix can tell a refusal from an unknown outcome.
+    # The backend classifies the failure; the frontend only renders it.  The
+    # prefix rules below remain a fallback for older sidecars.
     assert 'const unknown = submitFailureKind(j) === \'unknown\';' in submit
     assert 'j.code === 500' not in submit
     kind = _js_function('submitFailureKind')
+    assert "if(data.failure_kind === 'fail' || data.failure_kind === 'unknown'){" in kind
     assert "if(/^提交被拒[:：]/.test(msg)) return 'fail';" in kind
 
 
 def test_submit_failure_kind_separates_refusal_from_unknown():
-    """Behaviour test: feed envelope messages to the extracted pure function."""
+    """Behaviour test: feed envelopes to the extracted pure function."""
     fn = _js_function('submitFailureKind')
     cases = [
-        ('提交被拒: error=10001 该时段已锁定 (HTTP 200)', 'fail'),
-        ('提交被拒：error=10001 该时段已锁定 (HTTP 400)', 'fail'),
-        ('提交被拒: error=10001 该时段已锁定 (HTTP 500)', 'fail'),
-        ('提交结果未知（已锁定该时段，请勿重试）: timed out', 'unknown'),
-        ('服务器已受理但未返回记录号，结果未知（已锁定该时段）', 'unknown'),
-        ('提交异常，结果未知（已锁定该时段）: connection reset', 'unknown'),
-        ('本地服务超时（后台可能仍在执行，请勿重复提交）', 'unknown'),
-        ('本地服务不可用：TypeError: Failed to fetch', 'unknown'),
-        ('本地服务返回了无法识别的内容', 'unknown'),
-        ('服务器拒绝了这次提交。', 'fail'),
+        ({'code': 500, 'message': '提交被拒: error=10001 该时段已锁定 (HTTP 200)',
+          'data': {'failure_kind': 'fail'}}, 'fail'),
+        ({'code': 500, 'message': '提交被拒：error=10001 该时段已锁定 (HTTP 400)',
+          'data': {'failure_kind': 'fail'}}, 'fail'),
+        ({'code': 500, 'message': '提交结果未知（已锁定该时段，请勿重试）: timed out',
+          'data': {'failure_kind': 'unknown'}}, 'unknown'),
+        ({'code': 500, 'message': '服务器已受理但未返回记录号，结果未知（已锁定该时段）',
+          'data': {'failure_kind': 'unknown'}}, 'unknown'),
+        # The backend decision wins even when the message reads like the
+        # other branch; the frontend must not re-derive it.
+        ({'code': 500, 'message': '提交结果未知（已锁定该时段）',
+          'data': {'failure_kind': 'fail'}}, 'fail'),
+        ({'code': 500, 'message': '提交被拒: error=10001 该时段已锁定',
+          'data': {'failure_kind': 'unknown'}}, 'unknown'),
+        # Legacy envelopes without failure_kind still use the prefixes.
+        ({'code': 500, 'message': '提交被拒: error=10001 该时段已锁定 (HTTP 500)',
+          'data': None}, 'fail'),
+        ({'code': 500, 'message': '提交异常，结果未知（已锁定该时段）: connection reset',
+          'data': None}, 'unknown'),
+        ({'code': 500, 'message': '本地服务超时（后台可能仍在执行，请勿重复提交）',
+          'data': None}, 'unknown'),
+        ({'code': 500, 'message': '本地服务不可用：TypeError: Failed to fetch',
+          'data': None}, 'unknown'),
+        ({'code': 500, 'message': '本地服务返回了无法识别的内容',
+          'data': None}, 'unknown'),
+        # An unknown enum value or a non-object data payload falls back to the
+        # legacy prefixes instead of throwing.
+        ({'code': 500, 'message': '提交被拒: error=10001',
+          'data': {'failure_kind': 'bogus'}}, 'fail'),
+        ({'code': 500, 'message': '提交结果未知: timed out',
+          'data': 'oops'}, 'unknown'),
+        ({'code': 500, 'message': '服务器拒绝了这次提交。', 'data': None}, 'fail'),
     ]
     node = shutil.which('node')
     if not node:
         pytest.skip('node is not installed; submitFailureKind behaviour test skipped')
     script = '\n'.join([
         fn,
-        'const messages = ' + json.dumps([m for m, _ in cases], ensure_ascii=False) + ';',
+        'const envelopes = ' + json.dumps([j for j, _ in cases], ensure_ascii=False) + ';',
         'const expected = ' + json.dumps([k for _, k in cases]) + ';',
-        'const got = messages.map(m => submitFailureKind({code: 500, message: m}));',
+        'const got = envelopes.map(j => submitFailureKind(j));',
         'console.log(JSON.stringify(got));',
     ])
     proc = subprocess.run([node, '-e', script], capture_output=True, text=True,

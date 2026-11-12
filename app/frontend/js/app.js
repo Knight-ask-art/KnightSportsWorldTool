@@ -9999,6 +9999,15 @@ function cancelDataPreview(){
 // that say the outcome is unknown, or a local bridge failure that hides the
 // outcome, lock the submit button.
 function submitFailureKind(j){
+  // The backend knows which branch it took; render its decision instead of
+  // re-deriving it from Chinese message prefixes.  `failure_kind` is present
+  // on current builds (see _fail_submit in bridge_api.py).
+  const data = (j && j.data) || {};
+  if(data.failure_kind === 'fail' || data.failure_kind === 'unknown'){
+    return data.failure_kind;
+  }
+  // Legacy bridge builds do not send failure_kind.  Keep the prefix rules as
+  // a fallback so an older sidecar still classifies correctly.
   const msg = String((j && j.message) || '');
   // The runner refused the write outright: retrying is allowed.
   if(/^提交被拒[:：]/.test(msg)) return 'fail';
