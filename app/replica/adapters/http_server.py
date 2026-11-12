@@ -365,8 +365,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 result = fn(*args, **kwargs)
         except Exception as e:  # noqa: BLE001
+            # A submit that raised somewhere we did not anticipate may already
+            # have reserved a receipt or reached the server.  Mark it unknown
+            # so the UI keeps the button locked instead of inviting a retry.
+            data = {'failure_kind': 'unknown'} if name == 'real_submit_run' else None
             return self._json({'code': 500, 'message': f'error: {e}',
-                               'data': None})
+                               'data': data})
         if not isinstance(result, dict) or 'code' not in result:
             result = {'code': 200, 'message': 'success', 'data': result}
         self._json(result)

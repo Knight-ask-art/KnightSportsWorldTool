@@ -27,9 +27,13 @@
 
   function drop() {
     splash.remove();
-    /* The login gate was inert while the splash owned the window; restore it
-       before handing focus back, then tell app.js the intro is over. */
-    if (loginGate) loginGate.inert = false;
+    /* The login gate was inert and hidden while the splash owned the window;
+       restore it before handing focus back, then tell app.js the intro is
+       over. */
+    if (loginGate) {
+      loginGate.inert = false;
+      loginGate.style.visibility = '';
+    }
     try {
       document.dispatchEvent(new CustomEvent('hxp:boot-done'));
     } catch (err) { /* older WebView: the visibility poll in app.js still works */ }
@@ -47,8 +51,13 @@
 
   /* The login gate sits behind the splash; making it inert stops the login
      auto-focus from stealing the splash's focus and keeps Tab out of the
-     hidden form. */
-  if (loginGate) loginGate.inert = true;
+     hidden form.  Hiding it also prevents the gate from flashing for ~1.2 s
+     on a slow bridge boot before the panel covers it.  The early-exit paths
+     above never hide a gate they do not own. */
+  if (loginGate) {
+    loginGate.inert = true;
+    loginGate.style.visibility = 'hidden';
+  }
 
   var access = document.getElementById('bootAccess');
   var action = document.getElementById('bootAction');

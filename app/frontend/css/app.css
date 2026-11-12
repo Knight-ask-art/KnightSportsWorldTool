@@ -973,6 +973,21 @@ body.dragging-route-point #map{cursor:grabbing!important}
 .simple-table.accounts .thead,.simple-table.accounts .trow{
   grid-template-columns:minmax(0,1.15fr) 72px minmax(0,1fr) 76px 22px;
 }
+/* Narrow screens: the five-column record table scrolls sideways instead of
+   clipping, and checklist notes move under their label so the label itself
+   keeps a readable width. */
+@media (max-width:760px){
+  #recordTable{overflow-x:auto}
+  /* Only the five-column record table needs the fixed minimum.  Scoping this
+     to #recordTable keeps the account table's minmax template in charge; an
+     unscoped rule forced its rows to 520px and clipped the right-hand cells. */
+  #recordTable .thead,#recordTable .trow{min-width:520px}
+  .check-row{grid-template-columns:19px 1fr}
+  .check-row .cnote{grid-column:2;text-align:left;max-width:none}
+  /* `.run-panel .check-row .cnote` locks 145px on wide screens; override it
+     with the same specificity or the note stays one narrow column. */
+  .run-panel .check-row .cnote{max-width:none}
+}
 .mono{font-family:var(--mono);font-size:9.5px;color:var(--faint)}
 
 .filter-row{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 14px}
@@ -992,6 +1007,9 @@ body.dragging-route-point #map{cursor:grabbing!important}
 }
 
 .records-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;align-items:start}
+/* Let the record column shrink below its content width so #recordTable can
+   own the horizontal scrollbar instead of the page clipping the overflow. */
+.records-layout>div{min-width:0}
 .record-detail{
   border:1.3px solid var(--ink);border-radius:var(--sketch-md);padding:15px 16px;
   background:var(--paper-2);box-shadow:var(--shadow);
@@ -1213,7 +1231,11 @@ body.dragging-route-point #map{cursor:grabbing!important}
 .pt-mini .star{color:var(--stamp);width:9px;flex:none}
 .pt-mini .meta{margin-left:auto;font:9px var(--mono);color:var(--faint)}
 .run-panel .check-row{padding:6px 2px}
-.run-panel .check-row .cnote{max-width:145px}
+/* The note sits beside the label on wide screens; below 761px the query in
+   the table block stacks it and clears this width. */
+@media (min-width:761px){
+  .run-panel .check-row .cnote{max-width:145px}
+}
 .run-panel .hint{margin-top:7px}
 .run-panel .params{gap:8px 12px}
 .run-panel .param-foot{margin-top:8px;flex-wrap:wrap;gap:6px}
@@ -1419,7 +1441,8 @@ body.dragging-route-point #map{cursor:grabbing!important}
   .sheet{padding:26px 22px 60px}
   .stat-strip{grid-template-columns:1fr 1fr;row-gap:12px}
   .stat:nth-child(3){border-left:0;padding-left:0}
-  .route-layout,.records-layout,.col.side{grid-template-columns:1fr}
+  .route-layout,.col.side{grid-template-columns:1fr}
+  .records-layout{grid-template-columns:minmax(0,1fr)}
   #routeMap{height:320px}
   .head-row{flex-wrap:wrap}
   .head-actions{margin-left:0;padding-bottom:0}
@@ -1667,6 +1690,8 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
   margin:-1px 0 0;padding:8px 10px;border-left:3px solid var(--stamp);
   background:rgba(182,72,60,.055);color:var(--stamp);
   font-size:11px;line-height:1.6;overflow-wrap:anywhere;
+  /* Server wording on the first line, the actionable hint on the second. */
+  white-space:pre-line;
 }
 .login-status{
   min-height:17px;margin-top:-2px;color:var(--faint);

@@ -1,7 +1,7 @@
 # 客户端加固：四语言边界与分布式校验
 
-> 状态：Phase 1 / Phase 2 / Phase 3 已实现（2026-11-12）。实现由 Claude Code
-> 按阶段提交，本文是验收口径。
+> 状态：Phase 1 / Phase 2 / Phase 3 / Phase 4 已实现（2026-11-12）。实现由
+> Claude Code 按阶段提交，本文是验收口径。
 > 结论先行：客户端加固只提高逆向成本，最终边界仍是服务端。不要把“不可逆向”
 > 写进需求，也不要用它替代服务端风控。
 
@@ -135,6 +135,29 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
   “假成功 → 3 秒过期”；改坏/删除 native 文件只让完整性状态变红，不影响
   正常登录。
 
+### Phase 4 · 前端 A+B（已实现）
+
+- **A · 决策下沉**：`real_submit_run` 的失败 envelope 带
+  `data.failure_kind`：
+  - `fail`：请求没有发出，或服务端明确拒绝；修正后可以重试；
+  - `unknown`：请求可能已经到达服务端（或已预留回执）；提交按钮保持锁定，
+    先去「记录」页只读核对。
+  分类由 `bridge_api._fail_submit` 在产生失败的分支决定，不再依赖 HTTP
+  状态码（bridge 失败全是 500）或中文消息前缀。前端 `submitFailureKind`
+  优先读该字段，只有旧版 sidecar 缺少它时才回退到前缀规则。未预期的
+  `real_submit_run` 异常由 `http_server` 标成 `unknown`，不会误开重试。
+- **B · 构建期压缩**：`scripts/minify_frontend.py` 只处理打包 staged 副本的
+  `frontend/js/*.js`，调用 `npx --yes terser@5.36.0`，启用 `--compress
+  passes=2` 与 `--mangle`，**不生成 source map**，也**不加 `--toplevel`**，
+  因此 `Announcements`、`HXPCharts` 等跨文件全局名仍然存在。`vendor/` 与
+  `theme-boot.js` 不动；每个输出先过 `node --check`，全部通过才原子替换。
+  - 接入 `packaging/build.ps1` 的 `1b/5`，位置在 Frozen HTTP smoke test
+    之前：压缩后的登录页必须还能被真实进程加载，否则构建直接失败。
+  - 源码树保持不变；开发时仍然是“改完刷新”，不需要 `npm install`。
+- **边界**：A+B 只降低“顺手读前端就能绕过 UI”的收益，不是安全边界。
+  真正的校验仍在 Python / 服务端；不要用 TypeScript、WASM 或 JS 加密壳
+  替代后端判定。
+
 ## 5. 明确不做
 
 - 不做全 exe 的 VMProtect/Themida 加壳（误报、兼容性、维护成本）。
@@ -160,6 +183,9 @@ cd rust\hxp-core; cargo test; cargo build --release --locked
 cd app; python -m pytest tests -q
 node --check frontend/js/app.js
 python app.py --check
+
+# 前端打包压缩（对 staged 副本执行；源码树不变）
+python scripts\minify_frontend.py app\build_stage\好想跑\frontend
 
 # 发布包字节扫描
 python scripts\scan_release_secrets.py dist\好想跑_v0.2.2\好想跑.exe

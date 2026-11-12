@@ -1313,7 +1313,7 @@ const MODE_HELP = {
   stadium: '田径场：生成 200/300/400m 标准跑道；提交时按目标距离刷圈。'
 };
 const ROUTE_HINT = {
-  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有 token 时不会生成假点位。',
+  draw: '点左上角画笔，在地图上<b>单击加点</b>；右键删点。默认不闭合，需要绕圈时再打开「闭合」。<br>点位和围栏来自登录后的真实接口；没有登录时不会生成假点位。',
   auto: '自动：优先用你跑过的路线；没有学习结果时才用临时连线。<br>可在「路线库」里先从本机跑步记录学习常跑路线，再回到这里一键选用。',
   file: '导入模式：读取 GPX / GeoJSON / JSON / CSV；手表或别的 App 导出的轨迹。文件只在本机解析。',
   stadium: '田径场模式：选 200/300/400m 生成标准跑道；提交时按目标距离刷圈。'
@@ -3441,6 +3441,15 @@ function prettyLoginError(raw){
   if(/超时|timed out|timeout|bridge 超时/i.test(msg)) return '登录等待超时了。后台可能仍在处理，请稍等几秒再试。';
   if(/手动滑一下|手动验证/.test(msg)) return '自动验证没通过，请点下面的「手动滑一下」，自己把缺口对上。';
   if(/极验|gee|gt4|captcha/i.test(msg)) return '验证没有通过，请重试。';
+  // Keep the server/guard wording as the first line: it is what support and
+  // the logs quote.  The second line is the actionable version for a
+  // non-technical user (see .login-error's white-space:pre-line).
+  if(/设备校验未通过|账号绑定校验失败/.test(msg)){
+    return msg + '\n第一次登录的本地校验没通过，常见原因是杀毒软件扫描或电脑太忙。先再点一次「登录」；还不行就关掉软件重开；仍不行把「设置 → 关于」的诊断包发到 QQ 群。';
+  }
+  if(/一号一设备/.test(msg)){
+    return msg + '\n这台电脑已经绑定了另一个账号。同一台电脑只能登录那一个账号；换回原账号即可。如果这台电脑不是你的（二手机/学校机房），请找给你软件的同学帮你解绑，或在 QQ 群说明情况。';
+  }
   if(/bridge 不可用|Failed to fetch|NetworkError|ECONN|连接/i.test(msg)) return '连不上本地服务，请重启好想跑后再试。';
   return msg || '登录失败，请重试。';
 }
@@ -4905,7 +4914,7 @@ async function saveCustomDevice(){
   if(!physicPixel){ toast('请填写物理分辨率'); $('#customDevicePhysic').focus(); return; }
   if(!logicPixel){ toast('请填写逻辑分辨率'); $('#customDeviceLogic').focus(); return; }
   if(!cpuModel){ toast('请填写 CPU 型号'); $('#customDeviceCpu').focus(); return; }
-  if(!DeviceId){ toast('请填写 DeviceId'); $('#customDeviceId').focus(); return; }
+  if(!DeviceId){ toast('请填写设备编号'); $('#customDeviceId').focus(); return; }
   if(!confirm('确定保存自定义设备？\n\n· 设备：' + deviceName + ' · ' + osVersion +
               '\n· 物理/逻辑：' + physicPixel + ' / ' + logicPixel +
               '\n· CPU：' + cpuModel +
@@ -6644,11 +6653,15 @@ async function selectRecord(i){
   // back by the detail endpoint (1 = 学分跑), not a risk flag; treating it as
   // one painted every normal 学分跑 record red starting with the 11/05
   // records (issue #14).
+  // The main row stays plain-language; the raw server field is only a
+  // tooltip so `isCheat=1` no longer leaks into the record detail.
+  const cheatRaw = +x.is_cheat ? ('isCheat=' + x.is_cheat) : '';
   const risk = [];
-  if(+x.is_cheat) risk.push('isCheat=1');
+  if(cheatRaw) risk.push('有风险标记');
   if(+x.step_freq_status) risk.push('步频异常');
   $('#rdCheat').textContent = risk.length ? risk.join(' · ') : '正常';
   $('#rdCheat').className = risk.length ? 'risk-bad' : 'risk-ok';
+  $('#rdCheat').title = cheatRaw;
   $('#rdRulePolicy').textContent = x.policy ? ('policy=' + x.policy) : '—';
   const curPace = paceFromSec(x.duration_s, km);
   const pf = +x.pace_fast, ps = +x.pace_slow;
@@ -8457,7 +8470,7 @@ function renderRulesStatus(d, rules, hint){
     ? '已保存；只检查填写过的项目，留空项显示“未要求”。'
     : (autoOff
       ? '模型已关闭；自动读取已停止，点「从服务器读取」可恢复。'
-      : '任意填写一项即可启用模型；留空项不检查。'));
+      : '学校没配置要求时，点「从服务器读取」确认一次；仍为空可以直接去跑步，模型会按已填写项检查。'));
   refreshParams();
   refreshModelPreview();
   refreshChecks();
@@ -8565,7 +8578,7 @@ async function saveRules(){
   const rules = collectRulesForm();
   const filled = RULE_FIELDS.filter(([id]) => $('#' + id) && $('#' + id).value.trim()).length +
     (rules.windows || []).length;
-  if(!filled && !confirm('所有项都留空，保存后会关闭模型并停止自动读取。继续？')) return;
+  if(!filled && !confirm('学校要求全部留空：如果学校确实没有配置要求，可以保存；否则请先点「从服务器读取」。仍要保存吗？')) return;
   // A manual save is the operator's source of truth.  Stop the background
   // server refresh so it cannot silently overwrite hand-edited bands; the
   // explicit「从服务器读取」button turns auto_fetch back on.
@@ -9463,7 +9476,10 @@ function renderSubmitExplain(r){
   }
   if(details) details.hidden = !(r.raw || code != null);
   if(!box) return;
-  if(r.state === 'ok'){ box.hidden = true; return; }
+  // Without an error code there is nothing to explain: keep the readable
+  // r.detail that #submitResultText already shows instead of replacing it
+  // with "正在解释…" and then "未识别".
+  if(r.state === 'ok' || code == null){ box.hidden = true; return; }
   box.hidden = false;
   const t = $('#submitResultExplainTitle');
   const c = $('#submitResultExplainCause');
@@ -9484,8 +9500,11 @@ function renderSubmitExplain(r){
 }
 function explainSubmitResult(r){
   if(!r || r._explaining) return;
-  r._explaining = true;
   const code = submitExplainCode(r);
+  // No code means the explainer can only answer "未识别", which would hide a
+  // perfectly readable failure message.  Leave r.detail in place.
+  if(code == null){ renderSubmitExplain(r); return; }
+  r._explaining = true;
   explainError(code, r.raw || r.detail || r.title || '', {source: 'submit'})
     .then(exp => {
       r.explain = exp;
@@ -9718,6 +9737,13 @@ function liveDockClick(){
   if(!$('#dock').classList.contains('ready')){
     const missing = [...document.querySelectorAll('#checks .check-row.warn .clabel')].map(x => x.textContent.trim());
     toast('还差：' + (missing.length ? missing.slice(0, 3).join('、') : '提交前检查'));
+    // Show the first unfinished row instead of leaving the operator to hunt
+    // for it; the toast disappears after a couple of seconds.
+    const firstWarn = document.querySelector('#checks .check-row.warn');
+    if(firstWarn && firstWarn.scrollIntoView){
+      try{ firstWarn.scrollIntoView({block: 'center', behavior: 'smooth'}); }
+      catch(e){ firstWarn.scrollIntoView(); }
+    }
     return;
   }
   toast('检查通过，点「提交这次跑步」');
@@ -9977,6 +10003,34 @@ function cancelDataPreview(){
   PENDING_SUBMIT = null;
   closeDataPreview();
 }
+// Classify a failed submit envelope from the bridge's semantic prefix.  The
+// HTTP code cannot do it: every bridge failure is a 500 (explicit refusals
+// included), so `code === 500` only means "the request failed", not "the
+// write may have landed".  Explicit refusals stay retryable; only messages
+// that say the outcome is unknown, or a local bridge failure that hides the
+// outcome, lock the submit button.
+function submitFailureKind(j){
+  // The backend knows which branch it took; render its decision instead of
+  // re-deriving it from Chinese message prefixes.  `failure_kind` is present
+  // on current builds (see _fail_submit in bridge_api.py).
+  const data = (j && j.data) || {};
+  if(data.failure_kind === 'fail' || data.failure_kind === 'unknown'){
+    return data.failure_kind;
+  }
+  // Legacy bridge builds do not send failure_kind.  Keep the prefix rules as
+  // a fallback so an older sidecar still classifies correctly.
+  const msg = String((j && j.message) || '');
+  // The runner refused the write outright: retrying is allowed.
+  if(/^提交被拒[:：]/.test(msg)) return 'fail';
+  // The runner (or the write-ahead receipt) says the outcome is unknown.
+  if(/^提交结果未知/.test(msg) ||
+     /^服务器已受理但未返回记录号/.test(msg) ||
+     /^提交异常，结果未知/.test(msg)) return 'unknown';
+  // Local bridge timed out / was unavailable / replied with something we
+  // could not parse: the request may still have reached the server.
+  if(/本地服务超时|本地服务不可用|本地服务返回了无法识别的内容|可能仍在执行/.test(msg)) return 'unknown';
+  return 'fail';
+}
 async function doSubmitRun(pending){
   if(!pending || LIVE.submitting) return;
   const {params, ti, band, dayText, timeText} = pending;
@@ -10020,7 +10074,9 @@ async function doSubmitRun(pending){
     const d = j.data || {};
     if(d.model){ _modelSeq++; LIVE.model = d.model; renderModel(); }
     const msg = String(j.message || '');
-    const unknown = /超时|未知|已锁定|可能仍在执行|bridge 不可用|bridge 返回非 JSON|本地服务不可用|本地服务返回了无法识别的内容/.test(msg);
+    // The status code is not a reliable signal here (all bridge failures use
+    // 500); the message prefix distinguishes "refused" from "unknown".
+    const unknown = submitFailureKind(j) === 'unknown';
     const errCode = codeFromText(msg) || (j.code && j.code !== 200 ? j.code : null);
     if(unknown){
       setSubmitResult('unknown', '提交结果未知',
@@ -10058,7 +10114,7 @@ async function doSubmitRun(pending){
   if(d.readback_error) warnings.push('回读失败：' + d.readback_error);
   if(!d.readback && !d.readback_error) warnings.push('没有回读结果');
   if(d.readback && (d.readback.complete === false || d.readback.complete === 0)) warnings.push('回读未完成');
-  if(d.readback && d.readback.isCheat) warnings.push('回读标记 isCheat=' + d.readback.isCheat);
+  if(d.readback && d.readback.isCheat) warnings.push('回读风险标记：' + d.readback.isCheat);
   if(d.obs_error) warnings.push('轨迹上传失败：' + d.obs_error);
   if(d.obs && d.obs.of && ((d.obs.uploaded || 0) < d.obs.of || (d.obs.verified || 0) < d.obs.of)){
     const obsErr = (d.obs.errors && d.obs.errors.length) ? ('（' + d.obs.errors[0] + '）') : '';

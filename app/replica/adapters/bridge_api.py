@@ -72,6 +72,25 @@ def _fail(message='failed', code=500, data=None):
     return {'code': code, 'message': message, 'data': data}
 
 
+def _fail_submit(message='failed', kind='fail', data=None):
+    """A submit failure that states whether the write may have landed.
+
+    Every bridge failure uses code 500, so the HTTP status cannot tell an
+    explicit refusal (safe to retry) from a request that may already have
+    reached the server (must stay locked).  The backend knows which branch it
+    took; it records that decision as ``data.failure_kind`` and the frontend
+    only renders it.  Values:
+
+    * ``fail``    - nothing was written; the server or the local guard refused
+                    the request, so the operator may fix it and resubmit.
+    * ``unknown`` - the request may have reached the server; keep the submit
+                    button locked until the receipt is reconciled.
+    """
+    payload = dict(data) if isinstance(data, dict) else {}
+    payload['failure_kind'] = kind
+    return _fail(message, data=payload)
+
+
 def _fmt_seconds(seconds):
     """Human-readable remaining freeze time."""
     total = max(0, int(seconds or 0))
@@ -4001,14 +4020,15 @@ class ReplicaApi:
         re-sending when a previous outcome is unknown.
         """
         if self._device_migration:
-            return _fail(self._device_migration.get('message')
-                         or '设备指纹已修复，请重新登录后再提交')
+            return _fail_submit(
+                self._device_migration.get('message')
+                or '设备指纹已修复，请重新登录后再提交')
         try:
             acct = self._real_account()
         except DP.DeviceProfileError as e:
-            return _fail(str(e))
+            return _fail_submit(str(e))
         if acct is None:
-            return _fail('未配置 token（先在"账号"面板保存）')
+            return _fail_submit('未配置 token（先在"账号"面板保存）')
         from ..transport import realclient as R
         from ..application import points as P
         from ..domain.rundata import build_upload_entity, sign_upload_entity
@@ -4017,7 +4037,7 @@ class ReplicaApi:
         try:
             rc = R.RealClient()
         except Exception as e:  # noqa: BLE001
-            return _fail(f'sidecar/加密层启动失败: {e}')
+            return _fail_submit(f'sidecar/加密层启动失败: {e}')
 
         # Align to the server clock before ANY signed request in this flow:
         # a laptop several minutes fast used to make the first policy call
@@ -4041,7 +4061,7 @@ class ReplicaApi:
         from ..application import policy as POL
         policy_data = self._fetch_run_policy(rc, acct)
         if not policy_data:
-            return _fail('无法读取跑步策略，已停止提交（不会用旧围栏或猜测校区）')
+            return _fail_submit('无法读取跑步策略，已停止提交（不会用旧围栏或猜测校区）')
         area = POL.select_run_area(
             policy_data, 0,
             campus_name=acct.campusName,
@@ -4053,7 +4073,7 @@ class ReplicaApi:
             else:
                 submit_notes.append('所选跑区不可用，已按默认跑区重新匹配')
         if area is not None and area.get('valid') is False:
-            return _fail('跑区有效时间已更新，请重新选择')
+            return _fail_submit('跑区有效时间已更新，请重新选择')
         policy_ts = POL.policy_timestamp(policy_data)
         freeze = POL.freeze_seconds(policy_data)
         face_on, face_why = POL.face_required(policy_data)
@@ -4070,7 +4090,7 @@ class ReplicaApi:
             # The real client can only report `faceCheck=1` after a face check.
             # This tool cannot perform one, so submitting would be a false
             # claim; stop instead of guessing.
-            return _fail(
+            return _fail_submit(
                 '学校启用了人脸抽检（%s），本工具无法完成人脸校验，已停止提交'
                 '（不会伪造 faceCheck=1）' % face_why)
         if sequential:
@@ -4091,9 +4111,9 @@ class ReplicaApi:
             elif fence.get('center_source') == 'manual':
                 submit_notes.append('检测到多个围栏：按已保存的校区坐标提交')
         except P.PolicyUnavailable as e:
-            return _fail(str(e))
+            return _fail_submit(str(e))
         except P.FenceAmbiguous as e:
-            return _fail(str(e))
+            return _fail_submit(str(e))
         except P.FenceNotConfigured as e:
             center = None
             if self._center_ok(acct.center_lat, acct.center_lng):
@@ -4108,15 +4128,16 @@ class ReplicaApi:
                 submit_notes.append(
                     '该校区未配置围栏，已按路线首点确定本次坐标（不会保存为校区）')
             if center is None:
-                return _fail('学校未配置围栏，且没有可用的校区坐标：请先把地图'
-                             '拖到学校后点「设为校区」，或画一条以学校为起点的路线')
+                return _fail_submit(
+                    '学校未配置围栏，且没有可用的校区坐标：请先把地图'
+                    '拖到学校后点「设为校区」，或画一条以学校为起点的路线')
         except Exception as e:  # noqa: BLE001
             # A saved centre says *where* the campus is, not whether the track
             # is inside its polygon.  Continuing here used to leave `fence`
             # empty and skip the in-area check entirely, so a transient read
             # failure could submit an out-of-fence record.
-            return _fail('无法读取校区围栏，已停止提交（避免提交围栏外轨迹）: %s'
-                         % e)
+            return _fail_submit(
+                '无法读取校区围栏，已停止提交（避免提交围栏外轨迹）: %s' % e)
 
         # ---- 1. live checkpoints -> route through them --------------------
         # Checkpoints are fetched even when a route was supplied: a record
@@ -4155,7 +4176,7 @@ class ReplicaApi:
                             % (meta['distance_m'],
                                int(round(float(km) * 1000))))
                     if not cps:
-                        return _fail(
+                        return _fail_submit(
                             '服务器没有返回打卡点，无法确认该校区是否允许自由跑；'
                             '如你确认学校没有点位，请勾选「跳过打卡点」后重试')
                 except ValueError as e:
@@ -4163,7 +4184,7 @@ class ReplicaApi:
                     # decompiled client has no such branch on the normal
                     # distance endpoint; official free run is serviceType 3 /
                     # sportType 4.
-                    return _fail(
+                    return _fail_submit(
                         '服务器没有返回有效打卡点，无法确认该校区是否允许自由跑；'
                         '如你确认学校没有点位，请勾选「跳过打卡点」后重试: %s' % e)
                 except Exception as e:  # noqa: BLE001
@@ -4171,7 +4192,7 @@ class ReplicaApi:
                     # complete.  Submitting anyway created an
                     # accepted-but-invalid run, so stop before the write-ahead
                     # receipt is reserved.
-                    return _fail(
+                    return _fail_submit(
                         '点位加载失败，已停止提交（避免生成不完整记录）: %s' % e)
             if not wps:
                 wps = P.route_order(cps, acct.center_lat, acct.center_lng,
@@ -4189,13 +4210,15 @@ class ReplicaApi:
             from ..application import policy as _POL
             mp = _POL.extract_must_points(policy_data) if policy_data else []
         except Exception as e:  # noqa: BLE001
-            return _fail(f'策略必经点无法解析，已中止: {e}')
+            return _fail_submit(f'策略必经点无法解析，已中止: {e}')
         if not use_points and mp:
-            return _fail('学校策略要求必经点位，不能跳过打卡点'
-                         '（请取消「跳过打卡点」后重试）')
+            return _fail_submit(
+                '学校策略要求必经点位，不能跳过打卡点'
+                '（请取消「跳过打卡点」后重试）')
         if not use_points and sequential:
-            return _fail('学校要求顺序经过点位，不能跳过打卡点'
-                         '（请取消「跳过打卡点」后重试）')
+            return _fail_submit(
+                '学校要求顺序经过点位，不能跳过打卡点'
+                '（请取消「跳过打卡点」后重试）')
         if mp:
             if sequential:
                 # `merge_required` prepends must-points and `rotate_to` moves
@@ -4234,8 +4257,8 @@ class ReplicaApi:
                     names = '、'.join(m['name'] or '(未命名)'
                                       for m in missed[:8])
                     more = '' if len(missed) <= 8 else (' 等 %d 个' % len(missed))
-                    return _fail('路线没有经过全部打卡点: %s%s'
-                                 % (names, more))
+                    return _fail_submit(
+                        '路线没有经过全部打卡点: %s%s' % (names, more))
 
         # ---- 2. forge ----------------------------------------------------
         # Smooth the control points so the submitted track has curves, not
@@ -4272,7 +4295,7 @@ class ReplicaApi:
                 days_ago, start_time, duration_s, date=date,
                 windows=rules.get('windows'))
         except ValueError as e:
-            return _fail(f'开始时间无效: {e}')
+            return _fail_submit(f'开始时间无效: {e}')
         day_key = S.to_beijing(start_ms).strftime('%Y-%m-%d')
         start_days_ago = (S.to_beijing(S.now_ms()).date()
                           - S.to_beijing(start_ms).date()).days
@@ -4287,7 +4310,7 @@ class ReplicaApi:
         refusal = L.check(acct.uid, start_ms, max_per_day=0,
                           block_night=not allow_night)
         if refusal:
-            return _fail(refusal, data={'start': {
+            return _fail_submit(refusal, data={'start': {
                 'ms': start_ms, 'text': S.fmt_beijing(start_ms),
                 'days_ago': start_days_ago}})
 
@@ -4321,7 +4344,7 @@ class ReplicaApi:
                                     run_uuid=new_run_uuid(
                                         getattr(acct, 'platform', None)))
         except Exception as e:  # noqa: BLE001
-            return _fail(f'路线生成失败: {e}')
+            return _fail_submit(f'路线生成失败: {e}')
         self._last_run = run
 
         # Same pre-submit gate as the CLI: geometry vs claimed distance,
@@ -4329,7 +4352,7 @@ class ReplicaApi:
         from ..domain.rundata import validate_run_data
         issues = validate_run_data(run)
         if issues:
-            return _fail('提交前自检未通过: %s' % issues)
+            return _fail_submit('提交前自检未通过: %s' % issues)
 
         # A wrong centre is the one mistake that still yields an *accepted*
         # record.  When the school has a fence, reject the track when it starts
@@ -4350,19 +4373,21 @@ class ReplicaApi:
                        for p in (raw or [])
                        if isinstance(p, dict) and 'gLat' in p and 'gLng' in p]
                 if not gcj:
-                    return _fail('提交前围栏校验失败：轨迹缺少 GCJ 坐标，已停止提交')
+                    return _fail_submit('提交前围栏校验失败：轨迹缺少 GCJ 坐标，已停止提交')
                 if not RT.point_in_fences(gcj[0][0], gcj[0][1], polygons):
-                    return _fail('生成路线起点不在任一校区围栏内（坐标未初始化？），'
-                                 '已停止提交')
+                    return _fail_submit(
+                        '生成路线起点不在任一校区围栏内（坐标未初始化？），'
+                        '已停止提交')
                 bad = RT.outside_fences(gcj, polygons)
                 if bad['count']:
                     worst = max(p['distance_m'] for p in bad['points'])
                     if bad['count'] > len(gcj) * 0.25 or worst > 150:
-                        return _fail('生成路线有 %d/%d 个点不在任何围栏内（最远 %.0fm），'
-                                     '已停止提交' % (bad['count'], bad['total'],
-                                                     worst))
+                        return _fail_submit(
+                            '生成路线有 %d/%d 个点不在任何围栏内（最远 %.0fm），'
+                            '已停止提交'
+                            % (bad['count'], bad['total'], worst))
             except Exception as e:  # noqa: BLE001
-                return _fail('提交前围栏校验失败，已停止提交: %s' % e)
+                return _fail_submit('提交前围栏校验失败，已停止提交: %s' % e)
 
         # User-entered school rules -> qualification model.  The rules were
         # already merged with the fresh runModePolicy before start resolution;
@@ -4399,9 +4424,10 @@ class ReplicaApi:
             bad = [c['label'] + ' ' + c['value'] +
                    ('（' + c.get('detail') + '）' if c.get('detail') else '')
                    for c in model['checks'] if c['status'] == 'fail']
-            return _fail('合格模型未通过: %s' % '；'.join(bad),
-                         data={'model': model,
-                               'param_warnings': plausibility_warnings(pace, cadence)})
+            return _fail_submit(
+                '合格模型未通过: %s' % '；'.join(bad),
+                data={'model': model,
+                      'param_warnings': plausibility_warnings(pace, cadence)})
 
         from ..application import policy as POL
         from ..application import riskcheck as RK
@@ -4435,9 +4461,9 @@ class ReplicaApi:
             store.reserve(acct.uid, ent['uuid'], ent['startTime'], ent['stopTime'],
                           school=str(acct.unid), distance_m=run['juli'])
         except (AlreadySubmitted, UnknownPending) as e:
-            return _fail(f'提交被回执拦下: {e}')
+            return _fail_submit(f'提交被回执拦下: {e}')
         except GuardError as e:
-            return _fail(f'回执写入失败，已停止提交: {e}')
+            return _fail_submit(f'回执写入失败，已停止提交: {e}')
 
         # ---- 4. submit ----------------------------------------------------
         try:
@@ -4445,7 +4471,9 @@ class ReplicaApi:
         except Exception as e:  # noqa: BLE001
             store.mark(acct.uid, ent['uuid'], 'unknown',
                        school=str(acct.unid), note=str(e)[:120])
-            return _fail(f'提交异常，结果未知（已锁定该时段）: {e}')
+            return _fail_submit(
+                f'提交异常，结果未知（已锁定该时段）: {e}',
+                kind='unknown')
 
         res['km'] = run['km']
         res['sportTime'] = run['sportTime']
@@ -4494,9 +4522,11 @@ class ReplicaApi:
                 head = '提交被拒'
             store.mark(acct.uid, ent['uuid'], state,
                        school=str(acct.unid), note=str(res.get('message'))[:120])
-            return _fail('%s: error=%s %s (HTTP %s)'
-                         % (head, res.get('error'), res.get('message'),
-                            res.get('status')), data=res)
+            return _fail_submit(
+                '%s: error=%s %s (HTTP %s)'
+                % (head, res.get('error'), res.get('message'), res.get('status')),
+                kind=('unknown' if state == 'unknown' else 'fail'),
+                data=res)
 
         try:
             store.mark(acct.uid, ent['uuid'], 'accepted',
