@@ -1317,10 +1317,12 @@ body.dragging-route-point #map{cursor:grabbing!important}
 /* ---------- map ---------- */
 .map-wrap{position:relative;overflow:hidden;background:#E9E3D3;min-width:0}
 #map{position:absolute;inset:0}
-/* Tiled account watermark: above the tile pane (z 200), below routes/markers
-   (z 400+), and transparent to clicks so dragging/zooming still works. */
+/* Tiled account watermark.  Leaflet's .leaflet-map-pane is its own stacking
+   context at z-index 400, so a child of .leaflet-container must sit above 400
+   to cover the tile pane at all; 401 keeps it under the map chips/controls
+   (z-index 500+/1000).  pointer-events:none leaves drag/zoom untouched. */
 .map-watermark{
-  position:absolute!important;inset:0;z-index:250;pointer-events:none;
+  position:absolute!important;inset:0;z-index:401;pointer-events:none;
   background-repeat:repeat;background-position:center center;
 }
 .leaflet-tile-pane{filter:sepia(.2) saturate(.74) brightness(1.03) contrast(.93)}

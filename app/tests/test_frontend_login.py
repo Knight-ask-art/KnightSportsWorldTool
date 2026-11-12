@@ -242,8 +242,11 @@ def test_map_watermark_uses_the_login_account():
     assert '.map-watermark' in CSS
     assert 'function updateMapWatermarks' in JS
     assert 's.username || s.phone' in JS
-    # Tiles sit at z 200; routes/markers start at 400.
-    assert 'z-index:250' in CSS
+    # Leaflet's .leaflet-map-pane is a stacking context at z 400, so a child
+    # of the container must sit above it to cover the tile pane.  The old
+    # 250 painted the watermark behind the tiles and it disappeared on the map.
+    assert 'z-index:401' in CSS
+    assert 'z-index:250' not in CSS
     assert 'pointer-events:none' in CSS
 
 

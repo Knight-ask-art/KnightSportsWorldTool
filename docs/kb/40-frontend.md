@@ -29,8 +29,11 @@ app/frontend/
   terser 压缩（见 `docs/hardening.md` Phase 4），源码树不变。
 - **运行时不联网**：字体、地图库、图片全部本地；只有 bridge 调本机 Python。
 - **地图水印**：`#map` / `#routeMap` / `#rdMap` 上叠加 `.map-watermark`，
-  文本取 `LIVE.session.username`（登录手机号），无会话时隐藏；z-index 250
-  位于瓦片之上、路线/标记之下，`pointer-events:none` 不挡拖动和缩放。
+  文本取 `LIVE.session.username`（登录手机号），无会话时隐藏。Leaflet 的
+  `.leaflet-map-pane` 是 `z-index:400` 的独立层叠上下文，所以水印用
+  `z-index:401` 才能盖住瓦片；它仍低于地图 chip（500）和 Leaflet 控件
+  （1000）。白色 30% + 黑色 22% 描边，`pointer-events:none` 不挡拖动和缩放。
+  水印会叠在路线/标记之上，但透明度低，不影响辨认。
 - 主题在首屏前由 `/theme-boot.js` 注入（服务端从 `data/ui_state.json` 生成），
   避免先闪一下纸感皮肤。
 

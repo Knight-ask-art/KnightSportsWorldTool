@@ -172,8 +172,9 @@ function mapWatermarkTile(text){
     + '<g transform="rotate(-27 130 75)">'
     + '<text x="130" y="79" text-anchor="middle" '
     + 'font-family="JetBrains Mono, Consolas, monospace" font-size="12" '
-    + 'letter-spacing="1.2" fill="#ffffff" fill-opacity="0.20" '
-    + 'stroke="#000000" stroke-opacity="0.10" stroke-width="0.7" '
+    + 'letter-spacing="1.3" fill="#ffffff" fill-opacity="0.40" '
+    + 'stroke="#000000" stroke-opacity="0.30" stroke-width="1.1" '
+    + 'stroke-linejoin="round" font-weight="500" '
     + 'paint-order="stroke">' + safe + '</text></g></svg>';
   return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
 }
