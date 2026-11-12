@@ -18,6 +18,9 @@ dev = [
     "pyinstaller>=6.0",
     "nuitka>=4.0",
 ]
+sdk = [
+    "openai>=1.40",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
