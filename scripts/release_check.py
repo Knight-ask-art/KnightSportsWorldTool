@@ -108,6 +108,27 @@ def check_signing_key(report: Report) -> None:
                  'missing; run python scripts/manifest_sign.py keygen --apply')
 
 
+def check_launcher(report: Report, version: str) -> None:
+    """The packaged install must carry the launcher and its version file."""
+    install = ROOT / 'app' / 'dist' / f'好想跑_v{version}'
+    launcher = install / 'hxp-launcher.exe'
+    info_path = install / 'build_info.json'
+    report.check(launcher.is_file(), 'launcher exists',
+                 str(launcher.relative_to(ROOT)))
+    report.check(info_path.is_file(), 'build_info.json exists',
+                 str(info_path.relative_to(ROOT)))
+    if not info_path.is_file():
+        return
+    try:
+        info = json.loads(info_path.read_text(encoding='utf-8'))
+    except ValueError as exc:
+        report.check(False, 'build_info.json parses', str(exc))
+        return
+    actual = str(info.get('version') or '')
+    report.check(actual == version, 'build_info.json version',
+                 '' if actual == version else f'{actual} != {version}')
+
+
 def deep_integrity(report: Report, version: str) -> None:
     """Verify the signature and hashes of the packaged install, not the source."""
     install = ROOT / 'app' / 'dist' / f'好想跑_v{version}'
@@ -209,6 +230,8 @@ def main(argv=None) -> int:
     nsi_text = nsi.read_text(encoding='utf-8-sig')
     report.check(f'VERSION "{version}"' in nsi_text,
                  'installer.nsi version', version)
+    report.check('!define EXENAME "hxp-launcher.exe"' in nsi_text,
+                 'installer.nsi launcher entry', 'hxp-launcher.exe')
 
     # 2b. the shipping build must be able to sign its native manifest
     check_signing_key(report)
@@ -220,6 +243,7 @@ def main(argv=None) -> int:
         dist_manifest = check_manifest(
             report, ROOT / 'app' / 'dist' / 'latest.json',
             version, 'dist/latest.json')
+        check_launcher(report, version)
         if args.deep:
             report.check(dist_manifest is not None, 'deep dist manifest',
                          'app/dist/latest.json')
