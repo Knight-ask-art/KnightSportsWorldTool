@@ -131,7 +131,8 @@ def test_agent_states_tool_cards_and_confirm_gating():
     goal_fn = _js_function('renderAgentGoalBar')
     assert '本地规则' in goal_fn
     assert 'data-goto="settings"' in goal_fn
-    assert '配置模型（可选）' in goal_fn
+    assert '配置 AI 选路（可选）' in goal_fn
+    assert 'AI 选路：' in goal_fn
     assert 'cache_hits' in goal_fn
     assert 'llm_cache_hits' in goal_fn
     assert '缓存 ' in goal_fn

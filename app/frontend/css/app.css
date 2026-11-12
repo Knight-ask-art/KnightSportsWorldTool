@@ -1565,6 +1565,19 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
   margin:0 0 7px;font:400 31px/1.16 var(--hand);letter-spacing:.01em;
 }
 .login-sub{margin:0;color:var(--faint);font-size:11.5px;line-height:1.7}
+.login-device-note{
+  margin:10px 0 0;padding:7px 9px;
+  border:1px solid rgba(36,35,31,.12);border-radius:6px;
+  background:rgba(36,35,31,.035);
+  color:var(--pencil);font-size:10.5px;line-height:1.65;
+}
+.login-help-link{
+  display:block;width:100%;margin:1px 0 0;padding:2px 0;
+  border:0;background:none;color:var(--ink-blue);
+  font:inherit;font-size:10.5px;line-height:1.6;text-align:center;
+  text-decoration:underline;text-underline-offset:2px;cursor:pointer;
+}
+.login-help-link:hover{color:var(--stamp)}
 .login-form{display:grid;gap:16px;margin-top:24px}
 .login-field{min-width:0}
 .login-field label{
@@ -1830,12 +1843,6 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 }
 .gt4-retry:hover,.gt4-close:hover{background:var(--paper-3)}
 .gt4-retry[hidden]{display:none}
-.login-help{
-  display:flex;flex-wrap:wrap;gap:5px 14px;margin-top:18px;padding-top:12px;
-  border-top:1px dotted var(--rule);color:var(--faint);font-size:9.5px;line-height:1.6;
-}
-.login-help span{position:relative;padding-left:10px}
-.login-help span::before{content:"·";position:absolute;left:0;color:var(--stamp);font-weight:700}
 .login-foot{
   margin-top:12px;text-align:center;color:var(--faint);
   font:9px/1.5 var(--mono);letter-spacing:.02em;
@@ -1854,7 +1861,6 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
   .login-card{padding:28px 30px 16px}
   .login-form{gap:13px;margin-top:18px}
   .login-submit{height:42px}
-  .login-help{margin-top:13px}
 }
 
 .empty-state{
@@ -2066,6 +2072,34 @@ body.login-locked .app{visibility:hidden;pointer-events:none}
 }
 .announcement-card .onboard-never{font-size:10.5px}
 .announcement-card .onboard-never input{accent-color:var(--stamp)}
+/* The modal's primary action stays put: the global .btn hover lifts the
+   button and enlarges its offset shadow, which reads as the button growing
+   and shrinking and can retrigger itself at the pointer edge. */
+#announcementModal .announcement-card .btn:hover,
+#announcementModal .announcement-card .btn:active{transform:none}
+#announcementModal .announcement-card .btn.primary:hover{
+  background-color:#38568C;border-color:#38568C;
+  box-shadow:inset 5px 0 0 rgba(242,210,92,.95),
+             3px 3px 0 rgba(242,210,92,.55);
+}
+#announcementModal .announcement-card .btn.primary:not(:disabled):hover::after{animation:none}
+/* Each skin keeps its own hover palette; only the motion is removed.  The
+   ID selector outranks the skin rules, so the values must match each skin's
+   resting border/shadow rather than the default blue/yellow set. */
+html[data-skin="paper"] #announcementModal .announcement-card .btn.primary:hover{
+  background:var(--ink);border-color:var(--ink);box-shadow:none;
+}
+html[data-skin="poster"] #announcementModal .announcement-card .btn.primary:hover{
+  background:#9E301B;border-color:var(--ink);
+  box-shadow:3px 3px 0 var(--ink);
+}
+html[data-skin="archive"] #announcementModal .announcement-card .btn.primary:hover{
+  background:#8E3527;border-color:var(--stamp);
+  box-shadow:2px 2px 0 var(--ink);
+}
+html[data-skin="minimal"] #announcementModal .announcement-card .btn.primary:hover{
+  background:#2A2A2E;border-color:#2A2A2E;box-shadow:none;
+}
 @media (max-width:620px){
   .announcement-card{padding:20px 20px 16px}
   .announcement-body h2{font-size:23px;margin-top:14px;line-height:1.3}

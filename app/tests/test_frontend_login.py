@@ -789,12 +789,98 @@ def test_login_errors_explain_the_guard_and_device_check():
     assert '诊断包发到 QQ 群' in pretty
     assert '/一号一设备/' in pretty
     assert '这台电脑已经绑定了另一个账号' in pretty
-    assert '帮你解绑' in pretty
+    assert '联系维护者解绑' in pretty
+    assert '找给你软件的同学' not in pretty
     # The raw server/guard sentence stays first, the readable hint is the
     # second line, which needs `white-space: pre-line` to survive.
     assert "return msg + '\\n第一次登录的本地校验没通过" in pretty
     assert "return msg + '\\n这台电脑已经绑定了另一个账号" in pretty
     assert 'white-space:pre-line' in CSS
+
+
+def test_login_page_warns_about_device_binding_and_offers_prelogin_help():
+    # The rule is only explained after a rejection today; warn before the
+    # first login so a shared computer cannot bind by accident.
+    assert '第一次登录会把账号绑定到这台电脑' in HTML
+    assert '退出登录或换号都不会解除绑定' in HTML
+    assert 'id="loginHelp"' in HTML
+    assert 'login-help-link' in HTML
+    # The old .login-help footer rule was dead but overrode the new button
+    # when both used the same class.  Keep the collision gone.
+    assert '.login-help{' not in CSS
+    # The QQ announcement must be reachable from the login gate, before any
+    # session exists; otherwise a rejected user has nowhere to ask for help.
+    assert "Announcements.openById('qq-group-2026-11')" in JS
+    assert "getElementById('loginHelp')" in JS or "$('#loginHelp')" in JS
+
+
+def test_ai_route_picker_is_named_separately_from_school_rules():
+    # "模型" is the school-rules model; the LLM feature is "AI 选路" so the
+    # two settings do not look like the same thing.
+    assert '<h2>AI 选路（可选）</h2>' in HTML
+    assert '配置 AI 选路（可选）' in HTML
+    assert '学校要求未配置' in HTML
+    assert 'data-scroll="llmSection"' in HTML
+    goto = _js_function('followDataGoto')
+    assert 'el.dataset.scroll' in goto
+    assert 'scrollIntoView' in goto
+    usage = (ROOT.parent / 'docs' / 'usage.md').read_text(encoding='utf-8')
+    assert '智能规划与 AI 选路' in usage
+    assert '不配置也能正常使用全部功能' in usage
+
+
+def test_announcement_action_does_not_resize_on_hover():
+    # The global .btn hover lifts the button and grows its offset shadow.
+    # On the modal action that read as the button growing/shrinking; keep it
+    # visually stable and only change color.  The ID selector outranks the
+    # poster/archive skin rules, which otherwise put the lift back.
+    assert '#announcementModal .announcement-card .btn:hover,' in CSS
+    assert '#announcementModal .announcement-card .btn.primary:not(:disabled):hover::after{animation:none}' in CSS
+    assert '#announcementModal .announcement-card .btn:active{transform:none}' in CSS
+    skins = (FRONTEND / 'css' / 'skins.css').read_text(encoding='utf-8')
+    assert 'html[data-skin="poster"] .btn:hover' in skins
+    # The ID selector (1,2,0) outranks the skin rule (0,3,1) without relying
+    # on source order.  Each skin keeps its own hover palette.
+    for skin in ('paper', 'poster', 'archive', 'minimal'):
+        assert f'html[data-skin="{skin}"] #announcementModal .announcement-card .btn.primary:hover' in CSS
+
+
+def test_manual_announcement_does_not_consume_the_auto_notice():
+    ann = (FRONTEND / 'js' / 'announcements.js').read_text(encoding='utf-8')
+    # The login help button opens the QQ notice manually.  It must not mark
+    # the machine-wide announcement as seen unless the user ticks the box.
+    assert 'open(item, {manual: true})' in ann
+    assert '(!state.manual || keep === true)' in ann
+    assert 'never.checked = !state.manual' in ann
+    # Two aria-modal dialogs must not be active at once.  Record the opener
+    # before inerting the gate, or focus restoration falls back to body.
+    assert 'gate.inert = true' in ann
+    assert 'state.loginGate.inert = false' in ann
+    assert ann.index('state.focus = document.activeElement;') < ann.index('gate.inert = true')
+
+
+def test_code_from_text_ignores_unrelated_five_digit_numbers():
+    fn = _js_function('codeFromText')
+    cases = [
+        ('提交被拒: error=10001 该时段已锁定 (HTTP 200)', 10001),
+        ('错误码：11016 不在有效跑步时间', 11016),
+        ('HTTP 403', 403),
+        ('sidecar/加密层启动失败: [WinError 10048] 每个套接字地址只允许使用一次', None),
+        ('目标距离 10000 米超过上限', None),
+        ('本地服务超时（后台可能仍在执行，请勿重复提交）', None),
+    ]
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node is not installed; codeFromText behaviour test skipped')
+    script = '\n'.join([
+        fn,
+        'const cases = ' + json.dumps([s for s, _ in cases], ensure_ascii=False) + ';',
+        'console.log(JSON.stringify(cases.map(s => codeFromText(s))));',
+    ])
+    proc = subprocess.run([node, '-e', script], check=False, capture_output=True,
+                          text=True, encoding='utf-8')
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == [c for _, c in cases]
 
 
 def test_submit_explain_waits_only_when_a_code_exists():
@@ -807,6 +893,10 @@ def test_submit_explain_waits_only_when_a_code_exists():
     # prefix rules below remain a fallback for older sidecars.
     assert 'const unknown = submitFailureKind(j) === \'unknown\';' in submit
     assert 'j.code === 500' not in submit
+    # A bridge failure's 500 is transport status, not a business error code.
+    # Falling back to it made local refusals look like server errors.
+    assert 'const errCode = codeFromText(msg);' in submit
+    assert 'j.code && j.code !== 200' not in submit
     kind = _js_function('submitFailureKind')
     assert "if(data.failure_kind === 'fail' || data.failure_kind === 'unknown'){" in kind
     assert "if(/^提交被拒[:：]/.test(msg)) return 'fail';" in kind

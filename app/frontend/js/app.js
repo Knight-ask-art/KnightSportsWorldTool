@@ -1888,8 +1888,24 @@ async function explainSelectedLog(){
   }
 }
 function codeFromText(text){
-  const m = /(?:^|[^\d])(1\d{4})(?!\d)/.exec(String(text || ''));
-  return m ? +m[1] : null;
+  const known = new Set([401, 403, 404, 10003, 10007, 10121, 10175,
+                         10603, 11016]);
+  const s = String(text || '');
+  // Only take a code that is explicitly labelled, or a bare code from the
+  // known business set.  A random 5-digit number (WinError 10048, "10000 米")
+  // is not a server error code and must not become one.
+  const marked = /(?:^|[^\w])(?:error|code|错误码|状态码)\s*[=:：]?\s*(\d{3,5})\b/i.exec(s);
+  if(marked){
+    const n = +marked[1];
+    if(n >= 10000 || n === 401 || n === 403 || n === 404) return n;
+  }
+  const bare = /(?:^|[^\d])(\d{3,5})(?!\d)/g;
+  let m;
+  while((m = bare.exec(s))){
+    const n = +m[1];
+    if(known.has(n)) return n;
+  }
+  return null;
 }
 function recordErrorForExplain(text, level){
   LIVE.logSel = -1;
@@ -2902,6 +2918,16 @@ function followDataGoto(el){
     switchRunTab(el.dataset.rtab);
   }
   if(page) go(page);
+  if(el.dataset.scroll){
+    const id = el.dataset.scroll;
+    setTimeout(() => {
+      const target = document.getElementById(id);
+      if(target && target.scrollIntoView){
+        try{ target.scrollIntoView({block: 'start', behavior: 'smooth'}); }
+        catch(e){ target.scrollIntoView(); }
+      }
+    }, 120);
+  }
   if(el.dataset.focus){
     const id = el.dataset.focus;
     setTimeout(() => {
@@ -3449,7 +3475,7 @@ function prettyLoginError(raw){
     return msg + '\n第一次登录的本地校验没通过，常见原因是杀毒软件扫描或电脑太忙。先再点一次「登录」；还不行就关掉软件重开；仍不行把「设置 → 关于」的诊断包发到 QQ 群。';
   }
   if(/一号一设备/.test(msg)){
-    return msg + '\n这台电脑已经绑定了另一个账号。同一台电脑只能登录那一个账号；换回原账号即可。如果这台电脑不是你的（二手机/学校机房），请找给你软件的同学帮你解绑，或在 QQ 群说明情况。';
+    return msg + '\n这台电脑已经绑定了另一个账号。同一台电脑只能登录那一个账号；换回原账号即可。如果这台电脑不是你的（二手机/学校机房），请到 QQ 群联系维护者解绑，不要在群里发账号密码。';
   }
   if(/bridge 不可用|Failed to fetch|NetworkError|ECONN|连接/i.test(msg)) return '连不上本地服务，请重启好想跑后再试。';
   return msg || '登录失败，请重试。';
@@ -5610,7 +5636,7 @@ function renderOverviewEmpty(){
   $('#ovPlan').textContent = '登录后生成计划。';
   $('#ovRhythm').textContent = '登录后显示。';
   const rulesConfigured = !!(LIVE.rules && LIVE.rules.configured);
-  $('#ovModelChip').textContent = rulesConfigured ? '模型待预览' : '模型未配置';
+  $('#ovModelChip').textContent = rulesConfigured ? '学校要求待核对' : '学校要求未配置';
   $('#ovModelChip').className = 'chip warn';
   $('#ovModelChip').innerHTML = '<i></i>' + $('#ovModelChip').textContent;
 }
@@ -6210,7 +6236,7 @@ function refreshOverviewState(){
     const modelBad = modelOk && LIVE.model.verdict === 'fail';
     $('#ovModelChip').textContent = modelOk
       ? ('模型 ' + LIVE.model.score)
-      : (rulesOk ? '模型待预览' : '模型未配置');
+      : (rulesOk ? '学校要求待核对' : '学校要求未配置');
     $('#ovModelChip').className = 'chip ' + (modelOk ? (modelBad ? 'warn' : 'ok') : 'warn');
     $('#ovModelChip').innerHTML = '<i></i>' + $('#ovModelChip').textContent;
   }
@@ -7390,14 +7416,14 @@ function renderAgentGoalBar(st){
       ? (' · 缓存 ' + cacheHits + '/' + (cacheHits + cacheMisses))
       : '';
     if(llm.used){
-      llmEl.textContent = '模型：' + (llm.model || '已启用') + cacheText;
+      llmEl.textContent = 'AI 选路：' + (llm.model || '已启用') + cacheText;
     }else if(llm.error){
-      llmEl.innerHTML = '本地规则（模型已回退）' + esc(cacheText) + ' · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+      llmEl.innerHTML = '本地规则（AI 已回退）' + esc(cacheText) + ' · <a href="#settings" class="agent-llm-link" data-goto="settings" data-scroll="llmSection">配置 AI 选路（可选）</a>';
     }else if(LIVE.llmSettings && LIVE.llmSettings.enabled &&
              (LIVE.llmSettings.has_key || LIVE.llmSettings.protocol === 'ollama' || LIVE.llmSettings.protocol === 'custom')){
-      llmEl.textContent = '本地规则 · 已配置 ' + (LIVE.llmSettings.model || '模型') + cacheText;
+      llmEl.textContent = '本地规则 · AI 选路已配置：' + (LIVE.llmSettings.model || '默认模型') + cacheText;
     }else{
-      llmEl.innerHTML = '本地规则' + esc(cacheText) + ' · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a>';
+      llmEl.innerHTML = '本地规则' + esc(cacheText) + ' · <a href="#settings" class="agent-llm-link" data-goto="settings" data-scroll="llmSection">配置 AI 选路（可选）</a>';
     }
   }
 }
@@ -8283,7 +8309,7 @@ async function loadLlmSettings(){
     if($('#llmHint')){
       if(s.has_key){
         $('#llmHint').textContent = s.enabled
-          ? 'API Key 已通过 DPAPI 封存；模型辅助已启用。'
+          ? 'API Key 已通过 DPAPI 封存；AI 选路已启用。'
           : 'API Key 已通过 DPAPI 封存；当前开关为关闭状态。';
       }else if(activePreset && activePreset.needs_key === false){
         $('#llmHint').textContent = '当前协议无需 API Key；保存后可点击「测试连接」。';
@@ -8400,7 +8426,7 @@ async function testLlmConnection(){
   }
 }
 async function clearLlmKey(){
-  if(!confirm('清除已保存的 API Key？清除后模型辅助将无法调用外部接口。')) return;
+  if(!confirm('清除已保存的 API Key？清除后AI 选路将无法调用外部接口。')) return;
   const btn = $('#llmClearKey');
   if(btn){ btn.disabled = true; btn.textContent = '清除中…'; }
   try{
@@ -9217,12 +9243,12 @@ function renderModel(){
       ? '规则已保存；预览失败时，提交仍会由后端重新检查。'
       : '先在「设置 → 学校要求」里填写并保存；模型不会用猜测的学校规则。';
     bar.style.width = '0%';
-    $('#runModelTag').textContent = rulesConfigured ? '模型待预览' : '模型待配置';
+    $('#runModelTag').textContent = rulesConfigured ? '学校要求待核对' : '学校要求待配置';
     $('#runModelTag').className = 'tag warn';
     $('#runModelLink').textContent = rulesConfigured ? '检查规则' : '填写学校要求';
     $('#genState').textContent = rulesConfigured ? '待预览' : '待配置';
     $('#genState').className = '';
-    $('#runModelChip').textContent = rulesConfigured ? '模型待预览' : '模型未配置';
+    $('#runModelChip').textContent = rulesConfigured ? '学校要求待核对' : '学校要求未配置';
     $('#runModelChip').className = 'chip warn';
     $('#runModelChip').innerHTML = '<i></i>' + $('#runModelChip').textContent;
     if($('#logModel')) $('#logModel').textContent = '—';
@@ -10078,7 +10104,7 @@ async function doSubmitRun(pending){
     // The status code is not a reliable signal here (all bridge failures use
     // 500); the message prefix distinguishes "refused" from "unknown".
     const unknown = submitFailureKind(j) === 'unknown';
-    const errCode = codeFromText(msg) || (j.code && j.code !== 200 ? j.code : null);
+    const errCode = codeFromText(msg);
     if(unknown){
       setSubmitResult('unknown', '提交结果未知',
         (msg || '没有拿到服务器结果。') +
@@ -10773,6 +10799,13 @@ function liveWire(){
   const loginForm = $('#loginForm');
   if(loginForm){
     loginForm.addEventListener('submit', ev => { ev.preventDefault(); gateLogin(); });
+  }
+  if($('#loginHelp')){
+    $('#loginHelp').addEventListener('click', () => {
+      // The QQ announcement is readable before login; it is the only help
+      // path for a user rejected by the one-device rule.
+      if(window.Announcements) Announcements.openById('qq-group-2026-11');
+    });
   }
   function setLoginCollapsed(collapsed){
     const card = document.querySelector('.login-card');

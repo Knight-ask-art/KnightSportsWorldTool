@@ -116,6 +116,7 @@
     </div>
     <h2 id="loginTitle">先登录，再开跑。</h2>
     <p class="login-sub">用你自己的账号进入工作台。</p>
+    <p class="login-device-note">第一次登录会把账号绑定到这台电脑；退出登录或换号都不会解除绑定。公用电脑请先确认。</p>
     <div class="login-loader" id="loginLoader" hidden aria-hidden="true"></div>
 
     <form class="login-form" id="loginForm" novalidate autocomplete="off">
@@ -159,6 +160,7 @@
       <button class="login-submit" id="loginBtn" type="submit" disabled>
         <span id="loginBtnText">登录</span><span class="arrow" aria-hidden="true">→</span>
       </button>
+      <button type="button" class="login-help-link" id="loginHelp">登录遇到问题？加群求助</button>
       <p class="anti-resale login">本项目完全免费开源。若您付费购买，请立即申请退款并举报商家。</p>
     </form>
 
@@ -289,7 +291,7 @@
           <div class="status-row">
             <span class="chip" id="ovLoginChip"><i></i>未登录</span>
             <span class="chip" id="ovFenceChip"><i></i>围栏未加载</span>
-            <span class="chip" id="ovModelChip"><i></i>模型未配置</span>
+            <span class="chip" id="ovModelChip"><i></i>学校要求未配置</span>
           </div>
         </header>
 
@@ -487,7 +489,7 @@
           <div class="run-crumb">工作台 <span style="color:var(--faint)">/</span> <b>跑步</b> <span style="color:var(--faint)">/</span> <span id="runCrumbDay">日期</span></div>
           <span class="chip" id="runLoginChip"><i></i>未登录</span>
           <span class="chip" id="runFenceChip"><i></i>围栏未加载</span>
-          <span class="chip" id="runModelChip"><i></i>模型未配置</span>
+          <span class="chip" id="runModelChip"><i></i>学校要求未配置</span>
         </div>
 
         <div class="map-tools run-tools">
@@ -511,7 +513,7 @@
             <h1 id="runTitle">跑步记录</h1>
             <div class="run-summary" id="runSummary">单圈 0.00 km · 等待画线</div>
             <div class="run-model-line">
-              <span class="tag warn" id="runModelTag">模型待配置</span>
+              <span class="tag warn" id="runModelTag">学校要求待配置</span>
               <a href="#" id="runModelLink" data-goto="settings">填写学校要求</a>
             </div>
           </header>
@@ -910,7 +912,7 @@
             <span class="chip" id="agentGoalKm">目标：未设定</span>
             <span class="chip" id="agentGoalPoints">点位：0 个</span>
             <span class="chip" id="agentGoalCampus">校区：未连接</span>
-            <span class="chip" id="agentLlmChip">本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings">配置模型（可选）</a></span>
+            <span class="chip" id="agentLlmChip">本地规则 · <a href="#settings" class="agent-llm-link" data-goto="settings" data-scroll="llmSection">配置 AI 选路（可选）</a></span>
           </div>
         </header>
 
@@ -1487,7 +1489,7 @@
 
         <section class="sec" id="llmSection">
           <div class="sec-head">
-            <h2>模型辅助（可选）</h2>
+            <h2>AI 选路（可选）</h2>
             <div class="sec-actions">
               <span class="chip" id="llmStatus"><i></i>未配置</span>
             </div>
@@ -1495,7 +1497,7 @@
           <p class="hint" style="margin:-4px 0 9px">仅用于在已有候选路线中择优并补充中文理由。API Key 用 Windows DPAPI 封存，只保存在本机；<b>路线坐标不会发给模型，只发候选统计</b>。默认关闭，不配置也不影响使用。</p>
           <label class="llm-switch-row" for="llmEnabled">
             <input type="checkbox" id="llmEnabled" class="llm-switch">
-            <span class="llm-switch-label">启用模型辅助选路</span>
+            <span class="llm-switch-label">启用 AI 辅助选路</span>
             <span class="field-note">关闭或未配置时，路线推荐、预览与审计均按本地规则照常运行。</span>
           </label>
           <div class="form-grid llm-grid">
