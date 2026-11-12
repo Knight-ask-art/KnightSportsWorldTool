@@ -135,6 +135,8 @@ Rust hxp-core（位运算/多项式混合，不落盘、不联网）
   `sig`，最后用编译进 `integrity.py` 的 `MANIFEST_PUBKEY` 跑一次 `verify`。
   签名或验签失败直接 `throw`——密钥配错要死在构建机上，不能死在一千个用户
   的登录页。`-Unsigned` 只用于本地冒烟，产出的包会在 frozen 下拒绝登录。
+  发布前 `release_check.py --source-only` 检查公钥已内嵌，`--deep` 再对
+  `dist/好想跑_v*/runtime/integrity.json` 验一次签名和三个哈希。
 - 私钥不进仓库：`JHP_MANIFEST_KEY`（64 hex）或
   `%USERPROFILE%\.hxp\manifest.key`。`keygen` 拒绝把私钥写进仓库目录；
   仓库里只有公钥常量。

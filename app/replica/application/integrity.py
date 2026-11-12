@@ -46,7 +46,7 @@ MANIFEST_VERSION = 2
 #: --apply`` writes this line; the matching private key stays off the repo.
 #: An empty value makes every frozen build refuse to log in, which is the
 #: correct failure mode for an unsigned release.
-MANIFEST_PUBKEY = ''
+MANIFEST_PUBKEY = '845d046f58c78dd38b3460515723905bcdfb0394d706e021111836c553df23f0'
 
 #: Shown when an install cannot be trusted.  It names neither the file nor the
 #: reason: the user cannot act on either, and a patcher should not learn which
