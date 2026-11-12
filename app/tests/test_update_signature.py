@@ -365,3 +365,22 @@ def test_cli_rejects_non_ed25519_pem_key(tmp_path, capsys):
     assert code == 2
     assert not out_path.exists()
     assert 'PRIVATE KEY' not in capsys.readouterr().err
+
+def test_verify_manifest_raw_accepts_raw_and_base64_keys():
+    key = Ed25519PrivateKey.generate()
+    raw = key.public_key().public_bytes(serialization.Encoding.Raw,
+                                        serialization.PublicFormat.Raw)
+    manifest = sig.sign_manifest(_sample_manifest(), key, 'release')
+    assert sig.verify_manifest_raw(manifest, {'release': raw}) is manifest
+    encoded = base64.b64encode(raw).decode('ascii')
+    assert sig.verify_manifest_raw(manifest, {'release': encoded}) is manifest
+
+
+def test_verify_manifest_raw_rejects_tampering():
+    key = Ed25519PrivateKey.generate()
+    raw = key.public_key().public_bytes(serialization.Encoding.Raw,
+                                        serialization.PublicFormat.Raw)
+    manifest = sig.sign_manifest(_sample_manifest(), key, 'release')
+    manifest['version'] = '9.9.9'
+    with pytest.raises(sig.ManifestSignatureError):
+        sig.verify_manifest_raw(manifest, {'release': raw})

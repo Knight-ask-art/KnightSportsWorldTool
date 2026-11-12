@@ -16,7 +16,7 @@ import sys
 from functools import lru_cache
 
 #: Single source of truth.  packaging/build.ps1 and tests read this value.
-VERSION = '0.2.2'
+VERSION = '0.2.3'
 
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

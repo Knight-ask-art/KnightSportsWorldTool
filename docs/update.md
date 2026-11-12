@@ -5,8 +5,9 @@
 
 | 当前形态 | 用哪个资产 | 更新方式 |
 |---|---|---|
-| NSIS 安装版（注册表有 `Software\好想跑`） | `windows-x64-setup` | 下载后 `/S` 静默安装 |
-| 便携版（解压即用） | `windows-x64` | 解压覆盖，保留 `data/` |
+| Go launcher（0.2.3 起的安装版和便携版） | `windows-x64` | 解压覆盖，保留 `data/` 和 `Uninstall.exe` |
+| Python 更新器：NSIS 安装版 | `windows-x64-setup` | 下载后 `/S` 静默安装 |
+| Python 更新器：便携版 | `windows-x64` | 解压覆盖，保留 `data/` |
 
 两条轨道互不干扰，谁都不用搬 `data/`。`windows-x64` **必须一直是 zip**：
 0.1.2 客户端只认这个键，也只认 zip，换成 exe 会让那一批人更新直接报错。
@@ -36,6 +37,11 @@ python packaging\make_latest.py --dist dist --sign-key path\to\release.pem --key
 `--sign-key` 读取未加密的 Ed25519 PEM 私钥在写盘前为清单签名，`--key-id` 默认
 `release`；传入 `--require-signature` 但未提供 `--sign-key` 时直接以退出码 `2`
 中止，避免误发未签名清单。私钥不入库、不打印到终端或日志。
+
+发布链路固定使用 `%USERPROFILE%\.hxp\update-signing.pem`。公钥行写在
+`app/packaging/update_pubkey.txt` 并在构建时注入两处：`hxp-launcher.exe` 的
+链接期变量和 `app/replica/_update_pubkey.py`（Python 更新器用）。三份不一致
+时 `build.ps1` 直接失败——丢钥匙或误换钥匙不会静默发出去。
 
 生成器从 `replica/build_info.py` 读版本号，从资产现算 SHA-256 和字节数，
 所以不会出现「版本号对了、哈希是旧的」。安装包不存在时只写 zip，并在 stderr
@@ -128,7 +134,7 @@ python packaging\make_latest.py --dist dist --rollback-version 0.1.4 `
 | `url` | 主下载地址，老客户端只认这一个 |
 | `urls` | 同一文件的全部渠道（官方直链在前、镜像按优先级在后）；客户端从上次成功节点开始轮换，失败依次重试。老客户端忽略该字段 |
 | `rollback` | 上一稳定版，用于手动或自动回滚 |
-| `signature` | 可选的 Ed25519 清单签名（`alg`/`key_id`/`value`）；老客户端忽略该字段。规范载荷为移除顶层 `signature` 后按 `sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False` 序列化的 UTF-8 JSON，并以 `key_id + "\0" + payload` 参与签名；源码中 `PUBLIC_KEYS` 默认为空，客户端验签接入留待后续步骤 |
+| `signature` | Ed25519 清单签名（`alg`/`key_id`/`value`）；老客户端忽略该字段。规范载荷为移除顶层 `signature` 后按 `sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False` 序列化的 UTF-8 JSON，并以 `key_id + "\0" + payload` 参与签名。Go launcher 用链接期注入的公钥验签，Python 更新器用 `_update_pubkey.py` 验签；无签名、签名错误或公钥未配置时**拒绝更新**（不会静默跳过） |
 
 ## URL 约定
 

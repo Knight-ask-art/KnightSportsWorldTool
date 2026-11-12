@@ -12,6 +12,7 @@ seconds for the 140 MB zip + setup).
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import re
@@ -20,6 +21,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+UPDATE_ANCHOR = ROOT / 'app' / 'packaging' / 'update_pubkey.txt'
 VERSION_RE = re.compile(r"^VERSION\s*=\s*'([^']+)'", re.M)
 
 
@@ -75,7 +77,10 @@ def check_manifest(report: Report, path: Path, version: str, label: str) -> dict
     report.check(actual == version, f'{label} version',
                  '' if actual == version else f'{actual} != {version}')
     rollback = (manifest.get('rollback') or {}).get('version')
-    report.check(bool(rollback), f'{label} rollback', str(rollback or 'missing'))
+    # Some releases intentionally ship no rollback asset; that is a warning,
+    # not a release blocker.  When it is present its URLs are still checked.
+    report.warn(bool(rollback), f'{label} rollback',
+                str(rollback or 'none for this release'))
     assets = manifest.get('assets') or {}
     for key, expected in (('windows-x64', 4), ('windows-x64-setup', 4)):
         asset = assets.get(key) or {}
@@ -129,15 +134,29 @@ def check_launcher(report: Report, version: str) -> None:
                  '' if actual == version else f'{actual} != {version}')
 
 
+def _derived_pubkey_line(key, key_id: str) -> str:
+    from cryptography.hazmat.primitives import serialization
+
+    raw = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return f'{key_id}:{base64.b64encode(raw).decode("ascii")}'
+
+
 def check_update_signature(report: Report, manifest: dict | None,
-                           key_path: Path) -> None:
-    """Verify latest.json against the key that was linked into the launcher."""
+                           key_path: Path, *, label: str = 'update',
+                           anchor: bool = True) -> None:
+    """Verify latest.json against the key that was linked into the launcher.
+
+    Also compares the key to ``app/packaging/update_pubkey.txt``: a lost or
+    rotated key produces a self-consistent release that every installed
+    launcher silently refuses, so the anchor must match.
+    """
     if not manifest:
         return
     sig = manifest.get('signature')
     ok = (isinstance(sig, dict) and sig.get('alg') == 'ed25519'
           and isinstance(sig.get('value'), str) and bool(sig.get('value')))
-    report.check(ok, 'update manifest signature',
+    report.check(ok, f'{label} manifest signature',
                  'ed25519' if ok else 'missing or malformed')
     if not ok:
         return
@@ -159,6 +178,19 @@ def check_update_signature(report: Report, manifest: dict | None,
         report.check(False, 'update signing key parses', str(exc))
         return
 
+    if anchor:
+        anchor_path = UPDATE_ANCHOR
+        anchor_line = ''
+        if anchor_path.is_file():
+            anchor_line = anchor_path.read_text(encoding='utf-8').strip()
+        derived = _derived_pubkey_line(key, str(sig.get('key_id')))
+        report.check(bool(anchor_line), 'update pubkey anchor', str(anchor_path))
+        if anchor_line:
+            report.check(anchor_line == derived, 'update pubkey matches anchor',
+                         '' if anchor_line == derived else
+                         'anchor and key disagree; restore the key or rotate '
+                         'update_pubkey.txt deliberately')
+
     sys.path.insert(0, str(ROOT / 'app'))
     from replica.application.update_signature import (
         ManifestSignatureError,
@@ -167,9 +199,9 @@ def check_update_signature(report: Report, manifest: dict | None,
     try:
         verify_manifest(manifest, {sig.get('key_id'): key.public_key()})
     except (ManifestSignatureError, ValueError, TypeError) as exc:
-        report.check(False, 'update manifest verifies', str(exc))
+        report.check(False, f'{label} manifest verifies', str(exc))
         return
-    report.check(True, 'update manifest verifies', str(sig.get('key_id')))
+    report.check(True, f'{label} manifest verifies', str(sig.get('key_id')))
 
 
 def deep_integrity(report: Report, version: str) -> None:
@@ -287,17 +319,21 @@ def main(argv=None) -> int:
 
     # 3. manifests that drive the updater (post-build only)
     if not args.source_only:
-        check_manifest(report, ROOT / 'github-release' / 'latest.json',
-                       version, 'github-release/latest.json')
+        gh_manifest = check_manifest(report, ROOT / 'github-release' / 'latest.json',
+                                     version, 'github-release/latest.json')
         dist_manifest = check_manifest(
             report, ROOT / 'app' / 'dist' / 'latest.json',
             version, 'dist/latest.json')
         check_launcher(report, version)
-        check_update_signature(
-            report, dist_manifest, Path(args.update_key).expanduser())
+        key_path = Path(args.update_key).expanduser()
+        check_update_signature(report, dist_manifest, key_path)
+        check_update_signature(report, gh_manifest, key_path,
+                               label='release copy', anchor=False)
         if args.deep:
             report.check(dist_manifest is not None, 'deep dist manifest',
                          'app/dist/latest.json')
+            report.check(gh_manifest is not None, 'deep release manifest',
+                         'github-release/latest.json')
             deep_assets(report, dist_manifest)
             deep_integrity(report, version)
 

@@ -47,7 +47,7 @@ def _manifest() -> dict:
     }
 
 
-def test_signed_manifest_passes_and_tamper_fails(tmp_path):
+def test_signed_manifest_passes_and_tamper_fails(tmp_path, monkeypatch):
     module = _load_module()
     key = Ed25519PrivateKey.generate()
     key_path = tmp_path / 'update.pem'
@@ -56,11 +56,24 @@ def test_signed_manifest_passes_and_tamper_fails(tmp_path):
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ))
+    anchor = tmp_path / 'update_pubkey.txt'
+    anchor.write_text(module._derived_pubkey_line(key, 'release') + '\n',
+                      encoding='utf-8')
+    monkeypatch.setattr(module, 'UPDATE_ANCHOR', anchor)
     signed = sig.sign_manifest(_manifest(), key, 'release')
 
     report = module.Report()
     module.check_update_signature(report, signed, key_path)
     assert report.errors == []
+
+    # A lost or rotated key must not pass just because the manifest is
+    # self-consistent.
+    anchor.write_text('release:AAAA\n', encoding='utf-8')
+    report = module.Report()
+    module.check_update_signature(report, signed, key_path)
+    assert 'update pubkey matches anchor' in report.errors
+    anchor.write_text(module._derived_pubkey_line(key, 'release') + '\n',
+                      encoding='utf-8')
 
     tampered = dict(signed)
     tampered['version'] = '9.9.9'

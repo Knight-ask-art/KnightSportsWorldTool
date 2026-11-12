@@ -57,32 +57,39 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'release_check.py --source-only failed' }
 
     $base = "https://github.com/$Repo/releases/download/v$Version"
-    $rollbackBase = "https://github.com/$Repo/releases/download/v$RollbackVersion"
     $mirrors = @(
         "https://gh-proxy.com/$base",
         "https://ghfast.top/$base",
         "https://gh.llkk.cc/$base",
         $base
     )
-    $rollbackMirrors = @(
-        "https://gh-proxy.com/$rollbackBase",
-        "https://ghfast.top/$rollbackBase",
-        "https://gh.llkk.cc/$rollbackBase",
-        $rollbackBase
-    )
 
     $buildArgs = @{
         Version                    = $Version
-        RollbackVersion            = $RollbackVersion
         DownloadBaseUrl            = $mirrors[0]
         RegistryBaseUrl            = $base
         MirrorBaseUrl              = $mirrors[1..($mirrors.Count - 1)]
-        RollbackBaseUrl            = $rollbackMirrors[0]
-        RollbackRegistryBaseUrl    = $rollbackBase
-        RollbackMirrorBaseUrl      = $rollbackMirrors[1..($rollbackMirrors.Count - 1)]
         SignKey                    = $UpdateSignKey
         RequireSignature           = $true
         MinHealthyMirrors          = $MinHealthyMirrors
+    }
+    if ($RollbackVersion) {
+        $rollbackBase = "https://github.com/$Repo/releases/download/v$RollbackVersion"
+        $rollbackMirrors = @(
+            "https://gh-proxy.com/$rollbackBase",
+            "https://ghfast.top/$rollbackBase",
+            "https://gh.llkk.cc/$rollbackBase",
+            $rollbackBase
+        )
+        $buildArgs['RollbackVersion'] = $RollbackVersion
+        $buildArgs['RollbackBaseUrl'] = $rollbackMirrors[0]
+        $buildArgs['RollbackRegistryBaseUrl'] = $rollbackBase
+        $buildArgs['RollbackMirrorBaseUrl'] = $rollbackMirrors[1..($rollbackMirrors.Count - 1)]
+    } else {
+        # An empty rollback version is supported by build.ps1/make_latest.py
+        # and omits the rollback asset from latest.json entirely.
+        $buildArgs['RollbackVersion'] = ''
+        Write-Host '   rollback: none for this release'
     }
     if ($NoDataMigration) { $buildArgs['NoDataMigration'] = $true }
     if ($SkipMirrorCheck) { $buildArgs['SkipMirrorCheck'] = $true }

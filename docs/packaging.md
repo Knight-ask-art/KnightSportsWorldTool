@@ -130,7 +130,10 @@ dist/latest.json
 
 `hxp-launcher.exe` 由 `go/hxp-launcher` 编译（`CGO_ENABLED=0`），构建时用
 `-ldflags -X ...injectedPublicKeys=<key_id>:<base64>` 注入更新清单公钥；
-不传 `-SignKey` 的构建不注入，launcher 会 fail-open 跳过更新。NSIS 快捷方式
+同一个公钥还会写进 `replica/_update_pubkey.py` 给 Python 更新器用。正式发布
+经 `release.ps1` 强制要求 `-SignKey`，构建末尾会用打出来的 launcher 对签好的
+`latest.json` 跑一次 `--check`，验不过直接失败。只有手工 `-Unsigned` 的本地
+冒烟包才没有公钥，那种包会拒绝更新（不会安装未验签的清单）。NSIS 快捷方式
 指向 launcher；`好想跑.exe` 仍可手动直接运行。zip 更新会保留 `data/` 和
 `Uninstall.exe`，安装版的卸载项不会因为一次静默更新而失效。
 

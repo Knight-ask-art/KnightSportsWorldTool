@@ -129,14 +129,14 @@ claude mcp list | Select-String instabox
 ```powershell
 # 0) 新构建机：把旧机器的 %USERPROFILE%\.hxp\manifest.key（native 完整性）
 #    和 %USERPROFILE%\.hxp\update-signing.pem（latest.json）拷过来。
-#    update 密钥首次生成：python scripts\update_keygen.py
-#    只有轮换时才加 --force；旧 launcher 会因公钥不匹配而拒绝新清单
+#    update 公钥锚点：app/packaging/update_pubkey.txt
+#    只有轮换时才 update_keygen.py --force，并同步锚点；旧 launcher 会拒绝新清单
 
-# 先看参数，不编译
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2 -Plan
+# 先看参数，不编译（0.2.3 不设回滚版本）
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.3 -RollbackVersion '' -Plan
 
 # 预检 + 本地测试 + 编译 + 深度校验
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.3 -RollbackVersion ''
 ```
 
 `release.ps1` 默认要求 `%USERPROFILE%\.hxp\update-signing.pem`，并把
@@ -146,25 +146,21 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2
 
 打包时 `build.ps1` 会计算三层 native 的 SHA-256、写 `version=2` 的
 `runtime/integrity.json`、用构建机私钥签名，再用编译进程序的公钥验一遍；
-同时把 update 公钥注入 `hxp-launcher.exe`、写 `build_info.json`。任一步失败
-直接终止。两把私钥都要备份；丢了只能换新公钥重新发版。
+同时把 update 公钥注入 `hxp-launcher.exe` 和 `replica/_update_pubkey.py`、
+写 `build_info.json`，最后用打出来的 launcher 对签好的 `latest.json` 做一次
+`--check`。任一步失败直接终止。两把私钥都要备份；丢了只能换新公钥重新发版。
 
 等价的手工命令：
 
 ```powershell
 cd app
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
-  -RollbackVersion 0.1.9 -NoDataMigration `
-  -DownloadBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
-  -RegistryBaseUrl "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2" `
-  -MirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2",
-                   "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2",
-                   "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2") `
-  -RollbackBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
-  -RollbackRegistryBaseUrl "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9" `
-  -RollbackMirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
-                           "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9",
-                           "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.1.9") `
+  -RollbackVersion '' -NoDataMigration `
+  -DownloadBaseUrl "https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.3" `
+  -RegistryBaseUrl "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.3" `
+  -MirrorBaseUrl @("https://ghfast.top/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.3",
+                   "https://gh.llkk.cc/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.3",
+                   "https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.3") `
   -SignKey "$env:USERPROFILE\.hxp\update-signing.pem" `
   -RequireSignature -MinHealthyMirrors 5
 ```
@@ -176,9 +172,10 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 `
 3. zip 221 项左右，不含 `data/`、`*.py`、`*.pyc`；必须含
    `hxp-launcher.exe` 和 `build_info.json`；
 4. `installer.nsi` 前三字节是 `EF BB BF`，快捷方式指向 `hxp-launcher.exe`；
-5. `latest.json` 的 zip / setup / rollback 至少 4 个 URL；主 `url` 是代理时，
-   `urls[]` 里不能出现把代理再套一层的地址；
-6. `dist/好想跑_v<version>/runtime/integrity.json` 有 `sig` 且能被
+5. `latest.json` 的 zip / setup 各至少 4 个 URL；rollback 可选（0.2.3 不设），
+   主 `url` 是代理时，`urls[]` 里不能出现把代理再套一层的地址；
+6. 构建日志出现 `launcher manifest check: verified`；
+7. `dist/好想跑_v<version>/runtime/integrity.json` 有 `sig` 且能被
    `MANIFEST_PUBKEY` 验过（`release_check --deep` 已包含这一项）；
    对不上就说明用错了密钥或包是 `-Unsigned` 打的；
 7. `dist/latest.json` 有 `signature`，`key_id` 与 launcher 注入的公钥一致。

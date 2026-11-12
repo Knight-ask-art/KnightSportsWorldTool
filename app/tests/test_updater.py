@@ -387,3 +387,45 @@ class ApplyTest(unittest.TestCase):
                     updater.apply(package, tmp,
                                   install_dir=os.path.join(tmp, 'install'))
 
+
+class UpdateSignatureTest(unittest.TestCase):
+    """A release build must refuse an unsigned or tampered latest.json."""
+
+    def setUp(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        from replica.application import update_signature
+
+        self.sig = update_signature
+        self.key = Ed25519PrivateKey.generate()
+        raw = self.key.public_key().public_bytes_raw()
+        self._compiled = mock.patch.object(updater, 'is_compiled', return_value=True)
+        self._keys = mock.patch.object(
+            updater, '_update_public_keys', return_value={'release': raw})
+        self._compiled.start()
+        self._keys.start()
+
+    def tearDown(self):
+        self._keys.stop()
+        self._compiled.stop()
+
+    def test_signed_manifest_is_accepted(self):
+        manifest = self.sig.sign_manifest(_manifest(), self.key, 'release')
+        out = updater.normalize(manifest, 'https://example.com/latest.json')
+        self.assertEqual(out['latest'], '9.9.9')
+
+    def test_unsigned_manifest_is_refused(self):
+        with self.assertRaises(ValueError):
+            updater.normalize(_manifest(), 'https://example.com/latest.json')
+
+    def test_tampered_manifest_is_refused(self):
+        manifest = self.sig.sign_manifest(_manifest(), self.key, 'release')
+        manifest['version'] = '9.9.8'
+        with self.assertRaises(ValueError):
+            updater.normalize(manifest, 'https://example.com/latest.json')
+
+    def test_compiled_without_keys_refuses_updates(self):
+        with mock.patch.object(updater, '_update_public_keys', return_value={}):
+            with self.assertRaises(ValueError):
+                updater.normalize(_manifest(), 'https://example.com/latest.json')

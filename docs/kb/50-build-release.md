@@ -1,7 +1,7 @@
 # 50 · 打包与发布
 
 > 证据等级：**A**（脚本 / 实际发布记录）+ **B**（Nuitka 官方文档）
-> 最后更新：2026-11-11 · 对应版本 **0.2.2**
+> 最后更新：2026-11-11 · 对应版本 **0.2.3**
 
 ## 1. 版本号落点
 
@@ -22,20 +22,21 @@
 ## 2. 构建
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2
+# 0.2.3 不设回滚版本；以后要带回滚就去掉 -RollbackVersion '' 并传上一稳定版
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.3 -RollbackVersion ''
 # 只预检、不构建：
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.2 -Plan
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.2.3 -RollbackVersion '' -Plan
 ```
 
 产物在 `app/dist/`：
 
 ```text
-haoxiangpao_v0.2.2_win64.zip
-haoxiangpao_v0.2.2_win64.sha256
-haoxiangpao_v0.2.2_win64_setup.exe
-haoxiangpao_v0.2.2_win64_setup.sha256
+haoxiangpao_v0.2.3_win64.zip
+haoxiangpao_v0.2.3_win64.sha256
+haoxiangpao_v0.2.3_win64_setup.exe
+haoxiangpao_v0.2.3_win64_setup.sha256
 latest.json
-好想跑_v0.2.2/           （onedir 目录，调试用）
+好想跑_v0.2.3/           （onedir 目录，调试用）
 ```
 
 `app/dist/latest.json` 会自动同步到 `github-release/latest.json`。
@@ -73,7 +74,7 @@ latest.json
 | `size` / `sha256` | 下载后必须校验；缺一不可 |
 | `url` | 主地址，老客户端只认它 |
 | `urls` | 镜像在前、官方直链最后；客户端测速后重试 |
-| `rollback` | 上一稳定版，手动回滚用 |
+| `rollback` | 上一稳定版，手动回滚用；可选，0.2.3 不设 |
 
 - 只接受 HTTPS（`localhost` 除外）。
 - 同版本重建会改 `sha256` / `size`，必须重新上传 `latest.json`。
@@ -81,12 +82,19 @@ latest.json
 
 ## 4. 发布 SOP（v0.2.2 实际流程）
 
+> v0.2.3 用同样的步骤，只把版本号换成 `0.2.3`，并给 `release.ps1` 加
+> `-RollbackVersion ''`（本版不设回滚）。
+
 ```powershell
 # 0. 参考项目（协议改动时）
 python scripts\check_references.py
 
-# 0b. manifest 签名密钥：把旧机器的 %USERPROFILE%\.hxp\manifest.key 拷过来
+# 0b. 原生 manifest 签名：把旧机器的 %USERPROFILE%\.hxp\manifest.key 拷过来
 #     只有轮换密钥时才 keygen --force --apply（旧包会验签失败）
+
+# 0c. 更新清单签名：%USERPROFILE%\.hxp\update-signing.pem
+#     新机器同样拷贝；公钥锚点是 app/packaging/update_pubkey.txt
+#     只有轮换时才 python scripts\update_keygen.py --force，并同步改锚点
 
 # 1. 源码预检
 python scripts\release_check.py --source-only
@@ -141,8 +149,9 @@ https://purge.jsdelivr.net/gh/Knight-ask-art/KnightSportsWorldTool@main/latest.j
 
 ## 5. 回滚
 
-- `latest.json.rollback` 指向 `0.1.9`。
-- 客户端**不会自动降级**；手动下载 rollback 资产覆盖。
+- 0.2.3 的 `latest.json` **不设** `rollback`（`-RollbackVersion ''`）。旧版资产
+  仍在 GitHub Release 上，需要时手动下载覆盖。
+- 客户端**不会自动降级**；手动下载旧资产覆盖。
 - 回滚不动 `data/`；若指纹也换了，用 `device_profile.backup-*.json` 恢复。
 
 ## 6. 失败清单
@@ -151,6 +160,9 @@ https://purge.jsdelivr.net/gh/Knight-ask-art/KnightSportsWorldTool@main/latest.j
 |---|---|---|
 | `release_check` 报版本不一致 | 6 个落点漏改 | 按 §1 全改 |
 | 构建报 `manifest signing failed` | 构建机没有私钥 | 拷贝 `%USERPROFILE%\.hxp\manifest.key`，或设 `JHP_MANIFEST_KEY`；不要用 `keygen` 覆盖已发布公钥 |
+| 构建报 `update signing key not found` | 没有更新清单私钥 | 拷贝 `%USERPROFILE%\.hxp\update-signing.pem`；只有轮换才 `update_keygen.py --force` |
+| 构建报 `update_pubkey.txt does not match` | 私钥换了或锚点没同步 | 换回原私钥；确实要轮换就把新公钥写进 `update_pubkey.txt` 并接受旧 launcher 不再更新 |
+| 构建报 `launcher cannot verify the signed manifest` | 公钥没注入进 launcher，或清单没签 | 检查 `-X ...injectedPublicKeys`；不要用 `-Unsigned` 搭配签名参数 |
 | 构建报 `does not verify against MANIFEST_PUBKEY` | 用了另一把私钥，或公钥常量没同步 | 换回原私钥；确实要轮换才 `keygen --force --apply` |
 | 登录、恢复会话或提交报“安装文件校验未通过” | 包是 `-Unsigned`、manifest/sig 被改过，或打包后替换过 sidecar | 用正式签名流程重打；不要发布 `-Unsigned` 包 |
 | NSIS 中文乱码/编译失败 | 文件不是 UTF-8 BOM | 重新保存为 BOM |

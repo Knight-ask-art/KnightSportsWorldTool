@@ -35,6 +35,7 @@ from urllib.parse import unquote, urljoin, urlparse
 import requests
 
 from ..build_info import VERSION, is_compiled
+from . import update_signature
 
 #: Override with a comma-separated list (local tests / a mirror).
 MANIFEST_ENV = 'JHP_UPDATE_MANIFEST'
@@ -206,6 +207,34 @@ def _int_or_zero(value) -> int:
         return 0
 
 
+def _update_public_keys() -> dict:
+    """Signing keys injected by ``packaging/build.ps1``.
+
+    The generated module only exists in a release build; a source checkout
+    never carries it, and the updater only runs in an installed app.
+    """
+    if not is_compiled():
+        return {}
+    try:
+        from .._update_pubkey import PUBLIC_KEYS
+    except Exception:  # noqa: BLE001 - missing injected file is not a crash
+        return {}
+    return dict(PUBLIC_KEYS) if isinstance(PUBLIC_KEYS, dict) else {}
+
+
+def _verify_manifest(manifest: dict) -> None:
+    """Refuse an unsigned or tampered ``latest.json`` in a release build."""
+    keys = _update_public_keys()
+    if not keys:
+        if is_compiled():
+            raise ValueError('更新清单未配置验签公钥，已拒绝自动更新')
+        return
+    try:
+        update_signature.verify_manifest_raw(manifest, keys)
+    except update_signature.ManifestSignatureError as exc:
+        raise ValueError('更新清单签名校验失败: %s' % exc) from exc
+
+
 def normalize(manifest, source: str, current: str = VERSION,
               checked_at: int | None = None, prefer: str = 'zip') -> dict:
     """Validate one manifest.  Raises ``ValueError`` when it is unusable.
@@ -221,6 +250,8 @@ def normalize(manifest, source: str, current: str = VERSION,
     app = manifest.get('app')
     if app not in (None, '', 'haoxiangpao'):
         raise ValueError('清单不属于这个应用')
+
+    _verify_manifest(manifest)
 
     latest = str(manifest.get('version') or '').strip()
     if parse_version(latest) is None:

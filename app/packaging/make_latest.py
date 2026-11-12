@@ -31,7 +31,7 @@ _UNSET = object()
 DEFAULT_CHANNEL = 'stable'
 #: Fallback when ``replica/build_info.py`` cannot be read; the file stays the
 #: single source of truth, this only keeps standalone runs usable.
-DEFAULT_VERSION = '0.2.2'
+DEFAULT_VERSION = '0.2.3'
 DEFAULT_MIN_VERSION = '0.1.4'
 DEFAULT_ROLLBACK_VERSION = '0.1.9'
 DEFAULT_ENTRY = '好想跑.exe'
@@ -39,6 +39,9 @@ DEFAULT_ENTRY = '好想跑.exe'
 #: Release notes are kept with the manifest generator so a rebuild cannot
 #: publish a version with the previous version's notes.
 RELEASE_NOTES = {
+    '0.2.3': [
+        '修复了部分错误和优化了一些内容',
+    ],
     '0.2.2': [
         '修复记录详情把规则集 policy=1 误显示为风险标记（issue #14）',
         '风险标记只保留 isCheat / stepFreqStatus 等服务端异常字段',

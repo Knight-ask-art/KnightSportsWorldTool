@@ -11,6 +11,7 @@ app/build_nuitka*/
 app/build_target_backup_*/
 app/.cache/
 app/replica/_build_info.py
+app/replica/_update_pubkey.py
 private/data/
 private/**/*.jsonl
 *.pem
