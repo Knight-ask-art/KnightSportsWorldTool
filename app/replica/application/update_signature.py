@@ -62,7 +62,13 @@ def _validate_key_id(key_id: object) -> str:
 
 def _signing_bytes(manifest: dict, key_id: str) -> bytes:
     validated_id = _validate_key_id(key_id)
-    return validated_id.encode('utf-8') + b'\x00' + canonical_payload(manifest)
+    try:
+        encoded_id = validated_id.encode('utf-8')
+    except UnicodeEncodeError as exc:
+        raise ManifestSignatureError(
+            f'key_id cannot be encoded as UTF-8: {exc}'
+        ) from exc
+    return encoded_id + b'\x00' + canonical_payload(manifest)
 
 
 def _coerce_private_key(private_key: object) -> Ed25519PrivateKey:
