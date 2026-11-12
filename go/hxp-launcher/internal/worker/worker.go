@@ -208,8 +208,16 @@ func recordFailure(cfg Config, statePath string, state State, err error) (time.T
 		retryAt = now.Add(time.Second)
 	}
 
-	state.Phase = PhaseDownloading
-	state.Package = ""
+	// A transient manifest/network failure must not erase a completed apply or
+	// a quarantine decision.  Only an artifact that is still being downloaded
+	// goes back to "downloading"; reconcileState handles real version changes.
+	switch state.Phase {
+	case PhaseApplying, PhaseApplied, PhaseRolledBack:
+		// keep phase/package; the next successful manifest check decides
+	default:
+		state.Phase = PhaseDownloading
+		state.Package = ""
+	}
 	state.NextRetryAt = retryAt.Unix()
 	state.LastError = SanitizeErrorString(err.Error())
 	state.UpdatedAt = now.Unix()

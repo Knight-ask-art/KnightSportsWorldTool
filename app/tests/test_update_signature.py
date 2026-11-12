@@ -324,6 +324,22 @@ def test_cli_dump_pubkey_requires_key(tmp_path, capsys):
     assert '--sign-key' in capsys.readouterr().err
 
 
+def test_cli_dump_pubkey_rejects_ambiguous_key_id(tmp_path, capsys):
+    priv, _ = _gen_keypair()
+    key_path = tmp_path / 'ed25519.pem'
+    key_path.write_bytes(_pem_priv(priv))
+    out_path = tmp_path / 'launcher-pubkey.txt'
+
+    code = make_latest.main([
+        '--dump-pubkey', str(out_path),
+        '--sign-key', str(key_path),
+        '--key-id', 'release:backup',
+    ])
+    assert code == 2
+    assert not out_path.exists()
+    assert 'key-id' in capsys.readouterr().err
+
+
 def test_cli_rejects_non_ed25519_pem_key(tmp_path, capsys):
     zip_path = tmp_path / 'haoxiangpao_v0.2.3_win64.zip'
     zip_path.write_bytes(b'PK\x03\x04test')

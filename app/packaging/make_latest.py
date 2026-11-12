@@ -568,9 +568,11 @@ def main(argv=None) -> int:
             print('error: --dump-pubkey requires --sign-key', file=sys.stderr)
             return 2
         key_id = (args.key_id or '').strip()
-        if not key_id or any(ord(ch) < 32 for ch in key_id):
+        if (not key_id or any(ord(ch) < 32 for ch in key_id)
+                or any(ch in key_id for ch in ':;, \t\r\n')):
             print('error: --key-id is required and must not contain '
-                  'control characters', file=sys.stderr)
+                  'control characters, whitespace, ":", ",", or ";"',
+                  file=sys.stderr)
             return 2
         from cryptography.hazmat.primitives import serialization
 

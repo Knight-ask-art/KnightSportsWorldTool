@@ -743,6 +743,45 @@ func TestParentDisappearsStopsWorkerAndKeepsStateAndPart(t *testing.T) {
 	}
 }
 
+func TestManifestFailureKeepsRolledBackState(t *testing.T) {
+	keyID, pub, _ := testKeyPair(t)
+	dataDir := t.TempDir()
+	pkgPath := filepath.Join(UpdatesDir(dataDir), "haoxiangpao_v0.3.0_win64.zip")
+	if err := os.MkdirAll(UpdatesDir(dataDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := DefaultState()
+	state.Version = "0.3.0"
+	state.File = filepath.Base(pkgPath)
+	state.Size = 123
+	state.SHA256 = strings.Repeat("a", 64)
+	state.Phase = PhaseRolledBack
+	state.Package = pkgPath
+	if err := SaveState(StatePath(dataDir), state); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Run(context.Background(), Config{
+		DataDir:      dataDir,
+		ManifestURLs: []string{"http://127.0.0.1:1/latest.json"},
+		Keys:         map[string]ed25519.PublicKey{keyID: pub},
+		AllowLocal:   true,
+		Timeout:      300 * time.Millisecond,
+		Once:         true,
+		Logger:       logx.NewWriter(nil),
+	})
+	if err == nil {
+		t.Fatal("expected manifest failure")
+	}
+	st, ok, loadErr := LoadState(StatePath(dataDir))
+	if loadErr != nil || !ok {
+		t.Fatalf("LoadState: ok=%v err=%v", ok, loadErr)
+	}
+	if st.Phase != PhaseRolledBack || st.Package != pkgPath {
+		t.Fatalf("transient failure erased the quarantine: %+v", st)
+	}
+}
+
 func TestRolledBackArtifactIsNotRePromotedToReady(t *testing.T) {
 	keyID, pub, priv := testKeyPair(t)
 	zipData := makeTestZipBytes(512)
