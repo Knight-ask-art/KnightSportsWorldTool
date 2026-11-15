@@ -1,11 +1,9 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-light.png">
-    <img src="assets/logo.png" width="88" alt="好想跑 logo">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.webp">
+    <img src="assets/banner-light.webp" alt="好想跑 · 本地跑步数据工作台" width="100%">
   </picture>
 </p>
-
-<h1 align="center">好想跑</h1>
 
 <p align="center">
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Knight-ask-art/KnightSportsWorldTool?style=flat-square&label=release&color=2E4A7D"></a>
@@ -16,21 +14,31 @@
 </p>
 
 <p align="center">
-  <b>帮助自己分析跑步数据的平台</b><br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-light.png">
+    <img src="assets/logo.png" width="88" alt="好想跑 logo">
+  </picture>
+</p>
+
+<h1 align="center">好想跑</h1>
+
+<p align="center">
+  <b>本地跑步数据工作台</b><br>
+  登录自己的账号 → 拉取校区围栏与打卡点 → 画路线 / 造数 → 本地自检 → 提交 → 只读回查
 </p>
 
 <p align="center">
-  <sub>本地分析 · 本地校验 · 数据留在本机</sub>
+  <sub>本地生成 · 本地校验 · 数据留在本机 · 只登自己的账号</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.3/haoxiangpao_v0.2.3_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.3/haoxiangpao_v0.2.3_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.4/haoxiangpao_v0.2.4_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.4/haoxiangpao_v0.2.4_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases"><img alt="All Releases" src="https://img.shields.io/badge/All-Releases-6F695C?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
 <p align="center">
-  <sub>安装版约 74 MB · 便携版约 106 MB · 只支持 Windows 10 / 11 64 位</sub>
+  <sub>安装版约 34 MB · 便携版约 45 MB · 只支持 Windows 10 / 11 64 位</sub>
 </p>
 
 > [!IMPORTANT]
@@ -42,19 +50,57 @@
 
 ## 这是什么
 
-一个给自己用的跑步数据分析工作台。
+一个给自己用的跑步数据工作台。
 
-它在本地分析跑步轨迹，不经过第三方服务器。
+它在本地生成跑步轨迹，提交前先自检，提交后只读核对回执。账号状态、提交回执、点位缓存和设备信息都留在本机 `data/`，不经过第三方服务器。
 
 | 项目 | 当前状态 |
 |---|---|
-| 版本 | **v0.2.3** · stable · 2026-11-12 |
+| 版本 | **v0.2.4** · stable · 2026-11-15 |
 | 回滚版本 | 本版不设自动回滚（旧版资产仍在 Releases） |
 | 系统 | Windows 10 / 11 · 64 位 |
-| 网络 | 本机 `127.0.0.1` 工作台 |
+| 兼容 | 运动世界校园（各校规则不同） |
+| 网络 | 本机 `127.0.0.1` 工作台；提交直连官方服务 |
 | 价格 | 完全免费 · 禁止倒卖 |
 
+---
 
+## 能做什么
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<h3>🧭 校区与跑区</h3>
+<p>按账号的校区信息自动匹配跑区，多账号各回各的校区。多跑区可以手动切换，下拉第一项「自动（按账号校区）」随时切回自动。选择按账号保存，下次登录还在。</p>
+</td>
+<td width="50%" valign="top">
+<h3>🗺️ 路线工作台</h3>
+<p>手绘加点、右键删点、拖动控制点；支持 GPX / GeoJSON / JSON / CSV 导入和高德道路吸附。0.2.4 起路线一律按开放折线生成，不再提供闭合绕圈和圈数。撤销 / 重做是完整快照，<kbd>Ctrl</kbd> + <kbd>Z</kbd> 不会只撤回最后一个点。</p>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>🧪 提交前自检</h3>
+<p>生成轨迹后先在本地检查距离、配速、时间窗、点位覆盖、围栏和校规；检查不过就不提交。把问题留在本地，而不是等服务器返回错误。</p>
+</td>
+<td width="50%" valign="top">
+<h3>🛡️ 提交与只读核验</h3>
+<p>提交结果卡会常驻在「提交」页。结果未知时按钮锁定，先去「记录」页只读核对回执。核对只读详情；<b>绝不重复提交</b>。OBS 上传失败时可以在记录详情点「补传轨迹」，只重传原始轨迹，不新增记录。</p>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>📈 记录、学期与计划</h3>
+<p>本周 / 近 4 周、本学期进度、未来 14 天计划、最近记录和详情轨迹。支持回放、FIT / GPX / CSV 导出、提交回执、违规只读自查，以及最近 12 周跑量统计。</p>
+</td>
+<td width="50%" valign="top">
+<h3>🔐 本地优先</h3>
+<p>只监听 <code>127.0.0.1</code>；登录状态用 Windows 系统加密保存，密码默认不落盘，勾选「记住密码」才加密保存。服务端要求人脸时，程序会调用本机摄像头拍一张并上传到学校的人脸校验接口；照片不落盘，本机只保存通过状态。诊断包会自动脱敏。</p>
+</td>
+</tr>
+</table>
+
+---
 
 ## 界面
 
@@ -68,15 +114,35 @@
 
 ---
 
+## 从登录到回执
+
+```mermaid
+flowchart LR
+    A["登录"] --> B["围栏 / 点位"]
+    B --> C["画路线"]
+    C --> D["生成 + 自检"]
+    D --> E["提交"]
+    E --> F["只读回查"]
+```
+
+1. **登录**：手机号 + 密码；首次登录约 5–15 秒，不是卡死。
+2. **拉围栏 / 点位**：按账号校区和跑区拉取；拉取太频繁时按账号冷却，不跨账号。
+3. **画路线**：手绘或导入；目标距离默认 0，画完自动按线路填写。学习路线由 Agent 页面负责规划。
+4. **生成与自检**：生成轨迹后先做本地检查，再决定要不要提交。
+5. **提交**：一次提交；超时视为未知状态，锁住时段，先核对再决定。
+6. **回查**：查看状态、违规标记、轨迹和图表。
+
+---
+
 ## 下载
 
 ### 安装版（推荐）
 
-下载 `haoxiangpao_v0.2.3_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
+下载 `haoxiangpao_v0.2.4_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
 
 ### 便携版
 
-下载 `haoxiangpao_v0.2.3_win64.zip`，解压后双击 `好想跑.exe`。
+下载 `haoxiangpao_v0.2.4_win64.zip`，解压后双击 `好想跑.exe`。
 
 > [!WARNING]
 > 便携版要整个文件夹一起用。`好想跑.exe` 旁边的依赖文件不要删，也别只把 exe 拖出来。
@@ -94,7 +160,7 @@
 例如安装版：
 
 ```text
-https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.2/haoxiangpao_v0.2.2_win64_setup.exe
+https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.4/haoxiangpao_v0.2.4_win64_setup.exe
 ```
 
 ---
@@ -107,7 +173,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 4. `data/` 会自动出现，里面是登录状态、回执、限额、设备信息和点位缓存。想彻底重置就整个删掉，下次重新登录。
 
 > [!NOTE]
-> 从 v0.2.2 / v0.2.1 / v0.2.0 / v0.1.9 升级到 v0.2.3 不会强制退出登录，也不会删除 `data/`、回执、限额或点位缓存。之前已经接受过《免责声明》的，接受状态保留。
+> 从 v0.2.3 升级到 v0.2.4 不会强制退出登录，也不会删除 `data/`、回执、限额或点位缓存。之前已经接受过《免责声明》的，接受状态保留。升级前请先完全退出 0.2.3（含托盘图标），旧窗口开着会让本次升级失败。
 
 ---
 
@@ -123,7 +189,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 | 场景 | 做法 |
 |---|---|
 | 手动升级 | 下载新安装包 / zip，覆盖旧目录，`data/` 留着别删 |
-| 回滚到旧版 | 本版不设自动回滚；需要时手动下载 v0.1.9 或更早的资产覆盖。设备指纹和 `data/` 兼容，登录状态保留 |
+| 回滚到旧版 | 本版不设自动回滚；需要时手动下载 v0.2.3 或更早的资产覆盖。设备指纹和 `data/` 兼容，登录状态保留 |
 | 完整性 | 安装包和 zip 都会校验；校验不过会自动换镜像 |
 | 更新清单 | 程序自动读取，普通使用不用管 |
 
@@ -147,7 +213,8 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 | ✅ 适合 | ⛔ 不适合 |
 |---|---|
 | 只登自己的账号 | 登别人的账号、批量代跑 |
-| 想看清楚每次分析的数据 | 商业倒卖、付费安装、二次售卖 |
+| 自己的学校、自己的校区 | 跑步中实时人脸抽检（type=2，未实现） |
+| 想看清楚每次提交的数据 | 商业倒卖、付费安装、二次售卖 |
 | 已授权环境下的学习 / 研究 | 未授权测试、破坏服务器 |
 
 ---
@@ -179,7 +246,22 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 </details>
 
 <details>
-<summary><b>升级到 0.2.3：修复与优化</b></summary>
+<summary><b>升级到 0.2.4：稳定性与 OBS 补传</b></summary>
+
+- 安装/升级被取消、断电或失败时，`data/`（登录、回执、设备指纹）始终保留；上次中断的安装会先清理半成品再继续。
+- 更新助手被安全软件拦截、没能启动时，启动器会回退启动当前版本并记录原因，不再“双击没反应”。
+- 首屏停留超过 55 秒会自动进入登录页，不再白屏；离开跑步页或切到后台会关闭摄像头。
+- 提交前会把 OBS 载荷快照写入 `data/obs_pending/`；服务器已受理但进程在落盘前被杀时，记录详情仍可「补传轨迹」。快照最迟 7 天清理。
+- 路线学习 0 条可用轨迹时不再覆盖已有学习路线；记录页刷新失败会保留已有列表。
+- 安装包体积进一步减小（移除 OpenCV），登录滑块改走本地 C++ 模块。
+- 跑步页与 Agent 不再使用闭合路线和圈数；0.2.3 保存的闭环路线升级后也按开放折线加载。
+- 服务端要求人脸时，type 1（起跑前）和 type 3（终点）会调用本机摄像头并把照片上传到学校校验接口；照片不落盘，只保存通过状态。跑步中抽检（type=2）不实现，检测到会停止提交。
+
+`data/`、回执和点位缓存都不会丢。
+</details>
+
+<details>
+<summary><b>升级到 0.2.3：修复与优化（历史）</b></summary>
 
 修复了部分错误和优化了一些内容。`data/`、回执和点位缓存都不会丢。
 </details>
@@ -187,7 +269,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 <details>
 <summary><b>升级到 0.2.2：policy 误报与加群暗号</b></summary>
 
-v0.2.2 不会强制退出登录。
+v0.2.2 不会强制退出登录。记录详情里的 `policy=1` 之前被误显示为风险标记，现在单独显示为「规则集」；真正的风险标记只看 `isCheat` / `stepFreqStatus` 等字段。QQ 群公告补了加群暗号「皮卡丘」。`data/`、回执和点位缓存都不会丢。
 </details>
 
 <details>
@@ -199,13 +281,13 @@ v0.2.2 不会强制退出登录。
 <details>
 <summary><b>“自动”路线能不能用？</b></summary>
 
-能用，但仍在打磨。优先手绘、导入 GPX 或田径场；自动跑出来的路线提交前也要自己看一眼。
+能用，但仍在打磨。0.2.4 起跑步页只保留手绘和导入；学习路线统一在 Agent 页面规划。生成出来的路线提交前也要自己看一眼。
 </details>
 
 <details>
 <summary><b>会不会上传我的数据？</b></summary>
 
-工作台只监听 `127.0.0.1`，不经过第三方服务器。提交时只向运动世界校园官方服务发送这次跑步需要的数据；不调用摄像头、不读取相册、不上传人脸。
+工作台只监听 `127.0.0.1`，不经过第三方服务器。提交时只向运动世界校园官方服务发送这次跑步需要的数据；不读取相册。服务端要求人脸校验时才会调用本机摄像头，照片直接上传到学校的人脸校验接口，不在本机保存。
 </details>
 
 ---
@@ -223,8 +305,10 @@ v0.2.2 不会强制退出登录。
 
 ## 说明
 
-- **不需要上传人脸认证**：程序不调用摄像头、不读取相册，也不上传任何照片；登录和提交都不依赖人脸。
-- 个人自用，不保证长期可用；
+- **人脸校验只在服务端要求时进行**：type 1（起跑前）和 type 3（终点）会调用本机摄像头，把照片上传到学校的人脸校验接口；照片不落盘，本机只保存通过状态。跑步中抽检（type=2）不实现，检测到会停止提交。
+- 学校人脸抽查走官方流程，本工具不会伪造通过状态；未通过时不会提交学分跑，自由跑需要你确认后才按未校验提交。
+- 只要是运动世界校园的学校都能用；各校规则不同，学校要求可以在「设置 → 学校要求」里填，也能从服务器自动读取。
+- 个人自用，不保证长期可用；学校那边规则一改，可能就失效了。
 - 用不了可以提 [Issue](https://github.com/Knight-ask-art/KnightSportsWorldTool/issues)，我看到会看情况修。
 
 ---
