@@ -24,13 +24,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.4/haoxiangpao_v0.2.4_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
-  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.4/haoxiangpao_v0.2.4_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.5/haoxiangpao_v0.2.5_win64_setup.exe"><img alt="Download Installer" src="https://img.shields.io/badge/Download-Installer-2E4A7D?style=for-the-badge&logo=windows11&logoColor=white"></a>
+  <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.5/haoxiangpao_v0.2.5_win64.zip"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-F2D25C?style=for-the-badge&logo=files&logoColor=24231F"></a>
   <a href="https://github.com/Knight-ask-art/KnightSportsWorldTool/releases"><img alt="All Releases" src="https://img.shields.io/badge/All-Releases-6F695C?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
 <p align="center">
-  <sub>安装版约 34 MB · 便携版约 45 MB · 只支持 Windows 10 / 11 64 位</sub>
+  <sub>安装版约 50 MB · 便携版约 69 MB · 只支持 Windows 10 / 11 64 位</sub>
 </p>
 
 > [!IMPORTANT]
@@ -48,8 +48,8 @@
 
 | 项目 | 当前状态 |
 |---|---|
-| 版本 | **v0.2.4** · stable · 2026-11-15 |
-| 回滚版本 | 无（需要时可手动装回 v0.2.3） |
+| 版本 | **v0.2.5** · stable · 2026-11-19 |
+| 回滚版本 | 无（需要时可手动装回 v0.2.4） |
 | 系统 | Windows 10 / 11 · 64 位 |
 | 网络 | 本机 `127.0.0.1` 工作台 |
 | 价格 | 完全免费 · 禁止倒卖 |
@@ -72,11 +72,11 @@
 
 ### 安装版（推荐）
 
-下载 `haoxiangpao_v0.2.4_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
+下载 `haoxiangpao_v0.2.5_win64_setup.exe`，双击安装。升级和卸载都**不会动 `data/`**。
 
 ### 便携版
 
-下载 `haoxiangpao_v0.2.4_win64.zip`，解压后双击 `好想跑.exe`。
+下载 `haoxiangpao_v0.2.5_win64.zip`，解压后双击 `好想跑.exe`。
 
 > [!WARNING]
 > 便携版要整个文件夹一起用。`好想跑.exe` 旁边的依赖文件不要删，也别只把 exe 拖出来。
@@ -94,7 +94,7 @@
 例如安装版：
 
 ```text
-https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.4/haoxiangpao_v0.2.4_win64_setup.exe
+https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/releases/download/v0.2.5/haoxiangpao_v0.2.5_win64_setup.exe
 ```
 
 ---
@@ -107,7 +107,7 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 4. `data/` 会自动出现，里面是登录状态、回执、限额、设备信息和点位缓存。想彻底重置就整个删掉，下次重新登录。
 
 > [!NOTE]
-> 从 v0.2.3 升级到 v0.2.4 不会强制退出登录，也不会删除 `data/`、回执、限额或点位缓存。之前已经接受过《免责声明》的，接受状态保留。升级前请先完全退出 0.2.3（含托盘图标），旧窗口开着会让本次升级失败。
+> 从 v0.2.4 升级到 v0.2.5 不会强制退出登录，也不会删除 `data/`、回执、限额或点位缓存；直接覆盖安装即可，无需迁移数据。
 
 ---
 
@@ -176,6 +176,16 @@ https://gh-proxy.com/https://github.com/Knight-ask-art/KnightSportsWorldTool/rel
 <summary><b>点位提示冷却中</b></summary>
 
 点位拉取太频繁会触发限制。冷却按账号隔离，一个账号被限流不会锁住另一个账号；倒计时结束后点一次「刷新」。冷却期间会继续使用上次点位，并在界面上标注来源距离。
+</details>
+
+<details>
+<summary><b>升级到 0.2.5：提交体对齐</b></summary>
+
+- 提交体按 7.4.0 对齐：45 键、五点位 11 键（`lon`，无 `radius`），轨迹和 10 秒窗只走 OBS。
+- 围栏补 `distance`；自由跑 `selRunTime=0`，学分跑取学校 `minRunTime`，`uid` 按整数发送。
+- 7.3.92 兼容档位与 7.4.0 共用同一份提交体，只差请求头。
+- 补充 7.4.01 静态逆向资料：实体形状与 7.4.0 一致，新增 `isValidPoint` 等客户端反作弊结论。
+- 提交体的具体表现仍需要看官方；不同学校、账号可能有差异。
 </details>
 
 <details>
